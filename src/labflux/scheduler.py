@@ -10,7 +10,17 @@ from collections.abc import Callable
 from sqlalchemy import func, select
 
 from labflux.config import Settings
-from labflux.database import Database, artifacts, attempts, commands, events, jobs, logs, nodes
+from labflux.database import (
+    Database,
+    artifacts,
+    attempt_gpus,
+    attempts,
+    commands,
+    events,
+    jobs,
+    logs,
+    nodes,
+)
 from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
@@ -66,11 +76,47 @@ class Scheduler:
             .scalars()
             .all()
         )
+        gpu_uuids = (
+            connection.execute(
+                select(attempt_gpus.c.gpu_uuid)
+                .where(attempt_gpus.c.node_id == node_id, attempt_gpus.c.released.is_(False))
+                .order_by(attempt_gpus.c.gpu_uuid)
+            )
+            .scalars()
+            .all()
+        )
         return {
             "cpu": sum(item["cpu"] for item in assigned),
             "memory_mib": sum(item["memory_mib"] for item in assigned),
             "jobs": len(assigned),
+            "gpu": len(gpu_uuids),
+            "gpu_uuids": list(gpu_uuids),
         }
+
+    @staticmethod
+    def _held_gpus(connection) -> set[str]:
+        return set(
+            connection.execute(
+                select(attempt_gpus.c.gpu_uuid).where(attempt_gpus.c.released.is_(False))
+            ).scalars()
+        )
+
+    @staticmethod
+    def _eligible_gpus(node: dict, request: dict, held: set[str]) -> list[dict]:
+        """Pooled, unallocated cards whose latest heartbeat shows no external use."""
+        observed = {gpu["uuid"]: gpu for gpu in node["observed"].get("gpus", [])}
+        model = (request["gpu_model"] or "").lower()
+        cards = [
+            gpu
+            for gpu in node["capacity"].get("gpus", [])
+            if gpu["uuid"] not in held
+            and gpu["uuid"] in observed
+            and not observed[gpu["uuid"]]["external_use"]
+            and model in gpu["name"].lower()
+            and gpu["memory_total_mib"] >= (request["min_vram_mib"] or 0)
+        ]
+        # Smaller cards first, keeping large cards for jobs that require them.
+        return sorted(cards, key=lambda gpu: (gpu["memory_total_mib"], gpu["index"]))
 
     def register(self, payload: WorkerRegistration) -> dict:
         capacity = payload.capacity.model_dump()
@@ -83,6 +129,10 @@ class Scheduler:
             existing = connection.execute(
                 select(nodes).where(nodes.c.id == payload.worker_id)
             ).first()
+            pooled = {gpu["uuid"] for gpu in capacity["gpus"]}
+            for other in connection.execute(select(nodes).where(nodes.c.id != payload.worker_id)):
+                if pooled & {gpu["uuid"] for gpu in other.capacity.get("gpus", [])}:
+                    raise ServiceError(409, f"GPU is already pooled by worker {other.id}")
             allocation = self._allocations(connection, payload.worker_id)
             if (
                 existing
@@ -120,7 +170,14 @@ class Scheduler:
             connection.execute(
                 nodes.update()
                 .where(nodes.c.id == node_id)
-                .values(last_seen=self.clock(), observed=payload.observed, status=status)
+                .values(
+                    last_seen=self.clock(),
+                    observed={
+                        **payload.observed,
+                        "gpus": [gpu.model_dump() for gpu in payload.gpus],
+                    },
+                    status=status,
+                )
             )
             self._schedule(connection)
         return {"status": status}
@@ -176,6 +233,7 @@ class Scheduler:
             )
         ]
         allocated = {node["id"]: self._allocations(connection, node["id"]) for node in available}
+        held = self._held_gpus(connection)
         queued = connection.execute(
             select(jobs).where(jobs.c.state == "QUEUED").order_by(jobs.c.submission_seq)
         ).all()
@@ -188,33 +246,37 @@ class Scheduler:
                 cap, used = node["capacity"], allocated[node["id"]]
                 if not set(spec.datasets).issubset(cap["datasets"]):
                     continue
+                cards = self._eligible_gpus(node, request, held) if request["gpu"] else []
                 if (
                     request["cpu"] <= cap["cpu"] - used["cpu"] + 1e-9
                     and request["memory_mib"] <= cap["memory_mib"] - used["memory_mib"]
                     and used["jobs"] < self.settings.max_parallel_jobs
+                    and len(cards) >= request["gpu"]
                 ):
-                    candidates.append(node)
+                    candidates.append((node, cards))
             if not candidates:
                 reason = (
                     "no online worker"
                     if not available
-                    else "waiting for matching CPU/RAM capacity or datasets"
+                    else "waiting for matching CPU/RAM/GPU capacity or datasets"
                 )
                 connection.execute(
                     jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
                 )
                 break  # Strict FCFS: never bypass an unschedulable head job.
-            node = min(
+            node, cards = min(
                 candidates,
-                key=lambda n: (
-                    n["capacity"]["cpu"] - allocated[n["id"]]["cpu"] - request["cpu"],
-                    n["capacity"]["cpu"],
-                    n["capacity"]["memory_mib"]
-                    - allocated[n["id"]]["memory_mib"]
+                key=lambda c: (
+                    len(c[1]) - request["gpu"],
+                    c[0]["capacity"]["cpu"] - allocated[c[0]["id"]]["cpu"] - request["cpu"],
+                    c[0]["capacity"]["cpu"],
+                    c[0]["capacity"]["memory_mib"]
+                    - allocated[c[0]["id"]]["memory_mib"]
                     - request["memory_mib"],
-                    n["id"],
+                    c[0]["id"],
                 ),
             )
+            gpu_uuids = [gpu["uuid"] for gpu in cards[: request["gpu"]]]
             attempt_id = uuid.uuid4().hex
             connection.execute(
                 attempts.insert().values(
@@ -229,11 +291,22 @@ class Scheduler:
                     oom_killed=False,
                 )
             )
+            for gpu_uuid in gpu_uuids:
+                connection.execute(
+                    attempt_gpus.insert().values(
+                        attempt_id=attempt_id,
+                        gpu_uuid=gpu_uuid,
+                        node_id=node["id"],
+                        released=False,
+                    )
+                )
+            held.update(gpu_uuids)
             payload = {
                 "job_id": job["id"],
                 "attempt_id": attempt_id,
                 "worker_id": node["id"],
                 "job": spec.model_dump(),
+                "gpu_uuids": gpu_uuids,
             }
             connection.execute(
                 commands.insert().values(
@@ -312,6 +385,15 @@ class Scheduler:
                     .order_by(attempts.c.created_at)
                 )
             ]
+            assigned: dict[str, list[str]] = {}
+            for row in connection.execute(
+                select(attempt_gpus)
+                .where(attempt_gpus.c.attempt_id.in_([a["id"] for a in job["attempts"]]))
+                .order_by(attempt_gpus.c.gpu_uuid)
+            ):
+                assigned.setdefault(row.attempt_id, []).append(row.gpu_uuid)
+            for attempt in job["attempts"]:
+                attempt["gpu_uuids"] = assigned.get(attempt["id"], [])
             job["outputs"] = [
                 self._artifact_view(row_dict(row))
                 for row in connection.execute(
@@ -430,6 +512,11 @@ class Scheduler:
                         reason=event.reason,
                         oom_killed=event.oom_killed,
                     )
+                )
+                connection.execute(
+                    attempt_gpus.update()
+                    .where(attempt_gpus.c.attempt_id == attempt_id)
+                    .values(released=True)
                 )
                 connection.execute(
                     jobs.update()

@@ -74,7 +74,7 @@ def db_upgrade(ctx: typer.Context) -> None:
     from labflux.database import Database
 
     database = Database(ctx.obj.data_dir)
-    typer.echo(f"Schema version 1: {database.path}")
+    typer.echo(f"Schema version {database.version}: {database.path}")
     database.close()
 
 

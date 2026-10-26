@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+GPU_UUID = r"^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 
 
 class ResourceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     cpu: float = Field(default=1, ge=0.01, allow_inf_nan=False)
     memory_mib: int = Field(default=256, ge=16)
+    gpu: int = Field(default=0, ge=0, le=8)
+    gpu_model: str | None = Field(default=None, min_length=1, max_length=64)
+    min_vram_mib: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def gpu_filters_need_gpus(self) -> ResourceRequest:
+        if not self.gpu and (self.gpu_model is not None or self.min_vram_mib is not None):
+            raise ValueError("gpu_model and min_vram_mib require gpu >= 1")
+        return self
 
 
 class JobSpec(BaseModel):
@@ -55,6 +66,15 @@ class ExecutionSpec(BaseModel):
     attempt_id: str
     worker_id: str
     job: JobSpec
+    gpu_uuids: list[Annotated[str, Field(pattern=GPU_UUID)]] = Field(default_factory=list)
+
+
+class GpuDevice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    uuid: str = Field(pattern=GPU_UUID)
+    index: int = Field(ge=0)
+    name: str = Field(min_length=1, max_length=128)
+    memory_total_mib: int = Field(ge=1)
 
 
 class Capacity(BaseModel):
@@ -64,6 +84,18 @@ class Capacity(BaseModel):
     cpu: float = Field(gt=0, allow_inf_nan=False)
     memory_mib: int = Field(ge=16)
     datasets: list[str] = Field(default_factory=list)
+    gpus: list[GpuDevice] = Field(default_factory=list)
+    gpu_driver_version: str | None = Field(default=None, max_length=64)
+    cuda_driver_version: str | None = Field(default=None, max_length=64)
+
+    @field_validator("gpus")
+    @classmethod
+    def distinct_gpus(cls, values: list[GpuDevice]) -> list[GpuDevice]:
+        if len(values) != len({g.uuid for g in values}) or len(values) != len(
+            {g.index for g in values}
+        ):
+            raise ValueError("GPU UUIDs and indexes must be distinct")
+        return values
 
 
 class WorkerRegistration(BaseModel):
@@ -72,9 +104,18 @@ class WorkerRegistration(BaseModel):
     capacity: Capacity
 
 
+class GpuObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    uuid: str = Field(pattern=GPU_UUID)
+    memory_used_mib: int = Field(ge=0)
+    utilization_percent: float = Field(ge=0, le=100, allow_inf_nan=False)
+    external_use: bool
+
+
 class Heartbeat(BaseModel):
     instance_id: str
     observed: dict[str, float] = Field(default_factory=dict)
+    gpus: list[GpuObservation] = Field(default_factory=list)
 
 
 class WorkerEvent(BaseModel):

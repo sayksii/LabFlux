@@ -10,6 +10,7 @@ from sqlalchemy import (
     Column,
     Float,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
@@ -102,6 +103,25 @@ artifacts = Table(
     Column("attempt_id", String, ForeignKey("attempts.id")),
     Column("created_at", Float, nullable=False),
 )
+attempt_gpus = Table(
+    "attempt_gpus",
+    metadata,
+    Column("attempt_id", String, ForeignKey("attempts.id"), primary_key=True),
+    Column("gpu_uuid", String, primary_key=True),
+    Column("node_id", String, ForeignKey("nodes.id"), nullable=False, index=True),
+    Column("released", Boolean, nullable=False, default=False),
+)
+# A card may have any number of released rows but at most one unreleased allocation.
+Index(
+    "attempt_gpus_active",
+    attempt_gpus.c.gpu_uuid,
+    unique=True,
+    sqlite_where=attempt_gpus.c.released.is_(False),
+)
+
+# Migration N upgrades a database at version N - 1; version 1 is the original bootstrap.
+MIGRATIONS = {2: lambda connection: attempt_gpus.create(connection)}
+SCHEMA_VERSION = max(MIGRATIONS)
 
 
 class Database:
@@ -119,18 +139,23 @@ class Database:
             connection.execute("PRAGMA busy_timeout=30000")
             connection.execute("PRAGMA journal_mode=WAL")
 
-        self.upgrade()
+        self.version = self.upgrade()
 
-    def upgrade(self) -> None:
-        """Migration 1 bootstraps the schema. Later changes must add a numbered migration."""
-        with self.engine.begin() as connection:
+    def upgrade(self) -> int:
+        """Create a new database at the latest version, or apply numbered migrations in order."""
+        with self.transaction() as connection:
             schema_version.create(connection, checkfirst=True)
             current = connection.execute(select(schema_version.c.version)).scalar_one_or_none()
             if current is None:
                 metadata.create_all(connection)
-                connection.execute(schema_version.insert().values(version=1))
-            elif current != 1:
+                connection.execute(schema_version.insert().values(version=SCHEMA_VERSION))
+                return SCHEMA_VERSION
+            if not 1 <= current <= SCHEMA_VERSION:
                 raise RuntimeError(f"unsupported schema version: {current}")
+            for version in range(current + 1, SCHEMA_VERSION + 1):
+                MIGRATIONS[version](connection)
+            connection.execute(schema_version.update().values(version=SCHEMA_VERSION))
+            return SCHEMA_VERSION
 
     @contextmanager
     def transaction(self):

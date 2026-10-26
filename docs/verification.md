@@ -77,6 +77,37 @@ VM 的實測可分配 RAM：A 1455 MiB、B 2395 MiB、C 3403 MiB，均已扣除 
 - VM fault test 暫停的是 Worker 程序，而非整台 VM 或 Docker；恢復後確認舊容器停止，再釋放資源與派送等待工作。
 - 未實作或勾選 M6.4～M6.7：自動清理／對帳、重新排隊與執行中重啟恢復。
 
+## M7（進行中）：實體 GPU 節點
+
+### 7.2 NVIDIA Container Toolkit 手動驗證（2026-10-26）
+
+兩台 GPU 節點都已安裝 NVIDIA Container Toolkit 1.20.1。`/etc/docker/daemon.json` 只註冊 `nvidia` runtime，
+Docker 預設 runtime 仍是 `runc`，一般容器不會自動取得 GPU。測試前確認 GPU 閒置、沒有其他容器在執行；
+測試只執行 `nvidia-smi -L`，不佔用 VRAM，結束後沒有殘留容器。
+
+| 檢查 | kayle（RTX 3090 + RTX A5000，驅動 535.309.01） | karma（RTX 4090，驅動 580.178.04） |
+|---|---|---|
+| `docker run --rm --gpus all ubuntu nvidia-smi -L` | 列出 3090 與 A5000 | 列出 4090 |
+| `--gpus '"device=<UUID>"'` 指定單張卡 | 只看到 A5000，容器內只有 `/dev/nvidia1` | 只看到 4090 |
+| 不加 `--gpus` | 沒有 `nvidia-smi`，也沒有 `/dev/nvidia*` | 同左 |
+
+- kayle 另外確認：使用者以 `-e` 傳入 `NVIDIA_VISIBLE_DEVICES=all` 或 `void` 時，
+  Docker 為 device request 附加的值優先，容器仍只看到指定的卡。
+
+### 7.5、7.7 Scheduler 的 GPU 配置（單元測試）
+
+- SQLite migration 2 新增 `attempt_gpus`，記錄每個 attempt 分到的 GPU UUID。
+  partial unique index 讓同一張卡最多只有一筆未釋放紀錄；預約與 START 命令在同一個交易，
+  確認容器終止後才與 attempt 一起釋放。
+- `tests/test_gpu_scheduling.py`：14 個案例，涵蓋張數／型號／VRAM 匹配、單一節點多卡、
+  CPU 工作不佔卡、外部使用中與尚未回報的卡不分配、GPU 隊首阻擋 FCFS、24 個 GPU 工作併發提交到 3 張卡
+  （剛好 3 個 STARTING 且 UUID 不重複）、重送及延遲完成事件不會釋放下一個工作的卡、
+  未確認終止與心跳逾時保留配置、資料庫拒絕同一張卡的第二筆未釋放紀錄，以及 v1 升級到 v2。
+- 以 `main`（schema v1）的程式實際建立 SQLite，再用新程式開啟：升級到 v2、工作保留、index 建立，
+  重開後版本不變；`labflux db-upgrade` 顯示 `Schema version 2`。
+- `uv run pytest -m 'not docker and not vm'`：68 passed。`uv run pytest -m docker`：8 passed（CPU 容器回歸）。
+- 尚未驗證：Worker 以 NVML 回報 GPU、容器實際只拿到分配的卡（7.3、7.4、7.6），所以 7.5 先不勾選。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。
