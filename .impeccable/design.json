@@ -1,0 +1,882 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-26T10:08:34+00:00",
+  "title": "Design System: LabFlux",
+  "extensions": {
+    "colorMeta": {
+      "portal-navy": {
+        "role": "primary",
+        "displayName": "Portal Navy",
+        "canonical": "oklch(34.7% 0.073 257)",
+        "tonalRamp": [
+          "#040b18",
+          "#17263a",
+          "#2f435f",
+          "#486387",
+          "#6884ab",
+          "#8fa7c8",
+          "#b8cbe5",
+          "#e5f0ff"
+        ]
+      },
+      "portal-navy-raised": {
+        "role": "primary",
+        "displayName": "Raised Navy",
+        "canonical": "oklch(40.9% 0.081 255)",
+        "tonalRamp": [
+          "#030b19",
+          "#15263c",
+          "#2b4362",
+          "#44638b",
+          "#6484af",
+          "#8ca7cb",
+          "#b5cbe8",
+          "#e4f0ff"
+        ]
+      },
+      "portal-navy-line": {
+        "role": "primary",
+        "displayName": "Navy Keyline",
+        "canonical": "oklch(45.0% 0.077 254)",
+        "tonalRamp": [
+          "#030b18",
+          "#15263a",
+          "#2c4360",
+          "#456389",
+          "#6585ac",
+          "#8da8c9",
+          "#b6cbe6",
+          "#e4f0ff"
+        ]
+      },
+      "portal-navy-ink": {
+        "role": "primary",
+        "displayName": "Portal Mist",
+        "canonical": "oklch(87.2% 0.031 259)",
+        "tonalRamp": [
+          "#080b11",
+          "#20252e",
+          "#3b424f",
+          "#586272",
+          "#788394",
+          "#9ca6b4",
+          "#c2cad5",
+          "#e9eff7"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Timetable Ink",
+        "canonical": "oklch(26.1% 0.030 265)",
+        "tonalRamp": [
+          "#090b11",
+          "#21252e",
+          "#3c424e",
+          "#5a6171",
+          "#7a8293",
+          "#9ea5b4",
+          "#c3c9d5",
+          "#eaeff7"
+        ]
+      },
+      "muted-slate": {
+        "role": "neutral",
+        "displayName": "Muted Slate",
+        "canonical": "oklch(50.5% 0.031 262)",
+        "tonalRamp": [
+          "#080b11",
+          "#20252e",
+          "#3b424f",
+          "#586272",
+          "#798394",
+          "#9da5b4",
+          "#c3c9d5",
+          "#eaeff8"
+        ]
+      },
+      "faint-slate": {
+        "role": "neutral",
+        "displayName": "Faint Slate",
+        "canonical": "oklch(55.8% 0.030 264)",
+        "tonalRamp": [
+          "#090b11",
+          "#21252e",
+          "#3c424e",
+          "#596171",
+          "#7a8393",
+          "#9ea5b4",
+          "#c3c9d5",
+          "#eaeff7"
+        ]
+      },
+      "cool-ground": {
+        "role": "neutral",
+        "displayName": "Cool Ground",
+        "canonical": "oklch(95.7% 0.006 255)",
+        "tonalRamp": [
+          "#090b0e",
+          "#232528",
+          "#404245",
+          "#5f6165",
+          "#808286",
+          "#a2a5a9",
+          "#c6c9cd",
+          "#eceff3"
+        ]
+      },
+      "sheet": {
+        "role": "neutral",
+        "displayName": "Sheet",
+        "canonical": "oklch(100.0% 0.000 90)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#252525",
+          "#424242",
+          "#616161",
+          "#828282",
+          "#a5a5a5",
+          "#c9c9c9",
+          "#eeeeee"
+        ]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Rule",
+        "canonical": "oklch(93.3% 0.009 265)",
+        "tonalRamp": [
+          "#090b0f",
+          "#232529",
+          "#404247",
+          "#5f6166",
+          "#808288",
+          "#a2a5ab",
+          "#c6c9cf",
+          "#ebeef5"
+        ]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Strong Rule",
+        "canonical": "oklch(87.1% 0.015 261)",
+        "tonalRamp": [
+          "#090b0f",
+          "#22252b",
+          "#3d424a",
+          "#5c616a",
+          "#7d838c",
+          "#a0a5af",
+          "#c5c9d1",
+          "#ebeff4"
+        ]
+      },
+      "queued-amber": {
+        "role": "secondary",
+        "displayName": "Queue Amber",
+        "canonical": "oklch(53.1% 0.119 65)",
+        "tonalRamp": [
+          "#150800",
+          "#381e00",
+          "#603700",
+          "#8b5203",
+          "#af7333",
+          "#cc9a68",
+          "#e9c19a",
+          "#ffebd8"
+        ]
+      },
+      "done-green": {
+        "role": "secondary",
+        "displayName": "Done Green",
+        "canonical": "oklch(52.9% 0.106 155)",
+        "tonalRamp": [
+          "#001005",
+          "#032e17",
+          "#164e2e",
+          "#2b7148",
+          "#4e9368",
+          "#7db48f",
+          "#aad6b7",
+          "#d8f8e2"
+        ]
+      },
+      "fail-red": {
+        "role": "secondary",
+        "displayName": "Fault Red",
+        "canonical": "oklch(50.1% 0.178 29)",
+        "tonalRamp": [
+          "#1f0000",
+          "#4c0302",
+          "#7a1711",
+          "#ab2d24",
+          "#d25346",
+          "#ed8274",
+          "#feb3a8",
+          "#fee9e5"
+        ]
+      },
+      "fail-red-deep": {
+        "role": "secondary",
+        "displayName": "Deep Fault Red",
+        "canonical": "oklch(43.6% 0.152 28)",
+        "tonalRamp": [
+          "#1f0000",
+          "#470c09",
+          "#73221c",
+          "#a13a30",
+          "#c85d51",
+          "#e4887c",
+          "#feb4a9",
+          "#fee9e6"
+        ]
+      },
+      "fail-tint": {
+        "role": "secondary",
+        "displayName": "Fault Blush",
+        "canonical": "oklch(95.5% 0.016 22)",
+        "tonalRamp": [
+          "#0f0a0a",
+          "#2b2322",
+          "#4a3f3e",
+          "#6a5e5d",
+          "#8c7f7e",
+          "#aea2a1",
+          "#d1c6c6",
+          "#f4ecec"
+        ]
+      },
+      "unknown-violet": {
+        "role": "secondary",
+        "displayName": "Unknown Violet",
+        "canonical": "oklch(48.3% 0.155 311)",
+        "tonalRamp": [
+          "#14021e",
+          "#331444",
+          "#562c6e",
+          "#7b459b",
+          "#9d67c0",
+          "#bc90db",
+          "#dcb9f5",
+          "#f5e9ff"
+        ]
+      },
+      "off-grey": {
+        "role": "secondary",
+        "displayName": "Spent Grey",
+        "canonical": "oklch(55.1% 0.023 264)",
+        "tonalRamp": [
+          "#090b0f",
+          "#22252c",
+          "#3d424c",
+          "#5b616e",
+          "#7c8290",
+          "#9fa5b0",
+          "#c5c9d2",
+          "#ebeff5"
+        ]
+      },
+      "others-fill": {
+        "role": "neutral",
+        "displayName": "Others Grey",
+        "canonical": "oklch(94.2% 0.007 261)",
+        "tonalRamp": [
+          "#090b0e",
+          "#232529",
+          "#404246",
+          "#5f6166",
+          "#808287",
+          "#a2a5aa",
+          "#c6c9ce",
+          "#eceff4"
+        ]
+      },
+      "others-line": {
+        "role": "neutral",
+        "displayName": "Others Keyline",
+        "canonical": "oklch(83.8% 0.014 262)",
+        "tonalRamp": [
+          "#090b0f",
+          "#22252b",
+          "#3e4249",
+          "#5d6169",
+          "#7e828b",
+          "#a0a5ae",
+          "#c5c9d1",
+          "#ebeff4"
+        ]
+      },
+      "row-hover": {
+        "role": "neutral",
+        "displayName": "Roster Hover",
+        "canonical": "oklch(97.2% 0.007 261)",
+        "tonalRamp": [
+          "#090b0e",
+          "#232529",
+          "#404246",
+          "#5f6166",
+          "#808287",
+          "#a2a5aa",
+          "#c6c9ce",
+          "#eceff4"
+        ]
+      },
+      "console-night": {
+        "role": "neutral",
+        "displayName": "Console Night",
+        "canonical": "oklch(24.2% 0.030 259)",
+        "tonalRamp": [
+          "#080b10",
+          "#20252e",
+          "#3b424e",
+          "#586271",
+          "#798393",
+          "#9da6b4",
+          "#c2cad5",
+          "#e9eff7"
+        ]
+      },
+      "console-text": {
+        "role": "neutral",
+        "displayName": "Console Text",
+        "canonical": "oklch(92.3% 0.016 257)",
+        "tonalRamp": [
+          "#090b0f",
+          "#21252b",
+          "#3d424a",
+          "#5c626a",
+          "#7d838c",
+          "#9fa6af",
+          "#c4cad1",
+          "#ebeff4"
+        ]
+      },
+      "console-error": {
+        "role": "secondary",
+        "displayName": "Console Error",
+        "canonical": "oklch(83.8% 0.090 28)",
+        "tonalRamp": [
+          "#180504",
+          "#3b1a16",
+          "#61332d",
+          "#8a4e46",
+          "#ae6f66",
+          "#cc958d",
+          "#e9bdb6",
+          "#ffe9e5"
+        ]
+      },
+      "live-green": {
+        "role": "secondary",
+        "displayName": "Live Green",
+        "canonical": "oklch(79.1% 0.126 157)",
+        "tonalRamp": [
+          "#001005",
+          "#002e18",
+          "#01502e",
+          "#077446",
+          "#3b9766",
+          "#71b78d",
+          "#a2d8b6",
+          "#d3fae1"
+        ]
+      },
+      "stale-amber": {
+        "role": "secondary",
+        "displayName": "Stale Amber",
+        "canonical": "oklch(81.3% 0.165 75)",
+        "tonalRamp": [
+          "#130900",
+          "#342001",
+          "#5a3b03",
+          "#82580a",
+          "#ad7612",
+          "#d29941",
+          "#eec081",
+          "#feebd2"
+        ]
+      },
+      "job-blue": {
+        "role": "tertiary",
+        "displayName": "Pale Blue",
+        "canonical": "oklch(92.5% 0.030 261)",
+        "tonalRamp": [
+          "#080b11",
+          "#20252e",
+          "#3b424e",
+          "#586271",
+          "#798393",
+          "#9da6b4",
+          "#c3cad5",
+          "#eaeff7"
+        ]
+      },
+      "job-blue-line": {
+        "role": "tertiary",
+        "displayName": "Cornflower Keyline",
+        "canonical": "oklch(72.1% 0.099 259)",
+        "tonalRamp": [
+          "#020b1c",
+          "#132541",
+          "#294269",
+          "#416195",
+          "#6183b9",
+          "#89a6d4",
+          "#b3cbf0",
+          "#e5efff"
+        ]
+      },
+      "job-apricot": {
+        "role": "tertiary",
+        "displayName": "Apricot",
+        "canonical": "oklch(93.3% 0.036 54)",
+        "tonalRamp": [
+          "#100906",
+          "#2d221c",
+          "#4e3e35",
+          "#715c50",
+          "#937d70",
+          "#b3a196",
+          "#d5c6bd",
+          "#f7ece5"
+        ]
+      },
+      "job-apricot-line": {
+        "role": "tertiary",
+        "displayName": "Apricot Keyline",
+        "canonical": "oklch(77.0% 0.101 49)",
+        "tonalRamp": [
+          "#180500",
+          "#3b1b07",
+          "#62341a",
+          "#8b502e",
+          "#af714f",
+          "#cd977b",
+          "#eabfa8",
+          "#feeadf"
+        ]
+      },
+      "job-mint": {
+        "role": "tertiary",
+        "displayName": "Mint",
+        "canonical": "oklch(93.4% 0.032 155)",
+        "tonalRamp": [
+          "#070d09",
+          "#1e2821",
+          "#38463c",
+          "#54665a",
+          "#75887b",
+          "#9aaa9f",
+          "#c0cdc4",
+          "#e8f1eb"
+        ]
+      },
+      "job-mint-line": {
+        "role": "tertiary",
+        "displayName": "Mint Keyline",
+        "canonical": "oklch(75.3% 0.095 155)",
+        "tonalRamp": [
+          "#001005",
+          "#082d19",
+          "#1d4d31",
+          "#32704b",
+          "#55926c",
+          "#81b392",
+          "#add4ba",
+          "#daf7e3"
+        ]
+      },
+      "job-lilac": {
+        "role": "tertiary",
+        "displayName": "Lilac",
+        "canonical": "oklch(92.1% 0.036 307)",
+        "tonalRamp": [
+          "#0d0910",
+          "#28222d",
+          "#463e4d",
+          "#665d70",
+          "#877d92",
+          "#a9a1b3",
+          "#cdc6d4",
+          "#f1ecf7"
+        ]
+      },
+      "job-lilac-line": {
+        "role": "tertiary",
+        "displayName": "Lilac Keyline",
+        "canonical": "oklch(72.1% 0.111 304)",
+        "tonalRamp": [
+          "#10061b",
+          "#2c1c3e",
+          "#4c3665",
+          "#6e5190",
+          "#9072b4",
+          "#b098d0",
+          "#d2bfec",
+          "#f3eaff"
+        ]
+      },
+      "job-teal": {
+        "role": "tertiary",
+        "displayName": "Pale Teal",
+        "canonical": "oklch(93.3% 0.027 197)",
+        "tonalRamp": [
+          "#060d0d",
+          "#1c2828",
+          "#354646",
+          "#516666",
+          "#728787",
+          "#97a9a9",
+          "#becdcd",
+          "#e6f1f1"
+        ]
+      },
+      "job-teal-line": {
+        "role": "tertiary",
+        "displayName": "Teal Keyline",
+        "canonical": "oklch(74.6% 0.076 196)",
+        "tonalRamp": [
+          "#000e0f",
+          "#012c2c",
+          "#114b4c",
+          "#256e6e",
+          "#4a9090",
+          "#7ab1b0",
+          "#a8d3d2",
+          "#d7f6f5"
+        ]
+      },
+      "job-rose": {
+        "role": "tertiary",
+        "displayName": "Rose",
+        "canonical": "oklch(92.3% 0.033 356)",
+        "tonalRamp": [
+          "#10090b",
+          "#2d2125",
+          "#4d3d42",
+          "#705a62",
+          "#927b83",
+          "#b39fa5",
+          "#d4c4c9",
+          "#f7ebef"
+        ]
+      },
+      "job-rose-line": {
+        "role": "tertiary",
+        "displayName": "Rose Keyline",
+        "canonical": "oklch(72.8% 0.107 359)",
+        "tonalRamp": [
+          "#19030b",
+          "#3c1624",
+          "#632e41",
+          "#8d4760",
+          "#b26881",
+          "#cf90a3",
+          "#edb9c8",
+          "#ffe7ee"
+        ]
+      },
+      "job-olive": {
+        "role": "tertiary",
+        "displayName": "Pale Olive",
+        "canonical": "oklch(94.1% 0.038 114)",
+        "tonalRamp": [
+          "#0b0c05",
+          "#25261a",
+          "#424432",
+          "#61644d",
+          "#82856d",
+          "#a5a793",
+          "#c9cbbb",
+          "#eef0e4"
+        ]
+      },
+      "job-olive-line": {
+        "role": "tertiary",
+        "displayName": "Olive Keyline",
+        "canonical": "oklch(74.3% 0.110 115)",
+        "tonalRamp": [
+          "#0b0d00",
+          "#242801",
+          "#414705",
+          "#606817",
+          "#80893d",
+          "#a3ac6f",
+          "#c7cf9f",
+          "#edf3d0"
+        ]
+      },
+      "job-sand": {
+        "role": "tertiary",
+        "displayName": "Sand",
+        "canonical": "oklch(92.9% 0.034 82)",
+        "tonalRamp": [
+          "#0e0b05",
+          "#2a241a",
+          "#494133",
+          "#6a604e",
+          "#8c816e",
+          "#ada494",
+          "#d0c8bb",
+          "#f3eee4"
+        ]
+      },
+      "job-sand-line": {
+        "role": "tertiary",
+        "displayName": "Sand Keyline",
+        "canonical": "oklch(73.9% 0.087 78)",
+        "tonalRamp": [
+          "#120900",
+          "#322103",
+          "#553d14",
+          "#7a5b27",
+          "#9d7c49",
+          "#bca076",
+          "#dcc6a5",
+          "#fcecd4"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "LabFlux wordmark in the portal bar."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Panel titles and the job ID in the detail header."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Node names and detail subsections."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base text, tabular numerals."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Roster cells, facts, buttons, cluster line."
+      },
+      "note": {
+        "displayName": "Note",
+        "purpose": "Subtitles, queue explanations, tabs, segmented options."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Table headers, period numerals, legend, block secondary lines."
+      },
+      "stamp": {
+        "displayName": "Stamp",
+        "purpose": "State stamps; English state names as reported by the API."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "IDs in facts, CLI commands and the job log."
+      }
+    },
+    "shadows": [
+      {
+        "name": "linked-job-ring",
+        "value": "0 0 0 2px #ffffff, 0 0 0 4px #1f3a5f",
+        "purpose": "Hovered, selected or roster-linked course block. The only shadow in the system."
+      }
+    ],
+    "motion": [
+      {
+        "name": "block-land",
+        "value": "240ms cubic-bezier(0.16, 1, 0.3, 1); from opacity 0, scaleY(0.88), origin top",
+        "purpose": "A course block appearing for the first time. Disabled under prefers-reduced-motion."
+      },
+      {
+        "name": "refresh-interval",
+        "value": "3000ms",
+        "purpose": "Cluster and roster polling cadence; the live status shows the last good update time."
+      },
+      {
+        "name": "log-interval",
+        "value": "2000ms",
+        "purpose": "Log polling cadence while a job detail is open."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone",
+        "value": "640px"
+      },
+      {
+        "name": "single-column",
+        "value": "1080px"
+      }
+    ],
+    "textures": [
+      {
+        "name": "system-reserved-hatch",
+        "value": "repeating-linear-gradient(135deg, #f1f3f6 0 5px, #e4e8ee 5px 10px)",
+        "purpose": "Capacity the node holds back from scheduling."
+      },
+      {
+        "name": "not-present-dots",
+        "value": "radial-gradient(circle, #cdd3dc 1px, transparent 1.4px) 0 0 / 9px 9px, #f8f9fb",
+        "purpose": "Periods beyond this node's total capacity."
+      },
+      {
+        "name": "offline-hatch",
+        "value": "repeating-linear-gradient(135deg, rgba(179,38,30,.06) 0 6px, rgba(179,38,30,.13) 6px 12px)",
+        "purpose": "Overlay on an offline node's period grid."
+      }
+    ],
+    "rootFontSize": {
+      "default": "15px",
+      "projector": "18px"
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Navy fill for the main action (connect on the login card).",
+      "html": "<button class=\"ds-btn ds-btn-primary\">連線</button>",
+      "css": ".ds-btn { font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-size: 14px; padding: 6px 13.5px; border-radius: 6px; border: 1px solid #cfd5df; background: #ffffff; color: #1d2433; cursor: pointer; transition: background .15s; } .ds-btn:focus-visible { outline: 2px solid #1f3a5f; outline-offset: 2px; } .ds-btn-primary { background: #1f3a5f; border-color: #1f3a5f; color: #ffffff; } .ds-btn-primary:hover { background: #2a4b75; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "White button with a strong-rule border; copy, decline.",
+      "html": "<button class=\"ds-btn2\">複製</button>",
+      "css": ".ds-btn2 { font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-size: 14px; padding: 6px 13.5px; border-radius: 6px; border: 1px solid #cfd5df; background: #ffffff; color: #1d2433; cursor: pointer; } .ds-btn2:hover { background: #eef1f5; } .ds-btn2:focus-visible { outline: 2px solid #1f3a5f; outline-offset: 2px; }"
+    },
+    {
+      "name": "Cancel Job (two-step)",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Outlined danger first; the confirm step swaps to a solid red button beside 不要.",
+      "html": "<div class=\"ds-danger-row\"><button class=\"ds-danger\">取消工作</button><button class=\"ds-danger ds-danger-solid\">確定取消</button></div>",
+      "css": ".ds-danger-row { display: flex; gap: 9px; } .ds-danger { font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-size: 14px; padding: 6px 13.5px; border-radius: 6px; border: 1px solid #b3261e; background: #ffffff; color: #b3261e; cursor: pointer; } .ds-danger:hover { background: #fbeceb; } .ds-danger-solid { background: #b3261e; color: #ffffff; } .ds-danger-solid:hover { background: #93201a; } .ds-danger:focus-visible { outline: 2px solid #1f3a5f; outline-offset: 2px; }"
+    },
+    {
+      "name": "Portal Bar",
+      "kind": "nav",
+      "refersTo": "portal-bar",
+      "description": "Navy header: wordmark, cluster line (reserved figures), live status, ghost buttons.",
+      "html": "<header class=\"ds-bar\"><b class=\"ds-bar-mark\">LabFlux</b><dl class=\"ds-bar-cluster\"><div><dt>節點</dt><dd>3 / 3 上線</dd></div><div><dt>CPU 已預約</dt><dd>6 / 7 核</dd></div><div><dt>排隊</dt><dd>2</dd></div></dl><span class=\"ds-bar-live\"><i></i>即時 · 18:04:42 更新</span><button class=\"ds-ghost\" aria-pressed=\"false\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"1.5\" y=\"3\" width=\"13\" height=\"8\" rx=\"1\"/><path d=\"M5 14h6M8 11v3\"/></svg>投影模式</button></header>",
+      "css": ".ds-bar { font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; background: #1f3a5f; color: #ffffff; display: flex; align-items: center; flex-wrap: wrap; gap: 24px; padding: 12px 24px; } .ds-bar-mark { font-size: 22px; font-weight: 700; letter-spacing: .01em; } .ds-bar-cluster { display: flex; flex-wrap: wrap; gap: 6px 21px; margin: 0; color: #c9d6ea; font-size: 14px; flex: 1; } .ds-bar-cluster div { display: flex; gap: 6px; } .ds-bar-cluster dt { margin: 0; } .ds-bar-cluster dd { margin: 0; color: #ffffff; font-weight: 500; } .ds-bar-live { display: flex; align-items: center; gap: 7px; color: #c9d6ea; font-size: 13px; } .ds-bar-live i { width: 7.5px; height: 7.5px; border-radius: 50%; background: #6fd39a; } .ds-ghost { font-family: inherit; font-size: 13px; background: transparent; border: 1px solid #36577f; color: #ffffff; border-radius: 6px; padding: 4.5px 11px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; } .ds-ghost svg { width: 15px; height: 15px; } .ds-ghost:hover { background: #2a4b75; } .ds-ghost[aria-pressed=\"true\"] { background: #ffffff; color: #1f3a5f; border-color: #ffffff; } .ds-ghost:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Resource Axis Segmented Control",
+      "kind": "chip",
+      "refersTo": "segmented-option",
+      "description": "One option per resource the API reports; pressed option fills navy.",
+      "html": "<div class=\"ds-seg\" role=\"group\"><button aria-pressed=\"true\">CPU 核心</button><button aria-pressed=\"false\">RAM</button></div>",
+      "css": ".ds-seg { display: inline-flex; border: 1px solid #cfd5df; border-radius: 6px; overflow: hidden; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); } .ds-seg button { font: inherit; font-size: 13px; border: 0; background: #ffffff; color: #5b6577; padding: 4.5px 12px; cursor: pointer; } .ds-seg button + button { border-left: 1px solid #cfd5df; } .ds-seg button[aria-pressed=\"true\"] { background: #1f3a5f; color: #ffffff; } .ds-seg button:not([aria-pressed=\"true\"]):hover { background: #eef1f5; color: #1d2433; } .ds-seg button:focus-visible { outline: 2px solid #1f3a5f; outline-offset: -2px; }"
+    },
+    {
+      "name": "State Stamps",
+      "kind": "chip",
+      "refersTo": "stamp-running",
+      "description": "English state names; form carries state (filled, dashed, dotted, struck).",
+      "html": "<div class=\"ds-stamps\"><span class=\"ds-stamp ds-run\">RUNNING</span><span class=\"ds-stamp ds-q\">QUEUED</span><span class=\"ds-stamp ds-ok\">SUCCEEDED</span><span class=\"ds-stamp ds-fail\">FAILED</span><span class=\"ds-stamp ds-unk\">UNKNOWN</span><span class=\"ds-stamp ds-off\">CANCELLED</span></div>",
+      "css": ".ds-stamps { display: flex; flex-wrap: wrap; gap: 8px; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); } .ds-stamp { display: inline-block; font-size: 11.25px; font-weight: 700; letter-spacing: .03em; line-height: 1.4; padding: 1.5px 7px; border-radius: 3px; border: 1px solid currentColor; white-space: nowrap; } .ds-run { background: #1f3a5f; border-color: #1f3a5f; color: #ffffff; } .ds-q { color: #9a5b00; border-style: dashed; } .ds-ok { color: #2e7d4f; } .ds-fail { background: #b3261e; border-color: #b3261e; color: #ffffff; } .ds-unk { color: #7a3e9d; border-style: dotted; border-width: 2px; } .ds-off { color: #6b7280; text-decoration: line-through; }"
+    },
+    {
+      "name": "Job Tabs",
+      "kind": "nav",
+      "refersTo": "tab-selected",
+      "description": "Roster state filters with counts; selected fills navy.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button role=\"tab\" aria-selected=\"true\">全部<em>26</em></button><button role=\"tab\" aria-selected=\"false\">執行中<em>4</em></button><button role=\"tab\" aria-selected=\"false\">排隊<em>2</em></button></div>",
+      "css": ".ds-tabs { display: flex; gap: 4px; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; } .ds-tabs button { font: inherit; font-size: 13px; border: 0; background: transparent; color: #5b6577; border-radius: 6px; padding: 4.5px 10.5px; cursor: pointer; } .ds-tabs button:hover { background: #eef1f5; color: #1d2433; } .ds-tabs button[aria-selected=\"true\"] { background: #1f3a5f; color: #ffffff; } .ds-tabs em { font-style: normal; opacity: .75; margin-left: 4.5px; } .ds-tabs button:focus-visible { outline: 2px solid #1f3a5f; outline-offset: 2px; }"
+    },
+    {
+      "name": "Timetable Column with Course Blocks",
+      "kind": "custom",
+      "refersTo": "course-block",
+      "description": "Signature: one node column, ruled periods, own job blocks in their hue, others in grey, system-reserved capacity hatched.",
+      "html": "<div class=\"ds-tt\"><div class=\"ds-tt-gutter\"><span style=\"top:0\">1</span><span style=\"top:48px\">2</span><span style=\"top:96px\">3</span><span style=\"top:144px\">4</span></div><div class=\"ds-tt-col\"><div class=\"ds-tt-cells\"></div><button class=\"ds-blk\" style=\"top:1px;height:94px;--fill:#dbe7fb;--line:#7fa6e3\"><b>8ea57f</b><span>2 核 · 1 GiB</span><span>執行 10 分 42 秒</span></button><div class=\"ds-blk ds-others\" style=\"top:97px;height:46px\"><b>其他使用者</b><span>1 核</span></div><div class=\"ds-tt-reserve\">系統保留</div></div></div>",
+      "css": ".ds-tt { display: grid; grid-template-columns: 39px 160px; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; background: #ffffff; border: 1px solid #cfd5df; border-radius: 6px; overflow: hidden; } .ds-tt-gutter { position: relative; height: 192px; border-right: 1px solid #e6e9ef; } .ds-tt-gutter span { position: absolute; right: 7px; font-size: 12px; color: #6b7486; transform: translateY(3px); } .ds-tt-col { position: relative; height: 192px; } .ds-tt-cells { position: absolute; inset: 0 0 48px 0; background-image: linear-gradient(#e6e9ef 1px, transparent 1px); background-size: 100% 48px; } .ds-tt-reserve { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: repeating-linear-gradient(135deg, #f1f3f6 0 5px, #e4e8ee 5px 10px); border-top: 1px solid #cfd5df; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #5b6577; } .ds-blk { position: absolute; left: 6px; right: 6px; border-radius: 4px; padding: 4.5px 8px; border: 1px solid var(--line); background: var(--fill); color: #1d2433; display: flex; flex-direction: column; text-align: left; line-height: 1.3; font: inherit; cursor: pointer; overflow: hidden; } .ds-blk b { font-size: 14px; font-weight: 700; } .ds-blk span { font-size: 12px; color: color-mix(in oklab, var(--line) 40%, #1d2433); white-space: nowrap; } button.ds-blk:hover, button.ds-blk:focus-visible { outline: none; box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #1f3a5f; z-index: 2; } .ds-others { --fill: #e9ecf1; --line: #c5cad3; cursor: default; }"
+    },
+    {
+      "name": "Token Input",
+      "kind": "input",
+      "refersTo": "input-token",
+      "description": "Login card password field; navy outline on focus.",
+      "html": "<label class=\"ds-field\">使用者 Token<input type=\"password\" value=\"secret\"></label>",
+      "css": ".ds-field { display: grid; gap: 5px; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-size: 14px; font-weight: 500; color: #1d2433; } .ds-field input { font: inherit; font-weight: 400; font-size: 15px; padding: 8px 10.5px; border: 1px solid #cfd5df; border-radius: 6px; background: #ffffff; } .ds-field input:focus-visible { outline: 2px solid #1f3a5f; outline-offset: 0; }"
+    },
+    {
+      "name": "Log Console",
+      "kind": "card",
+      "refersTo": "log-console",
+      "description": "The one dark surface: job stdout/stderr, monospace, stderr tinted.",
+      "html": "<pre class=\"ds-log\">epoch 1/3 loss=0.412\nepoch 2/3 loss=0.288\n<span class=\"ds-log-err\">warning: dataset cache miss</span></pre>",
+      "css": ".ds-log { margin: 0; font-family: var(--mono, ui-monospace, 'Cascadia Mono', SFMono-Regular, Consolas, monospace); font-size: 13px; line-height: 1.5; background: #17202e; color: #dfe6f0; border-radius: 6px; padding: 12px 13.5px; max-height: 330px; overflow: auto; white-space: pre-wrap; } .ds-log-err { color: #ffb4a9; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Course Timetable",
+    "overview": "LabFlux reads like a university course timetable (課表) pinned under a navy campus-portal header. Each node is one column of the sheet; each resource unit (a CPU core, a slice of RAM) is one period row, numbered in the left gutter; every reservation is a course block that occupies whole periods. The visitor reads the cluster the way a student reads a timetable: which columns are full, whose block sits where, what is left empty. The job list beside it is the class roster for the same sheet, and hovering a roster row rings its block.\n\nThe world is cool, ruled and quiet. A cool off-white ground holds white sheets drawn with thin rules; colour lives almost entirely in two places, the navy chrome and the soft per-job pastel blocks. Everything that is *not* a reservation is drawn as texture instead of colour: diagonal hatching for capacity the system holds back, a fine dot grid for capacity the node simply does not have, and red-tinted hatching for a node that has stopped answering. State is carried by form as well as colour, so a stamp reads correctly in greyscale or on a washed-out projector.\n\nDensity is desktop-first and data-dense, with a projector mode that scales the whole rem ramp from 15px to 18px instead of re-laying anything out. One workhorse sans (Noto Sans TC) with tabular numerals sets every word and number; UI text is Traditional Chinese, while state names, job IDs and API terms stay in English.",
+    "keyCharacteristics": [
+      "Nodes as timetable columns, resource units as numbered period rows, reservations as course blocks.",
+      "Navy portal header over a cool off-white ground and white ruled sheets.",
+      "One pastel hue per job, derived from its ID and identical wherever the job appears.",
+      "Absent or withheld capacity drawn as texture (hatching, dot grid), never as a flat colour.",
+      "State stamps that change shape (solid, dashed, dotted, struck through) as well as colour.",
+      "Every number labelled as reserved (已預約) or live (即時), never merged.",
+      "Flat surfaces; the only shadow is a two-ring halo marking the hovered or selected job."
+    ],
+    "rules": [
+      {
+        "name": "The Your-Hue-Only Rule",
+        "body": "Pastel course hues belong to the viewer's own jobs that currently hold resources. Other users' reservations are always Others Grey and unlabelled beyond 其他使用者; a job that holds nothing shows an empty swatch slot, not a hue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Persistent Hue Rule",
+        "body": "A job's hue is a function of its ID and never of its position, state or view. The same pair appears on its block, its roster swatch and its detail title.",
+        "section": "colors"
+      },
+      {
+        "name": "The Navy Is Structure Rule",
+        "body": "Navy marks chrome and the current choice (header, pressed option, selected tab, primary action, running, focus). Do not use it as decoration or for a job's hue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Labelled Number Rule",
+        "body": "Every resource figure says what it is: 已預約 (reserved) or 即時 (live). Reserved and live values sit on separate lines or in separate phrases and are never summed, averaged or drawn on the same bar.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Numerals are tabular everywhere. Units are spelled in the UI's words (核, MiB, GiB) after a space.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Ring Rule",
+        "body": "The linked-job ring is the only box-shadow in the system. Nothing floats; nothing casts an ambient shadow.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Texture Means Absent Rule",
+        "body": "Capacity a job cannot use is drawn as texture, never as a flat fill: diagonal grey hatching (135°, 5px bands) for system-reserved capacity, a 9px dot grid with a 2px strong-rule edge for capacity the node does not have, and red-tinted hatching (135°, 6px bands) over the period grid for an offline node.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** give every new resource (GPU cards included) its own axis option and draw its units as whole periods in the same node columns.",
+      "**Do** derive a job's hue from its ID and reuse the same pair on every surface that shows that job.",
+      "**Do** draw unavailable capacity as texture: grey hatching for system-reserved, dot grid for not present, red hatching for offline.",
+      "**Do** carry state in border style as well as colour: solid, dashed (waiting/stopping), dotted (unknown), struck (cancelled).",
+      "**Do** label every resource number 已預約 or 即時, and keep the two on separate lines.",
+      "**Do** size everything in rem from the 15px root so projector mode (18px) scales the whole page.",
+      "**Do** keep the linked-job ring as the single link between a roster row and its block."
+    ],
+    "donts": [
+      "**Don't** summarise the cluster as big-number cards or per-node progress bars; capacity is read off the timetable.",
+      "**Don't** give other users' reservations a hue or an identity; they stay Others Grey.",
+      "**Don't** merge reserved and live usage into one figure, bar or chart.",
+      "**Don't** add drop or ambient shadows; the linked-job ring is the only shadow.",
+      "**Don't** open job detail in a modal; it replaces the roster panel in place.",
+      "**Don't** introduce a second typeface for headings; hierarchy is size and weight within Noto Sans TC.",
+      "**Don't** translate state names or job IDs; they stay in English as the API reports them."
+    ]
+  }
+}

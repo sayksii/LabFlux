@@ -19,3 +19,6 @@ outputs/
 *.iso
 configs/local*.toml
 configs/vm*.toml
+.impeccable/config.local.json
+.impeccable/review/
+.impeccable/mocks/
