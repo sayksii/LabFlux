@@ -52,7 +52,7 @@ def scheduler(ctx: typer.Context) -> None:
 
 @app.command()
 def worker(ctx: typer.Context) -> None:
-    """Start a Docker worker; SIGINT/SIGTERM stop its containers gracefully."""
+    """Start a Docker worker; SIGINT/SIGTERM stop the worker but leave job containers running."""
     import signal
 
     from labflux.worker import Worker
@@ -135,13 +135,18 @@ def submit(
         result = checked(client.post("/api/jobs", json=job.model_dump())).json()
         if wait:
             deadline = time.monotonic() + wait_timeout
-            while result["state"] not in {"SUCCEEDED", "FAILED", "CANCELLED", "UNKNOWN"}:
+            noted = False
+            # UNKNOWN is not final: it clears when the worker reconnects or a restart adopts it.
+            while result["state"] not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
                 if time.monotonic() >= deadline:
                     show(result)
                     typer.echo(
                         "Wait timed out; the job remains managed by the scheduler.", err=True
                     )
                     raise typer.Exit(1)
+                if result["state"] == "UNKNOWN" and not noted:
+                    typer.echo("The worker is unreachable (UNKNOWN); still waiting.", err=True)
+                    noted = True
                 time.sleep(0.25)
                 result = checked(client.get(f"/api/jobs/{result['id']}")).json()
         show(result)
