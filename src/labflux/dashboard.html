@@ -100,6 +100,13 @@
   .blk.others { --fill: #e9ecf1; --line: #c5cad3; cursor: default; }
   .blk.stopping { border-style: dashed; border-width: 2px; }
   .blk.unknown { border-style: dotted; border-width: 2px; --line: var(--unknown); }
+  /* GPU axis: one period per pooled card; cards no job holds are labelled in place. */
+  .col .card { position: absolute; left: 0; right: 0; padding: .3rem .95rem; display: flex; flex-direction: column;
+    justify-content: center; font-size: .8rem; line-height: 1.3; color: var(--muted); overflow: hidden; }
+  .col .card b { font-weight: 500; color: var(--ink); }
+  .col .card b, .col .card span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .col .card.external { background: var(--hatch); }
+  .col .card.tight span { display: none; }
   .blk.land { animation: land .24s cubic-bezier(.16, 1, .3, 1); transform-origin: top; }
   @keyframes land { from { opacity: 0; transform: scaleY(.88); } }
   @media (prefers-reduced-motion: reduce) { .blk.land { animation: none; } }
@@ -205,6 +212,7 @@
     .node-name b { flex: 1 0 100%; min-width: 0; font-size: .867rem; white-space: nowrap; overflow: hidden;
       text-overflow: ellipsis; direction: rtl; text-align: left; }
     .blk { left: .25rem; right: .25rem; padding-inline: .4rem; }
+    .col .card { padding-inline: .65rem; }
     .panel-head .seg { margin-left: 0; }
     dl.facts { grid-template-columns: 5rem 1fr; }
   }
@@ -242,6 +250,7 @@
         <div class="seg" role="group" aria-label="資源">
           <button data-axis="cpu" aria-pressed="true">CPU 核心</button>
           <button data-axis="ram" aria-pressed="false">RAM</button>
+          <button data-axis="gpu" aria-pressed="false" hidden>GPU 卡</button>
         </div>
       </div>
       <div class="sheet-scroll"><div class="timetable" id="timetable"></div></div>
@@ -249,7 +258,8 @@
         <span><i style="background:linear-gradient(90deg,#dbe7fb 0 33%,#fde3d3 33% 66%,#d9f0e0 66%);border:1px solid #9aa8bb"></i>你的工作(每個工作一色)</span>
         <span><i style="background:#e9ecf1;border:1px solid #c5cad3"></i>其他使用者</span>
         <span><i style="background:#fff;border:1px solid var(--rule-strong)"></i>可用</span>
-        <span><i style="background:var(--hatch);border:1px solid var(--rule-strong)"></i>系統保留</span>
+        <span id="lgReserve"><i style="background:var(--hatch);border:1px solid var(--rule-strong)"></i>系統保留</span>
+        <span id="lgExternal" hidden><i style="background:var(--hatch);border:1px solid var(--rule-strong)"></i>外部使用中(不接新工作)</span>
         <span><i style="background:var(--none);border:1px solid var(--rule-strong)"></i>節點沒有這部分</span>
         <span><i style="background:var(--hatch-off);border:1px solid #e5b5b1"></i>節點失聯</span>
       </div>
@@ -362,6 +372,45 @@ function span(a, b) {
 const clock = (t) => (t ? new Date(t * 1000).toLocaleTimeString() : "—");
 const stamp = (state) => el("span", { className: "stamp s-" + state, textContent: state });
 
+/* GPU cards: absent fields (older API) mean no cards, so nothing GPU-related is drawn. */
+const gpus = (n) => ((n.capacity && n.capacity.gpus) || []).slice().sort((a, b) => a.index - b.index);
+const hasGpus = () => S.nodes.some((n) => gpus(n).length);
+const seenGpus = (n) => new Map(((n.observed && n.observed.gpus) || []).map((g) => [g.uuid, g]));
+const heldGpus = (n) => new Set((n.allocated && n.allocated.gpu_uuids) || []);
+const gpuName = (name) => String(name).replace(/^NVIDIA\s+/i, "").replace(/^GeForce\s+/i, "");
+const gpuLive = (o) => `即時 ${mem(o.memory_used_mib)} · ${trim(o.utilization_percent)}%`;
+function cardName(uuid) {
+  for (const n of S.nodes) {
+    const g = gpus(n).find((x) => x.uuid === uuid);
+    if (g) return `GPU ${g.index} ${gpuName(g.name)}`;
+  }
+  return `${String(uuid).slice(0, 12)}…`;
+}
+function resText(res) {
+  const base = `${cores(res.cpu ?? 0)} · ${mem(res.memory_mib ?? 0)}`;
+  return res.gpu ? `${base} · ${res.gpu} 張 GPU` : base;
+}
+function gpuNeed(res) {
+  return [`${res.gpu} 張`, res.gpu_model && `型號含 ${res.gpu_model}`,
+    res.min_vram_mib && `每張至少 ${mem(res.min_vram_mib)}`].filter(Boolean).join(" · ");
+}
+/* Same eligibility as the scheduler: matching, not held, reported, not in external use. */
+function gpuFit(n, need) {
+  const seen = seenGpus(n), held = heldGpus(n);
+  const model = (need.gpu_model || "").toLowerCase(), vram = need.min_vram_mib || 0;
+  const fit = { id: n.id, match: 0, free: 0, held: 0, external: 0, unreported: 0 };
+  for (const g of gpus(n)) {
+    if (!g.name.toLowerCase().includes(model) || g.memory_total_mib < vram) continue;
+    fit.match++;
+    const o = seen.get(g.uuid);
+    if (held.has(g.uuid)) fit.held++;
+    else if (!o) fit.unreported++;
+    else if (o.external_use) fit.external++;
+    else fit.free++;
+  }
+  return fit;
+}
+
 async function api(path, init = {}) {
   const r = await fetch(path, { ...init, headers: { Authorization: "Bearer " + S.token, ...(init.headers || {}) } });
   if (r.status === 401) throw Object.assign(new Error("Token 無效或已失效"), { auth: true });
@@ -400,10 +449,27 @@ function renderCluster() {
     ["執行中", String(S.jobs.filter((j) => TABS[1][2](j)).length)],
     ["排隊", String(S.jobs.filter((j) => j.state === "QUEUED").length)],
   ];
+  if (hasGpus()) items.splice(3, 0, ["GPU 已預約", `${sum((n) => n.allocated.gpu || 0)} / ${sum((n) => gpus(n).length)} 張`]);
   $("cluster").replaceChildren(...items.map(([k, v]) => el("div", {}, el("dt", { textContent: k }), el("dd", { textContent: v }))));
 }
 
+function setAxis(axis) {
+  S.axis = axis;
+  document.querySelectorAll("[data-axis]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.axis === axis)));
+}
+function renderAxes() {
+  const gpu = hasGpus();
+  document.querySelector('[data-axis="gpu"]').hidden = !gpu;
+  if (!gpu && S.axis === "gpu") setAxis("cpu");
+  $("lgReserve").hidden = S.axis === "gpu";
+  $("lgExternal").hidden = S.axis !== "gpu";
+}
+
 function axisInfo() {
+  if (S.axis === "gpu") {
+    return { unit: 1, rows: Math.max(1, ...S.nodes.map((n) => gpus(n).length)), boundary: false, total: (n) => gpus(n).length,
+      usable: (n) => gpus(n).length, used: (r) => r.gpu || 0, label: (i) => String(i), unitLabel: "張", reserveText: "" };
+  }
   if (S.axis === "cpu") {
     const max = Math.max(1, ...S.nodes.map((n) => n.capacity.total_cpu || n.capacity.cpu));
     const rows = Math.ceil(max);
@@ -441,11 +507,14 @@ function renderTimetable() {
     const off = n.status !== "ONLINE";
     const live = n.observed || {};
     const used = ax.used(n.allocated), usable = ax.usable(n);
+    const gpuHead = S.axis === "gpu" && usable > 0;
     kids.push(el("div", { className: "node-head" + (off ? " offline" : "") },
       el("div", { className: "node-name" }, el("b", { textContent: n.id, title: n.id }), stamp(n.status)),
-      el("div", { className: "node-cap", textContent: S.axis === "cpu"
-        ? `已預約 ${trim(used)} / ${cores(usable)}` : `已預約 ${mem(used)} / ${mem(usable)}` }),
+      el("div", { className: "node-cap", textContent: S.axis === "gpu"
+        ? (usable ? `已預約 ${used} / ${usable} 張` : "沒有納入的 GPU")
+        : S.axis === "cpu" ? `已預約 ${trim(used)} / ${cores(usable)}` : `已預約 ${mem(used)} / ${mem(usable)}` }),
       off ? el("div", { className: "node-live", textContent: `失聯 · 最後心跳 ${ago(n.last_seen)}` })
+        : gpuHead ? gpuHeadLive(n)
         : el("div", { className: "node-live" }, el("span", { textContent: `即時 CPU ${trim(live.cpu_percent ?? 0)}%` }),
           el("span", { textContent: `可用 RAM ${mem(live.available_memory_mib ?? 0)}` }))));
   }
@@ -469,6 +538,11 @@ function renderTimetable() {
         style: { top: px(usable) + "px", height: px(total - usable) + "px" } }));
     }
     if (px(total) < height - 0.5) col.append(el("div", { className: "beyond", style: { top: px(total) + "px" } }));
+    if (S.axis === "gpu") {
+      gpuColumn(col, n, row, mine, seen, scale);
+      kids.push(col);
+      continue;
+    }
 
     let y = 0, own = 0;
     for (const { job, attempt } of mine.filter((m) => m.attempt.node_id === n.id)) {
@@ -513,6 +587,70 @@ function renderTimetable() {
   box.replaceChildren(...kids);
 }
 
+function gpuHeadLive(n) {
+  const seen = seenGpus(n);
+  let first = true;
+  const parts = gpus(n).map((g) => {
+    const o = seen.get(g.uuid);
+    if (!o) return `GPU ${g.index} 尚未回報`;
+    const text = `${first ? "即時 " : ""}GPU ${g.index} ${trim(o.utilization_percent)}%`;
+    first = false;
+    return text;
+  });
+  const external = gpus(n).filter((g) => (seen.get(g.uuid) || {}).external_use).length;
+  if (external) parts.push(`外部使用 ${external} 張`);
+  return el("div", { className: "node-live" }, ...parts.map((t) => el("span", { textContent: t })));
+}
+
+/* Each pooled card is one whole period; a job holding k cards draws k blocks in its hue. */
+function gpuColumn(col, n, row, mine, seen, scale) {
+  const off = n.status !== "ONLINE";
+  const observed = seenGpus(n), held = heldGpus(n), own = new Map();
+  for (const m of mine) {
+    if (m.attempt.node_id === n.id) for (const uuid of m.attempt.gpu_uuids || []) own.set(uuid, m);
+  }
+  gpus(n).forEach((g, i) => {
+    const o = observed.get(g.uuid), model = gpuName(g.name), size = mem(g.memory_total_mib);
+    const card = `GPU ${g.index} · ${model}`;
+    const h = row - 2, place = { top: i * row + 1 + "px", height: h + "px" };
+    const mineHere = own.get(g.uuid);
+    if (mineHere) {
+      const { job, attempt } = mineHere;
+      seen.add(attempt.id);
+      const cls = ["blk"];
+      if (h < 62 * scale) cls.push("short");
+      if (h < 34) cls.push("tight");
+      if (h < 16) cls.push("micro");
+      if (job.state === "STOPPING") cls.push("stopping");
+      if (job.state === "UNKNOWN") cls.push("unknown");
+      if (!S.seenBlocks.has(attempt.id)) cls.push("land");
+      if (S.hover === job.id) cls.push("hot");
+      if (S.selected === job.id) cls.push("sel");
+      const b = paint(el("button", { className: cls.join(" "), "data-job": job.id, type: "button",
+        title: `${job.id}\n${job.state} · ${card} · ${size}${o ? "\n" + gpuLive(o) : ""}`, style: place },
+        el("b", { textContent: short(job.id) }),
+        el("span", { textContent: `${model} · ${size}` }),
+        el("span", { textContent: job.state === "RUNNING" ? `執行 ${span(attempt.started_at)}` : job.state })), job.id);
+      b.addEventListener("click", () => openDetail(job.id));
+      b.addEventListener("mouseenter", () => setHover(job.id));
+      b.addEventListener("mouseleave", () => setHover(null));
+      col.append(b);
+    } else if (held.has(g.uuid)) {
+      col.append(el("div", { className: "blk others" + (h < 34 ? " tight" : "") + (h < 16 ? " micro" : ""),
+        title: `其他使用者的預約\n${card} · ${size}`, style: place },
+        el("b", { textContent: "其他使用者" }), el("span", { textContent: `${model} · ${size}` })));
+    } else {
+      // Offline readings are stale, so only the card itself is named there.
+      const status = off ? null : !o ? "尚未回報" : o.external_use ? "外部使用中" : null;
+      col.append(el("div", { className: "card" + (o && o.external_use && !off ? " external" : "") + (h < 44 ? " tight" : ""),
+        title: `${card} · ${size}\n${g.uuid}${o && !off ? "\n" + gpuLive(o) : ""}`, style: { top: i * row + 1 + "px", height: row - 1 + "px" } },
+        el("b", { textContent: `${model} · ${size}` }),
+        el("span", { textContent: [status, `GPU ${g.index}`].filter(Boolean).join(" · ") }),
+        o && !off && el("span", { textContent: gpuLive(o) })));
+    }
+  });
+}
+
 function queuePositions() {
   const q = S.jobs.filter((j) => j.state === "QUEUED").sort((a, b) => a.submission_seq - b.submission_seq);
   return new Map(q.map((j, i) => [j.id, { pos: i + 1, head: q[0] }]));
@@ -524,6 +662,22 @@ function blocker(job) {
   if (!online.length) return "沒有上線的節點";
   const withData = online.filter((n) => sets.every((x) => (n.capacity.datasets || []).includes(x)));
   if (!withData.length) return `沒有節點有資料集 ${sets.join(", ")}`;
+  const gpuOk = new Set(withData.map((n) => n.id));
+  if (need.gpu > 0) {
+    const fits = withData.map((n) => gpuFit(n, need));
+    const kind = need.gpu_model ? ` ${need.gpu_model}` : "";
+    const vram = need.min_vram_mib ? `(每張至少 ${mem(need.min_vram_mib)})` : "";
+    const enough = fits.filter((f) => f.match >= need.gpu);
+    if (!enough.length) return `沒有節點有 ${need.gpu} 張${kind} GPU${vram}`;
+    if (!enough.some((f) => f.free >= need.gpu)) {
+      const b = enough.reduce((a, f) => (f.free > a.free ? f : a));
+      const why = [b.held && `${b.held} 張已預約`, b.external && `${b.external} 張外部使用中`,
+        b.unreported && `${b.unreported} 張尚未回報`].filter(Boolean).join("、");
+      return `需要 ${need.gpu} 張${kind} GPU${vram},可用 ${b.free} 張(${b.id}${why ? ":" + why : ""})`;
+    }
+    gpuOk.clear();
+    for (const f of fits) if (f.free >= need.gpu) gpuOk.add(f.id);
+  }
   const free = withData.map((n) => ({ id: n.id, cpu: n.capacity.cpu - n.allocated.cpu, ram: n.capacity.memory_mib - n.allocated.memory_mib }));
   const best = (k) => free.reduce((a, b) => (b[k] > a[k] ? b : a));
   if (!free.some((f) => f.cpu + 1e-9 >= need.cpu)) {
@@ -534,7 +688,9 @@ function blocker(job) {
     const b = best("ram");
     return `需要 ${mem(need.memory_mib)} RAM,最多空 ${mem(Math.max(0, b.ram))}(${b.id})`;
   }
-  if (!free.some((f) => f.cpu + 1e-9 >= need.cpu && f.ram >= need.memory_mib)) return "沒有單一節點同時有足夠的 CPU 和 RAM";
+  if (!free.some((f) => f.cpu + 1e-9 >= need.cpu && f.ram >= need.memory_mib && gpuOk.has(f.id))) {
+    return need.gpu > 0 ? "沒有單一節點同時有足夠的 CPU、RAM 和 GPU" : "沒有單一節點同時有足夠的 CPU 和 RAM";
+  }
   return null;
 }
 function explain(job, qpos) {
@@ -573,7 +729,7 @@ function renderJobs() {
         placed ? paint(el("i", { className: "sw" }), j.id) : el("i", { className: "sw none" }), short(j.id))),
       el("td", {}, stamp(j.state)),
       el("td", { textContent: nodeOf(j) || "—" }),
-      el("td", { className: "num hide-sm res", textContent: `${cores(res.cpu ?? 0)} · ${mem(res.memory_mib ?? 0)}` }),
+      el("td", { className: "num hide-sm res", textContent: resText(res) }),
       el("td", { className: "why-cell" }, el("div", { className: "why", textContent: explain(j, qpos), title: j.reason || "" })));
     tr.addEventListener("click", () => openDetail(j.id));
     tr.addEventListener("mouseenter", () => setHover(j.id));
@@ -634,12 +790,13 @@ function renderDetail(d) {
     ["工作 ID", el("code", { textContent: d.id })],
     ["映像", spec.image],
     ["指令", el("code", { textContent: (spec.argv || []).join(" ") })],
-    ["資源", `${cores(res.cpu ?? 0)} · ${mem(res.memory_mib ?? 0)}`],
+    ["資源", resText(res)],
+    res.gpu ? ["GPU", gpuNeed(res)] : null,
     ["時限", spec.time_limit_s ? `${trim(spec.time_limit_s)} 秒` : "—"],
     ["資料集", (spec.datasets || []).join(", ") || "—"],
     ["提交", new Date(d.created_at * 1000).toLocaleString()],
     ["說明", reason(d.reason)],
-  ];
+  ].filter(Boolean);
   $("dFacts").replaceChildren(...facts.flatMap(([k, v]) => [el("dt", { textContent: k }), el("dd", {}, v ?? "—")]));
 
   const acts = $("dActions");
@@ -663,11 +820,14 @@ function renderDetail(d) {
   }
 
   const at = d.attempts || [];
+  const gpuCol = res.gpu > 0 || at.some((a) => (a.gpu_uuids || []).length);
+  const heads = ["Attempt", "節點", ...(gpuCol ? ["GPU"] : []), "狀態", "開始", "耗時", "Exit"];
   $("dAttempts").replaceChildren(at.length ? el("div", { className: "table-scroll" }, el("table", { className: "attempts" },
-    el("thead", {}, el("tr", {}, ...["Attempt", "節點", "狀態", "開始", "耗時", "Exit"].map((h) => el("th", { textContent: h })))),
+    el("thead", {}, el("tr", {}, ...heads.map((h) => el("th", { textContent: h })))),
     el("tbody", {}, ...at.map((a) => el("tr", {},
       el("td", {}, el("code", { textContent: short(a.id), title: a.id })),
       el("td", { textContent: a.node_id }),
+      gpuCol && el("td", { textContent: (a.gpu_uuids || []).map(cardName).join(", ") || "—", title: (a.gpu_uuids || []).join("\n") }),
       el("td", {}, stamp(a.state)),
       el("td", { className: "num", textContent: clock(a.started_at) }),
       el("td", { className: "num", textContent: span(a.started_at, a.finished_at) || "—" }),
@@ -777,7 +937,7 @@ function renderLive() {
     ? (S.lastOk ? `連線中斷 · 顯示 ${new Date(S.lastOk).toLocaleTimeString()} 的資料` : "無法連上 Scheduler")
     : `即時 · ${new Date(S.lastOk).toLocaleTimeString()} 更新`;
 }
-function renderAll() { renderCluster(); renderTimetable(); renderTabs(); renderJobs(); renderLive(); }
+function renderAll() { renderCluster(); renderAxes(); renderTimetable(); renderTabs(); renderJobs(); renderLive(); }
 
 function showLogin(message = "") {
   $("app").hidden = true; $("login").hidden = false;
@@ -811,8 +971,8 @@ $("logout").addEventListener("click", () => logout());
 $("back").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && S.selected) closeDetail(); });
 document.querySelectorAll("[data-axis]").forEach((b) => b.addEventListener("click", () => {
-  S.axis = b.dataset.axis;
-  document.querySelectorAll("[data-axis]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  setAxis(b.dataset.axis);
+  renderAxes();
   renderTimetable();
 }));
 $("projector").addEventListener("click", () => {

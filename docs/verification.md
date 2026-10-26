@@ -200,6 +200,23 @@ plan.md 沒有對應的 checklist 項目，以下只記錄驗證結果。
 - 完成後 attempt 的 workspace（含 `.venv` 與 `/workspace/data`）已刪除，GPU 配置釋放；uv 快取 5.2 GB。
 - 結束後沒有殘留容器、GPU process 或監聽的 port；暫時的 uv 快取與資料已刪除。
 
+### Dashboard 的 GPU 卡課表（2026-10-27）
+
+- 資源切換多一個「GPU 卡」，只有節點回報了 `capacity.gpus` 才出現；每張卡一格、整張獨占。
+  自己的工作用工作色塊（兩張卡就是兩個同色色塊），其他使用者的卡是灰色，外部使用中的卡是灰色斜線，
+  尚未回報的卡標「尚未回報」，失聯節點保留紅色斜線且不顯示過期讀數。叢集列、節點欄頭、排隊說明、
+  工作詳情（GPU 需求與分到的卡）都依 API 的 GPU 欄位顯示；CPU、RAM 課表不變。
+- 實際 HTTP 驗證：以本分支在 127.0.0.1 啟動 Scheduler（含排程迴圈），經內部 API 註冊模擬 kayle（3090 + A5000）、
+  karma（4090）、一台尚未回報 GPU 的節點，以及一台註冊時完全沒有 GPU 欄位的節點，持續送心跳；
+  兩個使用者提交 1 張卡、2 張卡、CPU 與需要排隊的 GPU 工作，之後讓 2 卡工作完成、把 3090 標成外部使用、
+  停止一台節點的心跳直到失聯。
+- 以 Playwright headless Chromium 擷取 GPU／CPU／RAM 課表在 1440px 與 390px、投影模式及工作詳情共 12 張截圖：
+  console 錯誤 0、失敗請求 0、頁面沒有水平捲動；版面依截圖修正（卡片標題放型號與 VRAM，狀態放在第二行開頭，
+  避免窄欄截掉「外部使用中」）。
+- 另把 API 回應裡所有 GPU 欄位移除，模擬舊版 API：沒有「GPU 卡」選項、叢集列與圖例都沒有 GPU 項目。
+- `uv run pytest -m 'not docker and not vm'`：69 passed（新增 Dashboard GPU 標記與 API 欄位的檢查）。
+- 這些是以模擬 Worker 驗證畫面；實際 Worker 回報的 GPU 資料要到步驟 3、部署後再確認。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。
