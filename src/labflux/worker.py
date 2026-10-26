@@ -17,6 +17,7 @@ import psutil
 
 from labflux.archives import extract_archive, pack_directory
 from labflux.config import Settings
+from labflux.gpu import GpuProbe
 from labflux.models import Capacity, ExecutionSpec
 from labflux.runtime import DockerExecutor, ExecutionResult
 
@@ -33,7 +34,7 @@ def write_json(path: Path, value: dict) -> None:
     temp.replace(path)
 
 
-def measure_capacity(settings: Settings) -> Capacity:
+def measure_capacity(settings: Settings, gpus: GpuProbe | None = None) -> Capacity:
     total_cpu = os.cpu_count() or 1
     total_memory = psutil.virtual_memory().total // 1024**2
     cpu = settings.allocatable_cpu or total_cpu
@@ -46,16 +47,23 @@ def measure_capacity(settings: Settings) -> Capacity:
         cpu=cpu,
         memory_mib=memory,
         datasets=sorted(name for name, path in settings.datasets.items() if path.is_dir()),
+        gpus=gpus.devices if gpus else [],
+        gpu_driver_version=gpus.driver_version if gpus else None,
+        cuda_driver_version=gpus.cuda_driver_version if gpus else None,
     )
 
 
 class Worker:
-    def __init__(self, settings: Settings, executor=None):
+    def __init__(self, settings: Settings, executor=None, gpus: GpuProbe | None = None):
         self.settings = settings
         self.instance_id = uuid.uuid4().hex
         self.root = settings.data_dir / "workers" / settings.worker_id
         self.root.mkdir(parents=True, exist_ok=True)
         self.executor = executor or DockerExecutor(settings)
+        # Fails before registration when configured cards cannot be resolved.
+        self.gpus = gpus or GpuProbe(settings.gpus, settings.gpu_external_memory_mib)
+        # Cards held by attempts whose result is not yet recorded; never reported as external.
+        self.assigned_gpus: dict[str, list[str]] = {}
         self.stop_event = threading.Event()
         self.lock = threading.RLock()
         self.pool = ThreadPoolExecutor(
@@ -99,6 +107,9 @@ class Worker:
             raise ValueError("invalid attempt ID")
         if spec.worker_id != self.settings.worker_id:
             raise ValueError("command is addressed to another worker")
+        pool = {device.uuid for device in self.gpus.devices}
+        if len(set(spec.gpu_uuids)) != len(spec.gpu_uuids) or not pool.issuperset(spec.gpu_uuids):
+            raise ValueError("command assigns GPUs outside this worker's pool")
         with self.lock:
             handle = self.handles.get(spec.attempt_id)
             if handle:
@@ -142,6 +153,8 @@ class Worker:
                 },
             )
             self.handles[spec.attempt_id] = {"cancel": cancel}
+            if spec.gpu_uuids:
+                self.assigned_gpus[spec.attempt_id] = spec.gpu_uuids
             future = self.pool.submit(self._execute, spec, cancel, command["kind"] == "STOP")
             self.handles[spec.attempt_id]["future"] = future
 
@@ -224,13 +237,15 @@ class Worker:
                 str(exc)[:2048],
                 not preparation_finished,
             )
-        self._change(
-            spec.attempt_id,
-            result=result.as_dict(),
-            result_event_id=uuid.uuid4().hex,
-            result_sent=False,
-            output_sent=False,
-        )
+        with self.lock:
+            self._change(
+                spec.attempt_id,
+                result=result.as_dict(),
+                result_event_id=uuid.uuid4().hex,
+                result_sent=False,
+                output_sent=False,
+            )
+            self.assigned_gpus.pop(spec.attempt_id, None)
 
     def flush(self) -> None:
         with self.lock:
@@ -327,6 +342,18 @@ class Worker:
             return
         self._change(attempt_id, output_sent=True)
 
+    def heartbeat_payload(self) -> dict:
+        with self.lock:
+            assigned = {uuid for uuids in self.assigned_gpus.values() for uuid in uuids}
+        return {
+            "instance_id": self.instance_id,
+            "observed": {
+                "cpu_percent": psutil.cpu_percent(),
+                "available_memory_mib": psutil.virtual_memory().available / 1024**2,
+            },
+            "gpus": [gpu.model_dump() for gpu in self.gpus.observe(assigned)],
+        }
+
     def _heartbeats(self) -> None:
         with httpx.Client(
             base_url=self.settings.scheduler_url,
@@ -336,16 +363,7 @@ class Worker:
         ) as client:
             while not self.stop_event.is_set():
                 try:
-                    response = client.post(
-                        self._url("heartbeat"),
-                        json={
-                            "instance_id": self.instance_id,
-                            "observed": {
-                                "cpu_percent": psutil.cpu_percent(),
-                                "available_memory_mib": psutil.virtual_memory().available / 1024**2,
-                            },
-                        },
-                    )
+                    response = client.post(self._url("heartbeat"), json=self.heartbeat_payload())
                     response.raise_for_status()
                 except httpx.HTTPError as exc:
                     log.warning("heartbeat failed: %s", type(exc).__name__)
@@ -363,7 +381,7 @@ class Worker:
 
     def run(self) -> None:
         self.executor.check()
-        capacity = measure_capacity(self.settings)
+        capacity = measure_capacity(self.settings, self.gpus)
         self._post(
             "/internal/workers/register",
             {
@@ -406,3 +424,4 @@ class Worker:
             except httpx.HTTPError:
                 log.warning("final events remain in the local outbox")
             self.client.close()
+            self.gpus.close()

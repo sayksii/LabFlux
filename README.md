@@ -88,7 +88,7 @@ Worker 主動領取命令，心跳由獨立執行緒每 2 秒回報，避免下�
 內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
 `/health` 不需認證，`/docs` 提供 API 規格。
 
-SQLite schema 由啟動時套用 migration 1；也可執行 `uv run labflux db-upgrade`。
+SQLite schema 在啟動時依序套用編號 migration（目前為版本 2）；也可執行 `uv run labflux db-upgrade`。
 Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir`。
 
 ## 三台 VM 與驗證

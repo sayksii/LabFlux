@@ -12,6 +12,7 @@ dependencies = [
   "docker>=7.1,<8",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
+  "nvidia-ml-py>=12,<14",
   "pathspec>=0.12,<2",
   "psutil>=6,<8",
   "pydantic>=2.10,<3",
@@ -32,7 +33,11 @@ packages = ["src/labflux"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-markers = ["docker: requires a working local Docker daemon", "vm: requires three provisioned virtual machines"]
+markers = [
+  "docker: requires a working local Docker daemon",
+  "vm: requires three provisioned virtual machines",
+  "gpu: requires NVIDIA GPUs and the NVIDIA Container Toolkit",
+]
 
 [tool.ruff]
 target-version = "py312"

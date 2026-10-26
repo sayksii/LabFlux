@@ -15,6 +15,7 @@ from pathlib import Path
 
 import docker
 from docker.errors import DockerException, ImageNotFound, NotFound
+from docker.types import DeviceRequest
 
 from labflux.config import Settings
 from labflux.models import ExecutionSpec
@@ -99,17 +100,22 @@ class DockerExecutor:
                         raise ValueError(f"dataset is unavailable: {dataset}")
                     volumes[str(path)] = {"bind": f"/datasets/{dataset}", "mode": "ro"}
                 memory = spec.job.resources.memory_mib * 1024**2
+                environment = {**spec.job.env, "PYTHONUNBUFFERED": "1"}
+                devices = None
+                if spec.gpu_uuids:
+                    # Docker sets NVIDIA_VISIBLE_DEVICES to exactly these UUIDs.
+                    devices = [DeviceRequest(device_ids=spec.gpu_uuids, capabilities=[["gpu"]])]
+                else:
+                    # Keeps CPU jobs GPU-less even if a GPU runtime were made the default.
+                    environment["NVIDIA_VISIBLE_DEVICES"] = "void"
                 container = client.containers.create(
                     spec.job.image,
                     command=spec.job.argv,
                     name=name,
                     detach=True,
                     working_dir="/workspace",
-                    environment={
-                        **spec.job.env,
-                        "PYTHONUNBUFFERED": "1",
-                        "NVIDIA_VISIBLE_DEVICES": "void",
-                    },
+                    environment=environment,
+                    device_requests=devices,
                     user=f"{os.getuid()}:{os.getgid()}",
                     volumes=volumes,
                     nano_cpus=round(spec.job.resources.cpu * 1_000_000_000),
@@ -134,13 +140,19 @@ class DockerExecutor:
                 raise RuntimeError("container identity does not match the dispatched attempt")
             container.reload()
             if container.status == "created" and not cancel.is_set():
+                # Attach before start: attaching afterwards with logs=True can lose or repeat
+                # output written between the log replay and the live stream.
+                stream = container.attach(stream=True, stdout=True, stderr=True, demux=True)
                 container.start()
                 container.reload()
             if container.status == "created":
                 container.remove()
                 return ExecutionResult("CANCELLED", None, "cancelled before start", True)
             on_started()
-            stream = container.attach(stream=True, stdout=True, stderr=True, logs=True, demux=True)
+            if stream is None:
+                stream = container.attach(
+                    stream=True, stdout=True, stderr=True, logs=True, demux=True
+                )
 
             def collect_logs() -> None:
                 try:

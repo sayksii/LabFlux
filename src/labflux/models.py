@@ -46,6 +46,10 @@ class JobSpec(BaseModel):
     def valid_env(cls, values: dict[str, str]) -> dict[str, str]:
         if any(not k or "=" in k or "\x00" in k + v for k, v in values.items()):
             raise ValueError("invalid environment variable")
+        if "NVIDIA_VISIBLE_DEVICES" in values:
+            raise ValueError(
+                "NVIDIA_VISIBLE_DEVICES is managed by LabFlux; request GPUs with resources.gpu"
+            )
         return values
 
     @field_validator("datasets")

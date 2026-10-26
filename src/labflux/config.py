@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import tomllib
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+
+from labflux.models import GPU_UUID
 
 
 class Settings(BaseModel):
@@ -32,6 +35,9 @@ class Settings(BaseModel):
     allocatable_cpu: float | None = Field(default=None, gt=0)
     allocatable_memory_mib: int | None = Field(default=None, ge=16)
     datasets: dict[str, Path] = Field(default_factory=dict)
+    # NVML indexes or "GPU-..." UUIDs this worker may allocate; empty pools no GPU.
+    gpus: list[StrictInt | StrictStr] = Field(default_factory=list)
+    gpu_external_memory_mib: int = Field(default=1024, ge=1)
     max_source_bytes: int = Field(default=100 * 1024**2, gt=0)
     max_output_bytes: int = Field(default=1024**3, gt=0)
     max_extracted_bytes: int = Field(default=1024**3, gt=0)
@@ -53,6 +59,9 @@ class Settings(BaseModel):
             raise ValueError("each user must have a distinct token")
         if not self.worker_token or self.worker_token in self.users.values():
             raise ValueError("worker_token must be distinct from user tokens")
+        for gpu in self.gpus:
+            if not re.fullmatch(GPU_UUID, gpu) if isinstance(gpu, str) else gpu < 0:
+                raise ValueError(f"gpus entries must be NVML indexes or GPU UUIDs: {gpu!r}")
         self.data_dir = self.data_dir.expanduser().resolve()
         self.datasets = {name: path.expanduser().resolve() for name, path in self.datasets.items()}
         return self
