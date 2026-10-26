@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "labflux"
+version = "0.1.0"
+description = "Resource-aware batch scheduling for heterogeneous laboratory machines"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "docker>=7.1,<8",
+  "fastapi>=0.115,<1",
+  "httpx>=0.28,<1",
+  "pathspec>=0.12,<2",
+  "psutil>=6,<8",
+  "pydantic>=2.10,<3",
+  "sqlalchemy>=2.0,<3",
+  "typer>=0.15,<1",
+  "uvicorn>=0.34,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1"]
+
+[project.scripts]
+labflux = "labflux.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/labflux"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = ["docker: requires a working local Docker daemon", "vm: requires three provisioned virtual machines"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
