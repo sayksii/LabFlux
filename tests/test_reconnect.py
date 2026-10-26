@@ -165,6 +165,54 @@ def test_undelivered_start_is_left_for_normal_polling(client, service):
     assert [c["kind"] for c in service.poll_commands("vm-a", new)] == ["START"]
 
 
+def report_started(client, instance, command, name="vm-a"):
+    response = client.post(
+        f"/internal/workers/{name}/attempts/{command['attempt_id']}/events",
+        headers=worker_headers(),
+        json={"instance_id": instance, "event_id": f"late-start-{instance}", "kind": "STARTED"},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_start_reported_after_a_heartbeat_lapse_runs_the_job(client, service, clock):
+    """The container started during a partition; STARTED arrives before the next heartbeat."""
+    instance = register(client, cpu=1)
+    job = submit(client)
+    command = deliver(client, service, instance, started=False)
+    clock[0] += 11
+    service.tick()
+    assert get_job(client, job)["state"] == "UNKNOWN"
+    report_started(client, instance, command)
+    value = get_job(client, job)
+    assert value["state"] == "RUNNING" and value["attempts"][0]["started_at"] is not None
+    heartbeat(client, "vm-a", instance)
+    assert get_job(client, job)["state"] == "RUNNING"
+
+
+def test_undelivered_start_run_after_a_long_restart_is_running(client, service, clock):
+    """A restart outlasting offline_timeout_s: the redelivered START's STARTED is honoured."""
+    register(client, cpu=1)
+    job = submit(client)
+    clock[0] += 11
+    service.tick()
+    assert get_job(client, job)["state"] == "UNKNOWN"
+    new, _ = restart(client, {})
+    deliver(client, service, new)
+    value = get_job(client, job)
+    assert value["state"] == "RUNNING" and value["attempts"][0]["started_at"] is not None
+
+
+def test_start_after_cancel_and_a_lapse_stays_stopping(client, service, clock):
+    instance = register(client, cpu=1)
+    job = submit(client)
+    command = deliver(client, service, instance, started=False)
+    client.post(f"/api/jobs/{job['id']}/cancel", headers=user_headers())
+    clock[0] += 11
+    service.tick()
+    report_started(client, instance, command)
+    assert get_job(client, job)["state"] == "STOPPING"
+
+
 def test_missing_container_closes_once_and_releases_cards(client, service):
     old = register(client, cpu=2, gpus=[CARD])
     heartbeat(client, "vm-a", old, gpus=[CARD])

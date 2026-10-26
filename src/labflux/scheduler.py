@@ -684,16 +684,32 @@ class Scheduler:
             if attempt["released"] or job["current_attempt_id"] != attempt_id:
                 return {"ignored": True}
             if event.kind == "STARTED":
-                if job["state"] == "STARTING":
+                # The start may arrive after a heartbeat lapse made the job UNKNOWN: the node was
+                # offline, or a restarted worker ran an undelivered START.
+                lapsed = job["state"] == "UNKNOWN" and attempt["reason"] == EXPIRED_ATTEMPT
+                if job["state"] == "STARTING" or lapsed:
+                    state = "STOPPING" if job["cancel_requested"] else "RUNNING"
                     connection.execute(
                         jobs.update()
                         .where(jobs.c.id == job["id"])
-                        .values(state="RUNNING", reason="executing", updated_at=self.clock())
+                        .values(
+                            state=state,
+                            reason=(
+                                "waiting for confirmed container termination"
+                                if state == "STOPPING"
+                                else "executing"
+                            ),
+                            updated_at=self.clock(),
+                        )
                     )
                     connection.execute(
                         attempts.update()
                         .where(attempts.c.id == attempt_id)
-                        .values(state="RUNNING", started_at=self.clock())
+                        .values(
+                            state=state,
+                            started_at=attempt["started_at"] or self.clock(),
+                            **({"reason": "worker reported start"} if lapsed else {}),
+                        )
                     )
             elif not event.termination_confirmed or event.outcome == "UNKNOWN":
                 connection.execute(
