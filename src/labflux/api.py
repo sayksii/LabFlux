@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import time
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -15,6 +16,8 @@ from labflux.artifacts import ArtifactStore
 from labflux.config import Settings
 from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
 from labflux.scheduler import Scheduler, ServiceError
+
+DASHBOARD_PAGE = Path(__file__).parent / "dashboard.html"
 
 
 def create_app(
@@ -68,6 +71,10 @@ def create_app(
     @app.get("/health")
     def health():
         return {"status": "ok", "version": __version__}
+
+    @app.get("/dashboard", include_in_schema=False)
+    def dashboard():
+        return FileResponse(DASHBOARD_PAGE, media_type="text/html")
 
     @app.post("/api/jobs", status_code=201)
     def submit(spec: JobSpec, owner: str = Depends(user)):

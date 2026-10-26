@@ -50,6 +50,10 @@ uv run labflux --config configs/demo.toml cancel JOB_ID
 `submit --wait` 等到工作完成；失敗、取消、狀態不明或等待逾時會以非零狀態退出。
 `cancel` 對排隊工作立即生效；執行中的工作會先變成 `STOPPING`，確認容器停止才變成 `CANCELLED`。
 
+Scheduler 在 `/dashboard` 提供監控頁（例如 `http://127.0.0.1:8000/dashboard`），以使用者 Token 登入。
+節點以課表呈現已預約的 CPU／RAM，清單顯示自己的工作與等待原因；點選工作可看執行紀錄、即時日誌及取消。
+設計脈絡與設計系統見 `PRODUCT.md`、`DESIGN.md`。
+
 ## 工作與資料
 
 工作 JSON 至少包含 `image` 與指令參數陣列 `argv`。`resources.cpu` 表示 CPU 時間配額，
