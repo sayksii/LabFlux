@@ -55,7 +55,7 @@ def test_memory_is_reserved_independently_from_cpu(client):
     assert submit(client)["state"] == "STARTING"
     assert submit(client)["state"] == "QUEUED"
     node = client.get("/api/nodes", headers=user_headers()).json()[0]
-    assert node["allocated"] == {"cpu": 2, "memory_mib": 512, "jobs": 2}
+    assert node["allocated"] == {"cpu": 2, "memory_mib": 512, "jobs": 2, "gpu": 0, "gpu_uuids": []}
 
 
 def test_concurrent_submission_does_not_overallocate(client, service):
@@ -65,7 +65,13 @@ def test_concurrent_submission_does_not_overallocate(client, service):
         results = list(pool.map(lambda _: service.submit("alice", spec), range(24)))
     assert len({job["id"] for job in results}) == 24
     assert sum(job["state"] == "STARTING" for job in results) == 4
-    assert service.list_nodes()[0]["allocated"] == {"cpu": 4, "memory_mib": 1024, "jobs": 4}
+    assert service.list_nodes()[0]["allocated"] == {
+        "cpu": 4,
+        "memory_mib": 1024,
+        "jobs": 4,
+        "gpu": 0,
+        "gpu_uuids": [],
+    }
 
 
 def test_commands_are_stable_until_acknowledged(client):

@@ -1,6 +1,8 @@
 import base64
 import json
+import time
 from contextlib import nullcontext
+from types import SimpleNamespace
 
 from conftest import finish, register, submit, user_headers, worker_headers
 from typer.testing import CliRunner
@@ -77,6 +79,29 @@ def test_cli_fetch_verifies_and_extracts_attempt_output(client, tmp_path, monkey
     result = runner.invoke(cli.app, ["fetch", job["id"], "--directory", str(destination)])
     assert result.exit_code == 0, result.output
     assert (destination / "result.txt").read_text() == "completed"
+
+
+def test_cli_wait_keeps_waiting_through_unknown(client, service, clock, tmp_path, monkeypatch):
+    instance = register(client)
+    runner = configure(monkeypatch, client)
+    spec = tmp_path / "job.json"
+    spec.write_text(json.dumps({"image": "python:3.12-slim", "argv": ["true"]}))
+    steps = []
+
+    def progress(_):
+        # First poll: the heartbeat lapses (UNKNOWN). Second: the worker reports completion.
+        job = service.get_job(service.list_jobs("alice")[-1]["id"], "alice")
+        if not steps:
+            clock[0] += 11
+            service.tick()
+        else:
+            finish(client, job, instance)
+        steps.append(job["state"])
+
+    monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=time.monotonic, sleep=progress))
+    result = runner.invoke(cli.app, ["submit", str(spec), "--wait"])
+    assert result.exit_code == 0, result.output
+    assert "UNKNOWN" in steps and json.loads(result.stdout)["state"] == "SUCCEEDED"
 
 
 def test_cli_invalid_spec_is_a_useful_error(tmp_path):

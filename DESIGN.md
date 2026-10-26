@@ -376,6 +376,14 @@ The timetable's unit of meaning: a button positioned absolutely in its node colu
 - **Arrival:** a new block lands with a 0.24s scale-from-top (0.88 to 1) and fade on cubic-bezier(0.16, 1, 0.3, 1); disabled under reduced motion.
 - **Others:** anonymous Others Grey block labelled 其他使用者 and an amount, not interactive.
 
+### GPU Card Axis
+Shown as a third segmented option, GPU 卡, only when some node reports pooled cards; an API without GPU fields draws nothing GPU-related.
+- **Periods:** one period per pooled card, ordered by GPU index; rows equal the most cards on any node, and nodes with fewer cards show the dot grid below. Cards are whole, so a block is always exactly one period.
+- **Blocks:** the viewer's job draws one block per card in its hue (a two-card job is two same-hue blocks): short job ID, model · total VRAM, then elapsed time or state. Other users' cards are Others Grey blocks naming only the card.
+- **Free cards:** labelled in place in label-size muted text: GPU index · model · total VRAM, then a separate 即時 line (VRAM used, utilization).
+- **Not assignable:** a card in use outside LabFlux is grey hatching labelled 外部使用中 (the legend swaps 系統保留 for this entry on the GPU axis); a card with no report yet says 尚未回報 without texture; an offline node keeps its red hatching and names its cards without stale readings.
+- **Head:** 已預約 x / y 張, then 即時 utilization per card and the count in external use.
+
 ### Node Column Head
 Node name (title weight, wraps anywhere) with its ONLINE/OFFLINE stamp, then 已預約 x / y on the active axis, then a muted line of live readings (即時 CPU %, 可用 RAM). An offline head turns Fault Blush and replaces live readings with the last heartbeat time.
 

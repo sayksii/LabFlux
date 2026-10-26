@@ -37,7 +37,7 @@ def worker_headers():
     return {"Authorization": "Bearer dev-worker-token"}
 
 
-def register(client, name="vm-a", cpu=2, memory=1024, datasets=None):
+def register(client, name="vm-a", cpu=2, memory=1024, datasets=None, gpus=None):
     instance = uuid.uuid4().hex
     response = client.post(
         "/internal/workers/register",
@@ -51,11 +51,33 @@ def register(client, name="vm-a", cpu=2, memory=1024, datasets=None):
                 "cpu": cpu,
                 "memory_mib": memory,
                 "datasets": datasets or [],
+                "gpus": gpus or [],
             },
         },
     )
     assert response.status_code == 200, response.text
     return instance
+
+
+def heartbeat(client, name, instance, gpus=(), external=()):
+    """Report each card in gpus; UUIDs listed in external are in use outside LabFlux."""
+    response = client.post(
+        f"/internal/workers/{name}/heartbeat",
+        headers=worker_headers(),
+        json={
+            "instance_id": instance,
+            "gpus": [
+                {
+                    "uuid": gpu["uuid"],
+                    "memory_used_mib": 0,
+                    "utilization_percent": 0,
+                    "external_use": gpu["uuid"] in external,
+                }
+                for gpu in gpus
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
 
 
 def submit(client, cpu=1, memory=256, user="alice", **fields):

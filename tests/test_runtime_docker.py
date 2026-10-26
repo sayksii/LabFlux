@@ -1,4 +1,5 @@
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
@@ -147,3 +148,35 @@ def test_stop_before_start_confirms_no_container_without_pulling_image(runtime):
     with closing(docker.from_env()) as client:
         with pytest.raises(docker.errors.NotFound):
             client.containers.get(container_name(spec))
+
+
+def test_immediate_output_is_captured_exactly_once(runtime, tmp_path):
+    # The shell may exit before any attach issued after start. The stream is attached before
+    # start, so output is neither lost nor replayed, and the run does not wait out the 5 s
+    # log-reader timeout of attaching to an already-exited container.
+    began = time.monotonic()
+    for attempt in range(10):
+        output = []
+        spec = ExecutionSpec(
+            job_id=uuid.uuid4().hex,
+            attempt_id=uuid.uuid4().hex,
+            worker_id="runtime-test",
+            job=JobSpec(
+                image=runtime.settings.docker_image,
+                argv=["sh", "-c", "echo early; echo late >&2"],
+                resources=ResourceRequest(cpu=0.5, memory_mib=64),
+                time_limit_s=10,
+            ),
+        )
+        result = runtime.run(
+            spec,
+            tmp_path / str(attempt) / "work",
+            tmp_path / str(attempt) / "out",
+            lambda stream, data: output.append((stream, data)),
+            lambda: None,
+            threading.Event(),
+        )
+        assert result.outcome == "SUCCEEDED"
+        assert b"".join(d for s, d in output if s == "stdout") == b"early\n"
+        assert b"".join(d for s, d in output if s == "stderr") == b"late\n"
+    assert time.monotonic() - began < 30
