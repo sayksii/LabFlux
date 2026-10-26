@@ -1,0 +1,6 @@
+{
+  "image": "python:3.12-slim",
+  "argv": ["python", "main.py"],
+  "resources": {"cpu": 1, "memory_mib": 64},
+  "time_limit_s": 20
+}
