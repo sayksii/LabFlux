@@ -134,7 +134,7 @@
 
 ### M7：部署多台實體 Linux 與 GPU
 
-- [ ] **7.1** 建立實機前置檢查，列出 Docker、cgroups、NVIDIA 驅動、Toolkit 與網路狀態。
+- [x] **7.1** 建立實機前置檢查，列出 Docker、cgroups、NVIDIA 驅動、Toolkit 與網路狀態。
 - [x] **7.2** 在 GPU 節點設定 NVIDIA Container Toolkit，先手動驗證 GPU 容器。
 - [x] **7.3** 透過 NVML 探測 GPU UUID、型號、總 VRAM、使用量與利用率。
 - [ ] **7.4** 建立 GPU 加入資源池的設定；未授權管理及正在被外部工作使用的 GPU 不接受新配置。

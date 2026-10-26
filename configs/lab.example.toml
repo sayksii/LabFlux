@@ -1,0 +1,33 @@
+# Physical lab inventory for scripts/lab_deploy.py.
+# Copy to configs/local-lab.toml (git-ignored) and replace every placeholder.
+# Secrets never go here: tokens are generated into the ignored .labflux/lab/.
+
+# Dedicated deployment account on every node (key-only SSH, docker group, linger enabled).
+account = "labflux"
+ssh_key = "~/.ssh/labflux_deploy"
+# Pinned host keys; host key checking is never disabled.
+known_hosts = ".labflux/lab/known_hosts"
+
+[scheduler]
+node = "node-a"             # inventory name of the node that runs the Scheduler
+bind_host = "192.0.2.10"    # that node's address the Workers connect to
+port = 8770
+users = ["alice"]           # one user token is generated per name
+
+[[nodes]]
+name = "node-a"             # must equal the node's hostname; also the Worker ID
+host = "192.0.2.10"
+allocatable_cpu = 8         # share of the machine LabFlux may reserve
+allocatable_memory_mib = 16384
+gpus = [0]                  # NVML indexes or "GPU-..." UUIDs; [] pools no GPU
+
+[[nodes]]
+name = "node-b"
+host = "192.0.2.20"
+allocatable_cpu = 8
+allocatable_memory_mib = 16384
+gpus = []
+
+# Optional read-only datasets on a node:
+# [nodes.datasets]
+# mnist = "/srv/datasets/mnist"

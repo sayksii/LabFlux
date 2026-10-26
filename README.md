@@ -151,6 +151,19 @@ Docker 測試會啟動真實容器，直接驗證 cgroups、OOM、超時、串�
 VM smoke test 使用三個不同 CPU／RAM 配置的 VM，驗證 CLI、實際並行、FCFS、
 資源限制、取消，以及暫停 Worker 後的心跳逾時；完成或失敗時都寫出 JSON 紀錄。
 
+## 實體機部署
+
+kayle 執行 Scheduler 與 Worker，karma 執行 Worker，都以專屬帳號 `labflux` 的 systemd user service 執行。
+步驟、防火牆與日誌見 [docs/lab-deploy.md](docs/lab-deploy.md)。節點清單放在被 Git 忽略的
+`configs/local-lab.toml`（格式見 `configs/lab.example.toml`），產生的 Token 與設定放在 `.labflux/lab/`。
+
+```bash
+uv run python scripts/lab_deploy.py check                  # 前置檢查，唯讀
+uv run python scripts/lab_deploy.py firewall-instructions  # 管理員要執行的防火牆指令
+uv run python scripts/lab_deploy.py deploy --dry-run       # 印出部署步驟，不執行
+uv run python scripts/lab_deploy.py status
+```
+
 ## 目前邊界
 
 目前交付到 M6.3，使用 CPU／RAM；GPU、進階排程、互動 session 與 vLLM 依後續階段加入。

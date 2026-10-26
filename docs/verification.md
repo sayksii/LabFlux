@@ -79,6 +79,34 @@ VM 的實測可分配 RAM：A 1455 MiB、B 2395 MiB、C 3403 MiB，均已扣除 
 
 ## M7（進行中）：實體 GPU 節點
 
+### 7.1 實機前置檢查（2026-10-27）
+
+`scripts/lab_deploy.py check` 以部署鑰匙登入兩台的 `labflux` 帳號（host key 固定在 `.labflux/lab/known_hosts`），
+逐項列出 Docker、cgroups、NVIDIA 驅動、Toolkit、磁碟與網路狀態。執行前兩台都沒有運算程式、各卡已用
+VRAM 小於 1 GiB，所以 GPU 測試容器有執行；它只跑 `nvidia-smi -L`，結束後兩台都沒有殘留容器。
+`uv run python scripts/lab_deploy.py check` 結束狀態 0（沒有 `FAIL`）。
+
+| 檢查 | kayle | karma |
+|---|---|---|
+| SSH、linger、user systemd | `labflux@kayle`、yes、running | `labflux@karma`、yes、running |
+| Docker、cgroup、限制 | 29.1.3、v2、memory／swap／CPU quota | 同左 |
+| 預設 runtime | `runc`（另註冊 `nvidia`） | 同左 |
+| 驅動、CUDA（驅動上限） | 535.309.01、12.2 | 580.178.04、13.0 |
+| GPU 與資源池 | 3090 24576 MiB、A5000 24564 MiB；清單 `[0, 1]` 都存在 | 4090 24564 MiB；清單 `[0]` 存在 |
+| nvidia-ctk | 1.20.1 | 1.20.1 |
+| GPU 容器（`--gpus all`） | 看到 2/2 張 | 看到 1/1 張 |
+| CPU 容器（不加 `--gpus`） | 0 個 `/dev/nvidia*` | 0 個 |
+| 剩餘磁碟（家目錄／Docker） | 736／736 GiB | 3467／3467 GiB |
+| 到 `192.0.2.10:8770` | 連線被拒絕：路由正常，Scheduler 尚未啟動 | 同左 |
+
+預期中的 `WARN`：兩台的 `labflux` 帳號還沒有 uv（部署時安裝）、Scheduler 尚未啟動，
+以及 kayle 的 `labflux-firewall.service` 尚未安裝（部署前必須由管理員安裝）。
+
+- `deploy --dry-run` 對兩台印出完整步驟，沒有執行任何遠端或本機指令，也沒有寫出任何檔案。
+- `tests/test_lab_deploy.py`：18 passed，涵蓋節點清單驗證、產生的 TOML 可被 `Settings` 載入、
+  systemd unit、防火牆規則（只 DROP，啟動加入與停止刪除同一條）、Token 重用、重啟保護與檢查結果判讀。
+- 7.8 尚未執行：實際部署要等管理員安裝防火牆，且有工作執行時的重啟要等 M6.4。
+
 ### 7.2 NVIDIA Container Toolkit 手動驗證（2026-10-26）
 
 兩台 GPU 節點都已安裝 NVIDIA Container Toolkit 1.20.1。`/etc/docker/daemon.json` 只註冊 `nvidia` runtime，
