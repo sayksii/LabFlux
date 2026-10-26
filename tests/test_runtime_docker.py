@@ -1,0 +1,126 @@
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
+
+import docker
+import pytest
+
+from labflux.config import Settings
+from labflux.models import ExecutionSpec, JobSpec, ResourceRequest
+from labflux.runtime import DockerExecutor
+
+pytestmark = pytest.mark.docker
+
+
+@pytest.fixture
+def runtime(tmp_path):
+    executor = DockerExecutor(Settings(data_dir=tmp_path, stop_grace_s=1))
+    try:
+        executor.check()
+    except (docker.errors.DockerException, OSError, RuntimeError) as exc:
+        pytest.skip(f"Docker integration prerequisites unavailable: {exc}")
+    return executor
+
+
+def execute(runtime, tmp_path, code, *, seconds=10, memory=64, cancel=None, on_log=None):
+    output = []
+    spec = ExecutionSpec(
+        job_id=uuid.uuid4().hex,
+        attempt_id=uuid.uuid4().hex,
+        worker_id="runtime-test",
+        job=JobSpec(
+            image=runtime.settings.docker_image,
+            argv=["python", "-u", "-c", code],
+            resources=ResourceRequest(cpu=0.5, memory_mib=memory),
+            time_limit_s=seconds,
+        ),
+    )
+
+    def collect(stream, data):
+        output.append((stream, data))
+        if on_log:
+            on_log(stream, data)
+
+    result = runtime.run(
+        spec,
+        tmp_path / "work",
+        tmp_path / "out",
+        collect,
+        lambda: None,
+        cancel or threading.Event(),
+    )
+    with closing(docker.from_env()) as client:
+        assert not client.containers.list(
+            all=True, filters={"label": f"labflux.attempt_id={spec.attempt_id}"}
+        )
+    return result, b"".join(data for _, data in output), output
+
+
+def test_exit_code_and_both_output_streams(runtime, tmp_path):
+    result, output, chunks = execute(
+        runtime,
+        tmp_path,
+        "import sys; print('hello'); print('problem', file=sys.stderr); sys.exit(7)",
+    )
+    assert result.termination_confirmed and result.exit_code == 7 and result.outcome == "FAILED"
+    assert b"hello" in output and b"problem" in output
+    assert {stream for stream, _ in chunks} == {"stdout", "stderr"}
+
+
+def test_kernel_limits(runtime, tmp_path):
+    result, output, _ = execute(
+        runtime,
+        tmp_path,
+        "from pathlib import Path; p=Path('/sys/fs/cgroup'); "
+        "print((p/'cpu.max').read_text()); print((p/'memory.max').read_text()); "
+        "print((p/'memory.swap.max').read_text())",
+    )
+    assert result.outcome == "SUCCEEDED"
+    assert b"50000 100000" in output
+    assert str(64 * 1024**2).encode() in output
+    assert output.strip().endswith(b"0")
+
+
+def test_memory_excess_is_killed(runtime, tmp_path):
+    result, _, _ = execute(runtime, tmp_path, "a = bytearray(512 * 1024 * 1024)")
+    assert result.outcome == "FAILED" and result.oom_killed and result.termination_confirmed
+
+
+def test_timeout_cleans_up_child_processes(runtime, tmp_path):
+    result, _, _ = execute(
+        runtime,
+        tmp_path,
+        "import subprocess,time; subprocess.Popen(['sleep','60']); time.sleep(60)",
+        seconds=0.5,
+    )
+    assert result.outcome == "FAILED" and result.reason == "time limit exceeded"
+    assert result.termination_confirmed
+
+
+def test_logs_arrive_before_completion(runtime, tmp_path):
+    first = threading.Event()
+    with ThreadPoolExecutor() as pool:
+        future = pool.submit(
+            execute,
+            runtime,
+            tmp_path,
+            "import time; print('first', flush=True); time.sleep(3); print('last')",
+            on_log=lambda stream, data: first.set() if b"first" in data else None,
+        )
+        assert first.wait(timeout=120)
+        assert not future.done()
+        result, output, _ = future.result(timeout=20)
+    assert result.outcome == "SUCCEEDED" and b"last" in output
+
+
+def test_cancel_stops_container(runtime, tmp_path):
+    cancel = threading.Event()
+    result, _, _ = execute(
+        runtime,
+        tmp_path,
+        "import time; print('ready',flush=True); time.sleep(60)",
+        cancel=cancel,
+        on_log=lambda stream, data: cancel.set(),
+    )
+    assert result.outcome == "CANCELLED" and result.termination_confirmed
