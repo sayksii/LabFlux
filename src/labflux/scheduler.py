@@ -185,6 +185,8 @@ class Scheduler:
     def submit(self, owner: str, spec: JobSpec) -> dict:
         if spec.time_limit_s is None:
             spec = spec.model_copy(update={"time_limit_s": self.settings.job_time_limit_s})
+        if spec.image is None:
+            spec = spec.model_copy(update={"image": self.settings.default_image})
         job_id = uuid.uuid4().hex
         now = self.clock()
         with self.db.transaction() as connection:

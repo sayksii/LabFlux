@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -285,6 +286,8 @@ class Worker:
                     continue
                 self._send_output(attempt_id, state)
                 state = self._read(attempt_id)
+                if state["output_sent"] and state["result"]["termination_confirmed"]:
+                    self._remove_workspace(attempt_id)
                 result = state["result"]
                 reason = result["reason"]
                 if state["logs_truncated"]:
@@ -353,6 +356,17 @@ class Worker:
             },
             "gpus": [gpu.model_dump() for gpu in self.gpus.observe(assigned)],
         }
+
+    def _remove_workspace(self, attempt_id: str) -> None:
+        """Drop the job's files (a uv .venv can be several GB) once nothing can still run in
+        them; state.json, logs and the output archive stay."""
+        workspace = self.root / attempt_id / "workspace"
+        if not workspace.exists():
+            return
+        try:
+            shutil.rmtree(workspace)
+        except OSError as exc:
+            log.warning("workspace cleanup failed: %s", exc, extra={"attempt_id": attempt_id})
 
     def _heartbeats(self) -> None:
         with httpx.Client(

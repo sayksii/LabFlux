@@ -48,6 +48,11 @@ class Settings(BaseModel):
     image_pull_timeout_s: int = Field(default=300, ge=1)
     runtime_poll_s: float = Field(default=0.1, gt=0)
     docker_image: str = "python:3.12-slim"
+    default_image: str = Field(
+        default="localhost/labflux/python-uv:3.12-uv0.11.8", min_length=1, max_length=512
+    )
+    # Worker-local uv cache mounted into every job at /uv-cache; None mounts nothing.
+    uv_cache_dir: Path | None = None
 
     @model_validator(mode="after")
     def validate_settings(self) -> Settings:
@@ -64,6 +69,8 @@ class Settings(BaseModel):
                 raise ValueError(f"gpus entries must be NVML indexes or GPU UUIDs: {gpu!r}")
         self.data_dir = self.data_dir.expanduser().resolve()
         self.datasets = {name: path.expanduser().resolve() for name, path in self.datasets.items()}
+        if self.uv_cache_dir is not None:
+            self.uv_cache_dir = self.uv_cache_dir.expanduser().resolve()
         return self
 
 

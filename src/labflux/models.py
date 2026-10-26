@@ -26,7 +26,8 @@ class ResourceRequest(BaseModel):
 
 class JobSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    image: str = Field(min_length=1, max_length=512)
+    # None means the Scheduler's default_image, filled in at submission.
+    image: str | None = Field(default=None, min_length=1, max_length=512)
     argv: list[str] = Field(min_length=1, max_length=256)
     env: dict[str, str] = Field(default_factory=dict)
     resources: ResourceRequest = Field(default_factory=ResourceRequest)

@@ -101,6 +101,12 @@ class DockerExecutor:
                     volumes[str(path)] = {"bind": f"/datasets/{dataset}", "mode": "ro"}
                 memory = spec.job.resources.memory_mib * 1024**2
                 environment = {**spec.job.env, "PYTHONUNBUFFERED": "1"}
+                if self.settings.uv_cache_dir:
+                    # Created here so Docker never creates a missing bind source as root.
+                    self.settings.uv_cache_dir.mkdir(parents=True, exist_ok=True)
+                    volumes[str(self.settings.uv_cache_dir)] = {"bind": "/uv-cache", "mode": "rw"}
+                    # Separate bind mounts cannot share hardlinks, so uv copies into the venv.
+                    environment.update(UV_CACHE_DIR="/uv-cache", UV_LINK_MODE="copy")
                 devices = None
                 if spec.gpu_uuids:
                     # Docker sets NVIDIA_VISIBLE_DEVICES to exactly these UUIDs.

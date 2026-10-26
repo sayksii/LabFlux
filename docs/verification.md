@@ -137,6 +137,40 @@ Docker 預設 runtime 仍是 `runc`，一般容器不會自動取得 GPU。測�
 - 只在 kayle 驗證；karma 的 4090 在部署（步驟 6）時驗證。7.4 的外部使用判斷目前只有假 NVML 的單元測試，
   用真的 GPU process 驗證後才勾選。
 
+### uv 模式（kayle，2026-10-27）
+
+plan.md 沒有對應的 checklist 項目，以下只記錄驗證結果。
+
+- 基礎映像 `localhost/labflux/python-uv:3.12-uv0.11.8` 以 `images/python-uv/Dockerfile` 在 kayle 建置：
+  `python:3.12-slim-bookworm` 與 `ghcr.io/astral-sh/uv:0.11.8` 都以 digest 固定，映像約 70 MB，
+  內含 Python 3.12.15 與 uv 0.11.8。以沒有 passwd 的 UID 2001 執行時，`HOME=/tmp` 可寫入。
+- 工作省略 `image` 時，Scheduler 在提交當下填入 `default_image`。Worker 設定 `uv_cache_dir` 後，
+  快取以讀寫方式掛載於 `/uv-cache`，並覆蓋工作自己設定的 `UV_CACHE_DIR`、`UV_LINK_MODE`。
+  確認容器停止且輸出已回傳後才刪除 workspace；終止未確認時保留，刪除失敗只記錄警告。
+- `tests/test_uv_mode.py`：6 個案例。`tests/test_uv_docker.py`：在基礎映像以 `uv run --locked --offline`
+  執行無依賴的專案，`.venv` 位於 `/workspace/.venv`，快取寫入 `uv_cache_dir`，`HOME` 可寫入。
+- 實際執行 `examples/uv-gpu`：Scheduler 只綁 127.0.0.1，Worker 使用 `gpus = [0, 1]` 與暫時的 `uv_cache_dir`。
+  執行前兩張卡閒置（12 MiB、0%、沒有 compute process）、沒有其他容器。為了量測，指令外包一層 shell，
+  結束時讀取容器 cgroup 的 `pids.peak` 與 `memory.peak`。
+
+  | | 第一次（下載 torch） | 第二次（快取命中） |
+  |---|---:|---:|
+  | 提交到完成 | 153.3 秒 | 10.1 秒 |
+  | 容器執行時間 | 152.5 秒 | 9.1 秒 |
+  | uv 安裝 24 個套件 | 下載約 3.1 GB 後 3.5 秒 | 5.5 秒（從快取複製） |
+  | `pids.peak`（上限 256） | 51 | 28 |
+  | `memory.peak`（上限 8 GiB） | 8 GiB | 8 GiB |
+
+  - 兩次都分到 A5000（VRAM 較小的卡優先），輸出 `torch 2.6.0+cu124`、`torch.version.cuda` 12.4、
+    `cuda_available: true`、`device_name: NVIDIA RTX A5000`，GPU 與 CPU 的矩陣乘法結果一致。
+    kayle 的驅動 535 只支援到 CUDA 12.2，cu124 wheel 透過 CUDA minor version compatibility 可以正常執行。
+  - `memory.peak` 達到 8 GiB 上限是寫入約 5 GB 套件產生的 page cache，可回收，兩次都沒有 OOM。
+  - uv 快取 5.1 GB；兩個 attempt 的 workspace（含 `.venv`）都在完成後刪除，保留 state、日誌與輸出封存檔。
+  - torch 會印出找不到 NumPy 的警告；範例沒有用到 NumPy，不影響結果。
+  - 結束後沒有殘留容器或 GPU process，暫時的 uv 快取已刪除。
+- `uv run pytest -m 'not docker and not vm'`：90 passed。`uv run pytest -m docker`：13 passed（含 3 個 GPU 測試）。
+  `uv run pytest -m gpu`：3 passed。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。

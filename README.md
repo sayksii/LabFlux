@@ -56,7 +56,7 @@ Scheduler 在 `/dashboard` 提供監控頁（例如 `http://127.0.0.1:8000/dashb
 
 ## 工作與資料
 
-工作 JSON 至少包含 `image` 與指令參數陣列 `argv`。`resources.cpu` 表示 CPU 時間配額，
+工作 JSON 至少包含指令參數陣列 `argv`；`image` 可省略，見下方的 uv 模式。`resources.cpu` 表示 CPU 時間配額，
 `resources.memory_mib` 使用 MiB，`time_limit_s` 表示容器啟動後的執行時限。
 工作在 `/workspace` 執行，把要取回的結果寫入 `/outputs`。
 
@@ -73,6 +73,36 @@ images = "/srv/datasets/images"
 
 工作設定 `"datasets": ["images"]`，Scheduler 只選擇具有該資料集的節點，
 容器中以唯讀方式掛載於 `/datasets/images`。
+
+## uv 模式
+
+工作 JSON 省略 `image` 時，Scheduler 在提交當下填入 `default_image`，預設是
+`localhost/labflux/python-uv:3.12-uv0.11.8`（Python 3.12 + uv 0.11.8）。程式目錄只要有
+`pyproject.toml` 與 `uv.lock`，以 `uv run --locked ...` 執行；需要其他 Python 版本或系統套件時，
+請在工作 JSON 自己指定 `image`。
+
+每台 Worker 先建置基礎映像。名稱的 `localhost/` 前綴讓缺少映像時直接失敗，
+不會從 Docker Hub 拉到同名的映像：
+
+```bash
+docker build -t localhost/labflux/python-uv:3.12-uv0.11.8 images/python-uv
+```
+
+Worker TOML 設定 `uv_cache_dir` 後，這個本機目錄以讀寫方式掛載於容器的 `/uv-cache`，
+並設定 `UV_CACHE_DIR=/uv-cache`、`UV_LINK_MODE=copy`（快取與工作目錄是不同的 bind mount，無法 hardlink）。
+虛擬環境建立在 Worker 本機該 attempt 的 `/workspace/.venv`；確認容器停止且輸出已回傳後，
+Worker 刪除這個 workspace，保留狀態、日誌與輸出封存檔。同一台 Worker 上的工作共用這份可寫的快取。
+
+```toml
+uv_cache_dir = "~/labflux/uv-cache"
+```
+
+`examples/uv-gpu/` 透過 `[tool.uv.sources]` 從 PyTorch cu124 index 安裝 torch，印出分配到的 GPU 型號。
+它需要 Worker 以 `gpus` 設定納入 GPU：
+
+```bash
+uv run labflux --config CONFIG submit examples/jobs/uv-gpu.json --source examples/uv-gpu --wait --wait-timeout 1800
+```
 
 ## 排程與通訊
 
