@@ -43,9 +43,10 @@ SCHEDULER_UNIT = "labflux-scheduler.service"
 # A busy card must not even get the nvidia-smi probe container; matches gpu_external_memory_mib.
 IDLE_MEMORY_MIB = 1024
 LOW_DISK_GIB = 50
-# Until M6.4 lands, a restarted Worker cannot take over unreleased attempts (the node gets
-# stuck) and stopping it stops its containers. Set to False only once M6.4 is verified.
-REQUIRE_IDLE_FOR_RESTART = True
+# Since M6.4 a stopped Worker leaves its containers running and the next instance adopts them,
+# so Worker restarts no longer need idle nodes. Scheduler restart recovery (M6.6) is still
+# missing, so restarting the Scheduler always requires that no attempt is outstanding.
+WORKER_RESTART_REQUIRES_IDLE = False
 
 
 @dataclass(frozen=True)
@@ -311,7 +312,7 @@ def validate_generated(inventory: Inventory, tokens: dict) -> None:
 def restart_blockers(
     name: str, *, worker_active: bool, containers: list[str], scheduler_nodes: list[dict] | None
 ) -> list[str]:
-    """Reasons why restarting this Worker would strand work while M6.4 is missing."""
+    """Reasons why restarting this Worker would strand work (when WORKER_RESTART_REQUIRES_IDLE)."""
     reasons = []
     if containers:
         reasons.append(f"{name}: LabFlux job containers exist: {', '.join(containers)}")
@@ -487,27 +488,32 @@ def remote_services(run: Runner, node: Node, units: list[str]) -> tuple[dict, li
 
 
 def ensure_restart_is_safe(run: Runner, inventory: Inventory, nodes: list[Node], tokens) -> None:
-    if not REQUIRE_IDLE_FOR_RESTART:
+    checked = [
+        n for n in nodes if WORKER_RESTART_REQUIRES_IDLE or n.name == inventory.scheduler_node
+    ]
+    if not checked:
         return
     view = None if run.dry_run else scheduler_nodes(inventory, tokens)
     reasons = []
-    for node in nodes:
-        units = [WORKER_UNIT] + ([SCHEDULER_UNIT] if node.name == inventory.scheduler_node else [])
+    for node in checked:
+        is_scheduler = node.name == inventory.scheduler_node
+        units = [WORKER_UNIT] + ([SCHEDULER_UNIT] if is_scheduler else [])
         states, containers = remote_services(run, node, units)
-        reasons += restart_blockers(
-            node.name,
-            worker_active=states.get(WORKER_UNIT) == "active",
-            containers=containers,
-            scheduler_nodes=view,
-        )
-        if node.name == inventory.scheduler_node:
+        if WORKER_RESTART_REQUIRES_IDLE:
+            reasons += restart_blockers(
+                node.name,
+                worker_active=states.get(WORKER_UNIT) == "active",
+                containers=containers,
+                scheduler_nodes=view,
+            )
+        if is_scheduler:
             reasons += scheduler_restart_blockers(
                 scheduler_active=states.get(SCHEDULER_UNIT) == "active", scheduler_nodes=view
             )
     if reasons:
         raise RuntimeError(
             "refusing to restart LabFlux services while work is outstanding "
-            "(Worker reconnection, M6.4, is not implemented yet):\n  " + "\n  ".join(reasons)
+            "(Scheduler restart recovery, M6.6, is not implemented yet):\n  " + "\n  ".join(reasons)
         )
 
 

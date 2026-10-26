@@ -73,10 +73,10 @@ Token 只在第一次部署時以 `secrets.token_urlsafe(32)` 產生，之後重
 
 - kayle 的 `labflux-firewall.service` 不是 `active`（Scheduler 不能在沒有防火牆時綁公開 IP）。
   Scheduler 的 service 本身也有同樣的檢查，開機時防火牆還沒好就不會啟動，之後自動重試。
-- 要重啟的 Worker 在 Scheduler 上還有未釋放的配置，或節點上還有 `labflux.managed` 容器；
-  要重啟 Scheduler 時任何節點還有未釋放的配置。原因是 Worker 斷線重連（M6.4）與
-  Scheduler 重啟恢復（M6.6）還沒完成：現在重啟會讓節點卡住，停止 Worker 也會停掉它的工作。
-  M6.4 驗證通過後，把 `scripts/lab_deploy.py` 的 `REQUIRE_IDLE_FOR_RESTART` 改成 `False`。
+- 要重啟 Scheduler（部署 kayle）時，任何節點還有未釋放的配置。Scheduler 重啟恢復（M6.6）
+  還沒完成，有工作在執行時重啟 Scheduler 可能讓狀態對不上。
+  重啟 Worker 不受這個限制：M6.4 之後，Worker 停止時工作容器會繼續執行，新的 Worker
+  啟動後會接手。只部署 karma 時，正在執行的工作不受影響。
 - 只部署 karma 但 Scheduler 沒有在執行。
 
 ### `status`：查看狀態
@@ -148,6 +148,6 @@ $SSH labflux@192.0.2.10 systemctl --user status labflux-worker
 
 ## 目前限制
 
-- M6.4～M6.6 尚未完成，所以有工作在執行時不能重啟或更新 Worker 與 Scheduler。
+- M6.5、M6.6 尚未完成：有工作在執行時不能重啟或更新 Scheduler（kayle）；Worker 可以。
 - 防火牆規則只支援一台遠端 Worker；之後要加節點時需改成專用 chain。
 - 同一台 Worker 上的工作共用可寫的 uv 快取，彼此需要互相信任。

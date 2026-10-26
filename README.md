@@ -1,6 +1,6 @@
 # LabFlux
 
-OS 課程專案：以中央 Scheduler 與多個 Docker Worker 管理 CPU／RAM 批次工作。
+OS 課程專案：以中央 Scheduler 與多個 Docker Worker 管理 CPU／RAM／GPU 批次工作。
 實作進度與驗收條件見 [plan.md](plan.md)；驗證紀錄見 [docs/verification.md](docs/verification.md)。
 
 ## 開發環境
@@ -180,6 +180,7 @@ uv run python scripts/lab_deploy.py status
 
 ## 目前邊界
 
-目前交付到 M6.3，使用 CPU／RAM；GPU、進階排程、互動 session 與 vLLM 依後續階段加入。
+目前交付到 M6.4 與 M7 的 GPU 配置（整張獨占）、uv 模式及實體機部署工具；
+進階排程、互動 session 與 vLLM 依後續階段加入。
 Worker 重啟後的對帳與接手（M6.4）已交付；確認停止後自動建立新 attempt 重排（M6.5）、
 Scheduler 重啟恢復（M6.6）與完整故障驗證（M6.7）尚未交付，因此對帳後關閉的工作不會自動重跑。

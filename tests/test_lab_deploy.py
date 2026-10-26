@@ -178,7 +178,7 @@ def test_restart_guard():
         "kayle (2)"
         in lab.scheduler_restart_blockers(scheduler_active=True, scheduler_nodes=busy)[0]
     )
-    assert lab.REQUIRE_IDLE_FOR_RESTART is True  # Relax only after M6.4 is verified.
+    assert lab.WORKER_RESTART_REQUIRES_IDLE is False  # M6.4 adoption is verified.
 
 
 def test_dry_run_executes_nothing(inventory, monkeypatch, capsys):
