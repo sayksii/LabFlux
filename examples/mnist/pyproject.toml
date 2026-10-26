@@ -1,0 +1,19 @@
+[project]
+name = "labflux-mnist-example"
+version = "0.1.0"
+description = "MNIST training demo for LabFlux, adapted from pytorch/examples (BSD-3-Clause)"
+requires-python = ">=3.12"
+# Same torch build and index as examples/uv-gpu, so both share a Worker's uv cache.
+dependencies = ["torch==2.6.0", "torchvision==0.21.0"]
+
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true

@@ -171,6 +171,35 @@ plan.md 沒有對應的 checklist 項目，以下只記錄驗證結果。
 - `uv run pytest -m 'not docker and not vm'`：90 passed。`uv run pytest -m docker`：13 passed（含 3 個 GPU 測試）。
   `uv run pytest -m gpu`：3 passed。
 
+### MNIST 訓練範例（kayle，2026-10-27）
+
+- `examples/mnist/main.py` 改寫自 pytorch/examples 的 `mnist/main.py`（commit
+  `d0b7e3709407074ac64bb34c5af33fe226abb47c`），保留 BSD-3-Clause 授權（`examples/mnist/LICENSE`）。
+  torch 2.6.0 與 torchvision 0.21.0 都來自 cu124 index，與 `examples/uv-gpu` 共用快取。
+- 以 CLI 透過真的 Scheduler（只綁 127.0.0.1）與 Worker（`gpus = [0, 1]`、全新的暫時 `uv_cache_dir`）執行；
+  執行前兩張卡閒置（12 MiB、0%、沒有 compute process），沒有其他容器。
+
+  ```bash
+  labflux submit examples/jobs/mnist.json --source examples/mnist --wait --wait-timeout 1800
+  labflux logs JOB_ID
+  labflux fetch JOB_ID --directory DIR
+  ```
+
+  | 項目 | 結果 |
+  |---|---|
+  | 狀態 | SUCCEEDED，image 由 Scheduler 填入 `localhost/labflux/python-uv:3.12-uv0.11.8` |
+  | 使用的卡 | NVIDIA RTX A5000（`GPU-11111111-…`） |
+  | `submit --wait` 總時間 | 4 分 26 秒（快取是空的：下載 torch／torchvision 等 27 個套件） |
+  | 容器執行時間 | 265.3 秒 |
+  | 程式總時間（`metrics.json`） | 92.7 秒，其中 3 個 epoch 共約 13.3 秒，其餘是下載約 11 MB 的 MNIST 與 CUDA 初始化 |
+  | 各 epoch 測試準確率 | 98.35%、98.68%、99.02% |
+  | 最終測試準確率 | **99.02%**（9902/10000） |
+
+- `labflux logs` 取回完整日誌（含 `Device: NVIDIA RTX A5000`）；`labflux fetch` 下載並解開
+  `mnist_cnn.pt`（4.8 MB）與 `metrics.json`，校驗碼相符。
+- 完成後 attempt 的 workspace（含 `.venv` 與 `/workspace/data`）已刪除，GPU 配置釋放；uv 快取 5.2 GB。
+- 結束後沒有殘留容器、GPU process 或監聽的 port；暫時的 uv 快取與資料已刪除。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。

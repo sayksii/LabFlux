@@ -104,6 +104,21 @@ uv_cache_dir = "~/labflux/uv-cache"
 uv run labflux --config CONFIG submit examples/jobs/uv-gpu.json --source examples/uv-gpu --wait --wait-timeout 1800
 ```
 
+`examples/mnist/` 是改寫自 PyTorch 官方範例（BSD-3-Clause，見該目錄的 `LICENSE`）的 MNIST 手寫數字訓練，
+預設 3 個 epoch，把模型與 `metrics.json`（每個 epoch 的 loss、準確率與總時間）寫入 `/outputs`。
+它與 `examples/uv-gpu` 使用相同的 torch 版本與 index，兩者共用 Worker 的 uv 快取。
+預設的工作自己下載約 11 MB 的資料到 `/workspace/data`：
+
+```bash
+uv run labflux --config CONFIG submit examples/jobs/mnist.json --source examples/mnist --wait --wait-timeout 1800
+uv run labflux --config CONFIG logs JOB_ID
+uv run labflux --config CONFIG fetch JOB_ID --directory outputs/mnist
+```
+
+節點也可以預先放好 MNIST（torchvision 的目錄結構，例如 `/srv/datasets/mnist/MNIST/raw/`），
+在 Worker TOML 設定 `[datasets]` 的 `mnist = "/srv/datasets/mnist"`，並在工作 JSON 加上
+`"datasets": ["mnist"]`；程式偵測到唯讀的 `/datasets/mnist` 就直接使用，不再下載。
+
 ## 排程與通訊
 
 第一階段採嚴格 FCFS：隊首不能執行時，後續工作等待，即使其他節點仍有空間。
