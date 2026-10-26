@@ -314,6 +314,42 @@ plan.md 沒有對應的 checklist 項目，以下只記錄驗證結果。
 - `uv run pytest -m 'not docker and not vm'`：69 passed（新增 Dashboard GPU 標記與 API 欄位的檢查）。
 - 這些是以模擬 Worker 驗證畫面；實際 Worker 回報的 GPU 資料要到步驟 3、部署後再確認。
 
+### 7.4、7.5、7.8 實機部署與 GPU 工作（2026-10-27）
+
+部署前兩台的卡都閒置、沒有 LabFlux 容器，kayle 的 `labflux-firewall.service` 為 `active`。
+以 commit `3db06f0` 執行 `uv run python scripts/lab_deploy.py deploy`，結束狀態 0；
+兩台的 `labflux` 帳號都以 systemd user unit 執行 Worker，kayle 另執行 Scheduler（`192.0.2.10:8770`）。
+`lab_deploy.py status` 顯示兩台 ONLINE，Worker 回報的卡與 7.1 的檢查一致。
+
+防火牆實測：在 `192.0.2.10:8770` 暫時開一個只提供空目錄的 HTTP 伺服器（最多 60 秒），測完關閉。
+
+| 來源 | 結果 |
+|---|---|
+| kayle 本機（經 `lo`） | HTTP 200 |
+| karma（192.0.2.20） | HTTP 200 |
+| kayle 上的 Docker 容器（經 `docker0`） | 連線逾時，被 DROP |
+| 同一個容器連 kayle 的 22 port | 可連線，規則只影響 8770 |
+
+三個 MNIST 工作以 `gpu_model` 指定型號同時提交（`examples/jobs/mnist.json` 加上 `gpu_model`），
+經 CLI `submit`、`logs`、`fetch` 完成。兩台的 uv 快取一開始都是空的，所以包含下載 torch 的時間；
+kayle 的兩個工作同時寫入同一個快取。
+
+| `gpu_model` | 節點與卡 | 容器執行時間 | 三輪測試準確率 |
+|---|---|---:|---|
+| `3090` | kayle、RTX 3090 | 278 s | 98.23% → 98.80% → 99.04% |
+| `A5000` | kayle、RTX A5000 | 308 s | 98.27% → 98.68% → 98.98% |
+| `4090` | karma、RTX 4090 | 152 s | 98.32% → 98.65% → 98.98% |
+
+- 日誌的 `Device:` 與分到的卡相符；`fetch` 取回 `mnist_cnn.pt` 與 `metrics.json`。
+- 結束後兩台的 CPU／RAM／GPU 預約都歸零，沒有 LabFlux 容器；karma 的 attempt workspace 已刪除，uv 快取 5.2 GB。
+- **7.4 實際外部使用：** 工作結束後，另一位使用者在 kayle 的 3090 上執行 Python（約 19.5 GB VRAM）。
+  Worker 心跳只把 3090 回報為 `external_use = true`，A5000 與 4090 仍為可用。
+  提交 `gpu = 1, gpu_model = "3090"` 的探測工作，5 秒後仍為 QUEUED（沒有 attempt），原因為
+  `waiting for matching CPU/RAM/GPU capacity or datasets`，隨後取消。LabFlux 沒有碰觸該程式。
+- **7.5 最低 VRAM：** `min_vram_mib = 24570` 只有 3090（24576 MiB）符合，但它正被外部使用，工作保持 QUEUED 後取消；
+  `min_vram_mib = 24000` 分到 karma 的 4090 並完成。張數與型號匹配由上表的三個工作驗證。
+- 7.8 未勾選：checklist 要求至少三個異質節點，目前實體節點只有 kayle 與 karma 兩台。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。
