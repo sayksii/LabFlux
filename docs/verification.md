@@ -19,7 +19,7 @@
 |---|---|
 | 1.1 | `test_models.py` 的有效／無效執行輸入 |
 | 1.2、1.3 | `test_exit_code_and_both_output_streams`、`test_logs_arrive_before_completion` |
-| 1.4 | 每個容器以 attempt 標籤驗證執行後清理；Worker 重送測試另見 M2 |
+| 1.4 | 啟動後直接檢查 job／attempt／worker 標籤，結束後以名稱與標籤確認容器均不存在；Worker 重送測試另見 M2 |
 | 1.5、1.6 | `test_cancel_stops_container`、`test_timeout_cleans_up_child_processes` |
 | 1.7 | `test_kernel_limits` 直接讀取容器的 `cpu.max`、`memory.max`、`memory.swap.max` |
 | 1.8 | `test_memory_excess_is_killed`，加上上述退出、子程序、超時與串流案例 |
@@ -49,7 +49,7 @@
 
 - `sg libvirt -c 'uv run python scripts/vm_lab.py provision'`：三台 Ubuntu 24.04 VM 建立成功，cloud-init 與 Docker 均完成。官方 image SHA256 為 `04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94`。
 - `sg libvirt -c 'uv run python scripts/vm_lab.py deploy'`：wheel 與鎖定依賴安裝到三台 VM，Worker 由 systemd 執行。
-- `uv run python scripts/smoke.py --config .labflux/vms/scheduler.toml --faults`：10 checks passed，使用 18 個實際工作；完整紀錄將保存於 `docs/evidence/midterm-smoke.json`。
+- `uv run python scripts/smoke.py --config .labflux/vms/scheduler.toml --faults`：10 checks passed，使用 18 個實際工作；完整紀錄保存於 [midterm-smoke.json](evidence/midterm-smoke.json)。
 
 | Checklist | 實際驗證 |
 |---|---|
@@ -62,3 +62,27 @@
 | 5.8 | 可重播 smoke script，包含同節點兩容器、跨節點並行、時限與回收 |
 
 VM 的實測可分配 RAM：A 1455 MiB、B 2395 MiB、C 3403 MiB，均已扣除 512 MiB 系統保留量。
+
+## M6.1～M6.3：心跳、失聯與取消
+
+| Checklist | 對應驗證 |
+|---|---|
+| 6.1 | `test_heartbeat_renews_deadline_then_expiry_retains_allocations` 驗證心跳重設時限；VM 實際暫停 Worker，約 9.686 秒後偵測失聯 |
+| 6.2 | 失聯節點 OFFLINE、工作 UNKNOWN、保留 4 CPU 配置；新工作保持 QUEUED；新 Worker instance 不得掩蓋舊配置 |
+| 6.3 | 排隊取消不產生 attempt；執行中取消先 STOPPING、確認停止後 CANCELLED；延遲 START 不覆蓋取消；UNKNOWN 執行可重新確認停止 |
+
+- `tests/test_heartbeat_cancel.py`：6 個排程／生命週期案例。
+- `tests/test_worker.py`：3 個 Worker 案例，包含 20 次併發重送、磁碟接單紀錄、未確認終止時保留配置，以及對 UNKNOWN 的停止確認。
+- 實際 Docker 的 `test_stop_before_start_confirms_no_container_without_pulling_image`：STOP 先於 START 時不建立容器、不需下載映像，即可確認取消。
+- VM fault test 暫停的是 Worker 程序，而非整台 VM 或 Docker；恢復後確認舊容器停止，再釋放資源與派送等待工作。
+- 未實作或勾選 M6.4～M6.7：自動清理／對帳、重新排隊與執行中重啟恢復。
+
+## 最後驗證與交付
+
+- `uv sync --locked`：通過。
+- `uv run ruff check .`、`uv run ruff format --check .`、`git diff --check`：通過。
+- `sg docker -c 'uv run pytest'`：**61 passed，0 skipped**；包含 8 個實際 Docker 測試，其餘為 API／排程／Worker／CLI／封存檔等測試。
+- 三台 VM smoke：10 checks passed，使用 18 個工作；其中 OOM／超時為預期 FAILED，取消為預期 CANCELLED。
+- 環境閒置時，三台 VM 正常關機、Scheduler 程序群組停止，再重新啟動及部署成功；未以此宣稱執行中故障恢復已完成。
+- 本次完成 50 個編號 checklist 項目，對應 M0～M5、M6.1～M6.3。
+- Git 僅追蹤程式、範例、規劃、測試與去除認證資料的驗收紀錄；私鑰、Token、VM 磁碟與即時資料目錄均被忽略。

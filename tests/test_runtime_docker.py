@@ -8,7 +8,7 @@ import pytest
 
 from labflux.config import Settings
 from labflux.models import ExecutionSpec, JobSpec, ResourceRequest
-from labflux.runtime import DockerExecutor
+from labflux.runtime import DockerExecutor, container_name
 
 pytestmark = pytest.mark.docker
 
@@ -42,15 +42,24 @@ def execute(runtime, tmp_path, code, *, seconds=10, memory=64, cancel=None, on_l
         if on_log:
             on_log(stream, data)
 
+    def inspect_started_container():
+        with closing(docker.from_env()) as client:
+            labels = client.containers.get(container_name(spec)).labels
+            assert labels["labflux.job_id"] == spec.job_id
+            assert labels["labflux.attempt_id"] == spec.attempt_id
+            assert labels["labflux.worker_id"] == spec.worker_id
+
     result = runtime.run(
         spec,
         tmp_path / "work",
         tmp_path / "out",
         collect,
-        lambda: None,
+        inspect_started_container,
         cancel or threading.Event(),
     )
     with closing(docker.from_env()) as client:
+        with pytest.raises(docker.errors.NotFound):
+            client.containers.get(container_name(spec))
         assert not client.containers.list(
             all=True, filters={"label": f"labflux.attempt_id={spec.attempt_id}"}
         )
@@ -124,3 +133,17 @@ def test_cancel_stops_container(runtime, tmp_path):
         on_log=lambda stream, data: cancel.set(),
     )
     assert result.outcome == "CANCELLED" and result.termination_confirmed
+
+
+def test_stop_before_start_confirms_no_container_without_pulling_image(runtime):
+    spec = ExecutionSpec(
+        job_id=uuid.uuid4().hex,
+        attempt_id=uuid.uuid4().hex,
+        worker_id="runtime-test",
+        job=JobSpec(image="labflux-do-not-pull/never:absent", argv=["never"]),
+    )
+    result = runtime.stop_unstarted(spec)
+    assert result.outcome == "CANCELLED" and result.termination_confirmed
+    with closing(docker.from_env()) as client:
+        with pytest.raises(docker.errors.NotFound):
+            client.containers.get(container_name(spec))

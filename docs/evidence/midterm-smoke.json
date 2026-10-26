@@ -1,0 +1,192 @@
+{
+  "status": "PASSED",
+  "checks": [
+    {
+      "name": "three heterogeneous VM workers",
+      "passed": true,
+      "cpu": [
+        1,
+        2,
+        4
+      ]
+    },
+    {
+      "name": "CLI source upload, readonly dataset, logs, status and result download",
+      "passed": true
+    },
+    {
+      "name": "resource-aware placement and real cross-VM concurrency",
+      "passed": true,
+      "nodes": [
+        "labflux-vm-a",
+        "labflux-vm-b",
+        "labflux-vm-c"
+      ]
+    },
+    {
+      "name": "multiple actual containers share one node without over-allocation",
+      "passed": true
+    },
+    {
+      "name": "strict FCFS blocking, queueing and automatic resource release",
+      "passed": true
+    },
+    {
+      "name": "VM kernel limits and measured CPU throttling",
+      "passed": true,
+      "cpu.max": "25000 100000",
+      "memory.max": "67108864",
+      "memory.swap.max": "0",
+      "cpu_seconds": 0.499594346,
+      "wall_seconds": 2.0000083050000512
+    },
+    {
+      "name": "actual memory exhaustion is contained",
+      "passed": true
+    },
+    {
+      "name": "timeout stops the container process tree and releases its allocation",
+      "passed": true
+    },
+    {
+      "name": "queued and running cancellation, with confirmed resource release",
+      "passed": true
+    },
+    {
+      "name": "heartbeat expiry excludes node, preserves UNKNOWN allocation and confirms cancellation",
+      "passed": true,
+      "detection_seconds": 9.686
+    }
+  ],
+  "jobs": [
+    {
+      "id": "457d7a4af3284eb0b34fbbb1aae9daca",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-a"
+    },
+    {
+      "id": "e559d0c8582e41b8a515141cf3d791e2",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-a"
+    },
+    {
+      "id": "50117bce70df4d929d6f84dab7c0c255",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-b"
+    },
+    {
+      "id": "7198a5b935604a75b7cd2fe5b6405cbb",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-c"
+    },
+    {
+      "id": "6dacef83002c4b0e8e106abc18302e61",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-a"
+    },
+    {
+      "id": "7a4c0bee1e424b2fbc82c4b7cad2d9a6",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-b"
+    },
+    {
+      "id": "afc55819caf046d29795e78a7fa1be72",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-c"
+    },
+    {
+      "id": "33236f4c96334e2691934192998f9c4d",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-c"
+    },
+    {
+      "id": "363767d9c6be45a783140aac9e6d413d",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-c"
+    },
+    {
+      "id": "9a0e07c77cf743a5aa758b55757f2a77",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-c"
+    },
+    {
+      "id": "08dde8a36a5845e4bb68c794eb972ab6",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-a"
+    },
+    {
+      "id": "2dcac7aa2c9347328ccd1915ba8b3a2e",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-a"
+    },
+    {
+      "id": "6901d92794e642debf2749a3a1cc6bb4",
+      "state": "FAILED",
+      "node": "labflux-vm-a"
+    },
+    {
+      "id": "a58ec94930904e32a5e7dee714c4a2ec",
+      "state": "FAILED",
+      "node": "labflux-vm-a"
+    },
+    {
+      "id": "7e90e7309cde404e890becaeaee8cff4",
+      "state": "CANCELLED",
+      "node": "labflux-vm-c"
+    },
+    {
+      "id": "bd9111c1b1344b32ae52383895bf5c35",
+      "state": "CANCELLED",
+      "node": null
+    },
+    {
+      "id": "0e65505d779341f4b0756400b1dadf0a",
+      "state": "CANCELLED",
+      "node": "labflux-vm-c"
+    },
+    {
+      "id": "30b5d8a983574c0489d523a9265db6e1",
+      "state": "SUCCEEDED",
+      "node": "labflux-vm-c"
+    }
+  ],
+  "fault_test": true,
+  "nodes": [
+    {
+      "id": "labflux-vm-a",
+      "capacity": {
+        "total_cpu": 1.0,
+        "total_memory_mib": 1967,
+        "cpu": 1.0,
+        "memory_mib": 1455,
+        "datasets": [
+          "demo"
+        ]
+      }
+    },
+    {
+      "id": "labflux-vm-b",
+      "capacity": {
+        "total_cpu": 2.0,
+        "total_memory_mib": 2907,
+        "cpu": 2.0,
+        "memory_mib": 2395,
+        "datasets": [
+          "demo"
+        ]
+      }
+    },
+    {
+      "id": "labflux-vm-c",
+      "capacity": {
+        "total_cpu": 4.0,
+        "total_memory_mib": 3915,
+        "cpu": 4.0,
+        "memory_mib": 3403,
+        "datasets": [
+          "demo"
+        ]
+      }
+    }
+  ]
+}
