@@ -75,7 +75,61 @@ VM 的實測可分配 RAM：A 1455 MiB、B 2395 MiB、C 3403 MiB，均已扣除 
 - `tests/test_worker.py`：3 個 Worker 案例，包含 20 次併發重送、磁碟接單紀錄、未確認終止時保留配置，以及對 UNKNOWN 的停止確認。
 - 實際 Docker 的 `test_stop_before_start_confirms_no_container_without_pulling_image`：STOP 先於 START 時不建立容器、不需下載映像，即可確認取消。
 - VM fault test 暫停的是 Worker 程序，而非整台 VM 或 Docker；恢復後確認舊容器停止，再釋放資源與派送等待工作。
-- 未實作或勾選 M6.4～M6.7：自動清理／對帳、重新排隊與執行中重啟恢復。
+- 未實作或勾選 M6.5～M6.7：重新排隊、Scheduler 重啟恢復與完整故障驗證（M6.4 見下節）。
+
+## M6.4：Worker 重啟後的對帳與接手（kayle，2026-10-27）
+
+使用者決定：Worker 重啟時，執行中的工作繼續跑，由新 instance 接手。
+
+- Worker 收到 SIGTERM／SIGINT（`stop_event`）時不再停止容器；runtime 回傳「已脫離」，本機結果維持未定。
+- 重新啟動的 Worker 在註冊時附上 `inventory`：本機 attempt 紀錄（`launched`、`unsent_result`）
+  與帶有 `labflux.worker_id` 標籤的容器（狀態、exit code、OOM、啟動時間）。
+- Scheduler 在註冊的同一個交易內核對每個未釋放的 attempt：容器存在或有未送出結果 → `adopt`；
+  本機紀錄顯示尚未建立容器 → `restart`（重新交付同一個 START）；START 尚未交付 → 保留；
+  其餘 → `closed`，標記 `FAILED`（已要求取消則 `CANCELLED`），同時釋放 CPU／RAM／GPU。
+  已釋放或未知 attempt 的容器列入 `remove`，Worker 只移除本機也有紀錄的那些。
+- 同一個 instance 在心跳中斷後恢復時，心跳附上 `active_attempts`；節點回到 `ONLINE`，
+  因心跳逾時變成 `UNKNOWN` 且仍在執行的 attempt 回到 `RUNNING`，其餘維持 `UNKNOWN`。
+
+**日誌去重。** 接手時以本機 `logs.jsonl` 為準：先截掉崩潰留下的半行，重算 `next_seq`、
+已存位元組與上傳進度，再分別計算 stdout／stderr 已擷取的位元組數。接手的容器改用
+`docker logs --follow`（json-file 日誌從頭重播後持續跟隨，中間沒有空窗），每個 stream
+跳過已擷取的位元組。實際驗證時 Docker 使用 json-file 日誌、沒有設定輪替；若日誌被輪替，
+重播起點會改變，這個方法就不再精確。STARTED 事件 ID 改為每個 instance 各自一個，
+避免接手的 instance 因不知道舊 instance 是否送過而卡在 ID 衝突。
+
+| 案例 | 驗證 |
+|---|---|
+| 執行中／已結束／剛建立的容器被接手，配置保留，舊 instance 的事件被拒絕 | `test_surviving_container_is_adopted_with_its_allocation`（running、exited）、`test_created_container_is_adopted_as_starting` |
+| 只有未送出結果 | `test_unsent_result_is_adopted_without_a_container` |
+| 尚未建立容器 → 重新交付 START；已要求取消 → CANCELLED | `test_never_launched_attempt_restarts_from_a_redelivered_start`、`test_never_launched_cancelled_attempt_closes_as_cancelled`、`test_shutdown_before_launch_restarts_the_attempt_on_the_next_instance` |
+| START 尚未交付 | `test_undelivered_start_is_left_for_normal_polling` |
+| 容器消失 → FAILED、釋放 GPU，重送註冊不重複釋放 | `test_missing_container_closes_once_and_releases_cards`、`test_new_instance_closes_an_attempt_whose_container_vanished` |
+| 待送出的 STOP 在接手後仍有效 | `test_pending_stop_survives_adoption` |
+| 重複註冊結果相同 | `test_repeated_registration_adopts_the_same_attempt_again` |
+| 其他 Worker 的清單被拒絕，狀態不變 | `test_inventory_from_another_worker_is_rejected` |
+| 過期容器只在本機有紀錄時移除 | `test_stale_containers_are_listed_for_removal`、`test_stale_container_is_removed_only_with_a_local_record` |
+| 同一 instance 恢復心跳 | `test_same_instance_returns_online_and_resumes_only_active_attempts` |
+| 接手的 GPU 仍保留 | `test_adopted_attempt_keeps_its_card` |
+| 日誌檔修復 | `test_log_repair_drops_a_torn_line_and_follows_the_file` |
+
+實際 Docker（`tests/test_reconnect_docker.py`，真實 HTTP Scheduler、Worker 與容器）：
+
+- 每 0.2 秒印一行、共 25 行的工作：停止 Worker 後容器仍在執行，等待 1 秒再啟動新 instance；
+  工作 `SUCCEEDED`、單一 attempt、exit code 0，日誌恰好是 `line 0`～`line 24` 各一次，配置釋放，沒有殘留容器。
+- 停機期間結束（exit 3）的容器：新 instance 回報真實結果 `FAILED`、exit code 3，日誌 `one`、`two` 各一次。
+- 停機期間被手動刪除的容器：新 instance 註冊後工作 `FAILED`（`container missing after worker restart`），
+  節點 `ONLINE`、配置釋放，後續工作正常完成。
+- 反向檢查：暫時把日誌跳過量改成 0，第一個測試立即失敗（日誌重複），還原後通過。
+- 3 個 Docker 測試連續執行 6 次全部通過，每次約 10 秒。
+
+命令與結果：
+
+- `uv run pytest -m 'not docker and not vm'`：110 passed（新增 19 個）。
+- `uv run pytest -m docker`：16 passed，0 skipped（新增 3 個，含 3 個 GPU 測試；執行前兩張卡閒置、無 compute process）。
+- `uv run ruff check .`、`uv run ruff format --check .`、`git diff --check`：通過。
+
+尚未處理：對帳後關閉的工作不會自動重排（M6.5）；Scheduler 重啟後的核對（M6.6）仍未交付。
 
 ## M7（進行中）：實體 GPU 節點
 

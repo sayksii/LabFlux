@@ -128,6 +128,20 @@ uv run labflux --config CONFIG fetch JOB_ID --directory outputs/mnist
 Worker 主動領取命令，心跳由獨立執行緒每 2 秒回報，避免下載映像或執行長工作阻塞心跳。
 命令接收紀錄與結果 outbox 保存在 Worker 的資料目錄，重送 START 不會重複執行同一 attempt。
 超過 10 秒未收到心跳，節點變成 `OFFLINE`、未確認停止的工作變成 `UNKNOWN`，配置仍保留。
+同一個 Worker instance 恢復心跳時，節點直接回到 `ONLINE`；它回報仍在執行的 attempt 從 `UNKNOWN`
+回到 `RUNNING`，其餘維持 `UNKNOWN`，直到收到結果才釋放。
+
+Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼續執行。重新啟動的 Worker
+註冊時附上本機的 attempt 紀錄與帶有自己標籤的容器，Scheduler 在同一個交易內核對每個未釋放的 attempt：
+
+- 容器還在（執行中或已結束），或本機有尚未送出的結果：新 instance 接手，繼續監看與執行時限；
+  日誌從中斷處接上，不重複也不遺漏。
+- 本機紀錄顯示還沒建立容器：重新送出同一個 START，從頭執行。
+- 兩者都沒有：已沒有程序在執行，標記為 `FAILED`（已要求取消則為 `CANCELLED`），並釋放 CPU／RAM／GPU。
+
+核對完成後節點才回到 `ONLINE`，舊 instance 的事件與日誌一律被拒絕。已釋放或 Scheduler
+不認得的容器，只有在 Worker 本機也有紀錄時才會停止並移除，以免誤刪同名 Worker ID 的其他安裝。
+沒有附上清單的舊版 Worker 維持原本的行為：有未釋放 attempt 時拒絕註冊。
 
 使用者 API 為 `/api/jobs`、`/api/nodes`、`/api/artifacts`，以使用者 Bearer Token 驗證；
 內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
@@ -167,5 +181,5 @@ uv run python scripts/lab_deploy.py status
 ## 目前邊界
 
 目前交付到 M6.3，使用 CPU／RAM；GPU、進階排程、互動 session 與 vLLM 依後續階段加入。
-Worker 失聯後的自動對帳、重排，以及完整 Scheduler 重啟恢復屬於 M6.4～M6.7，尚未交付。
-有未釋放 attempt 的 Worker 若以新 instance 重啟，註冊會被拒絕並保留配置，避免重複執行。
+Worker 重啟後的對帳與接手（M6.4）已交付；確認停止後自動建立新 attempt 重排（M6.5）、
+Scheduler 重啟恢復（M6.6）與完整故障驗證（M6.7）尚未交付，因此對帳後關閉的工作不會自動重跑。

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import threading
 import time
 from collections.abc import Callable
@@ -21,6 +22,7 @@ from labflux.config import Settings
 from labflux.models import ExecutionSpec
 
 log = logging.getLogger("labflux.runtime")
+ATTEMPT = re.compile(r"[a-f0-9]{32}")
 
 
 @dataclass
@@ -65,18 +67,38 @@ class DockerExecutor:
         on_log: Callable[[str, bytes], None],
         on_started: Callable[[], None],
         cancel: threading.Event,
-    ) -> ExecutionResult:
+        *,
+        detach: threading.Event | None = None,
+        on_launch: Callable[[], None] | None = None,
+        adopt: bool = False,
+        skip: dict[str, int] | None = None,
+    ) -> ExecutionResult | None:
+        """Run or adopt one attempt's container until it ends.
+
+        Returns None when `detach` is set: the container keeps running so that the next worker
+        instance can adopt it. `on_launch` runs just before the container can first exist, and
+        `skip` gives the per-stream byte counts already captured for an adopted container.
+        """
         client = docker.from_env(timeout=max(10, self.settings.stop_grace_s + 5))
         container = None
-        reader = None
-        stream = None
+        readers: list[threading.Thread] = []
+        streams = []
         reason = "completed"
         name = container_name(spec)
         context = {"job_id": spec.job_id, "attempt_id": spec.attempt_id}
+
+        def detached() -> bool:
+            return detach is not None and detach.is_set()
+
         try:
             try:
                 container = client.containers.get(name)
             except NotFound:
+                if adopt:
+                    # Nothing is left of the adopted execution, which confirms its termination.
+                    return ExecutionResult(
+                        "FAILED", None, "container missing after worker restart", True
+                    )
                 if cancel.is_set():
                     return ExecutionResult("CANCELLED", None, "cancelled before start", True)
                 try:
@@ -88,6 +110,8 @@ class DockerExecutor:
                         puller.images.pull(spec.job.image)
                 if cancel.is_set():
                     return ExecutionResult("CANCELLED", None, "cancelled before start", True)
+                if detached():
+                    return None  # No container exists yet; the next instance starts afresh.
                 workspace.mkdir(parents=True, exist_ok=True)
                 outputs.mkdir(parents=True, exist_ok=True)
                 volumes = {
@@ -114,6 +138,8 @@ class DockerExecutor:
                 else:
                     # Keeps CPU jobs GPU-less even if a GPU runtime were made the default.
                     environment["NVIDIA_VISIBLE_DEVICES"] = "void"
+                if on_launch:
+                    on_launch()
                 container = client.containers.create(
                     spec.job.image,
                     command=spec.job.argv,
@@ -144,23 +170,8 @@ class DockerExecutor:
                 or labels.get("labflux.worker_id") != spec.worker_id
             ):
                 raise RuntimeError("container identity does not match the dispatched attempt")
-            container.reload()
-            if container.status == "created" and not cancel.is_set():
-                # Attach before start: attaching afterwards with logs=True can lose or repeat
-                # output written between the log replay and the live stream.
-                stream = container.attach(stream=True, stdout=True, stderr=True, demux=True)
-                container.start()
-                container.reload()
-            if container.status == "created":
-                container.remove()
-                return ExecutionResult("CANCELLED", None, "cancelled before start", True)
-            on_started()
-            if stream is None:
-                stream = container.attach(
-                    stream=True, stdout=True, stderr=True, logs=True, demux=True
-                )
 
-            def collect_logs() -> None:
+            def collect_logs(stream) -> None:
                 try:
                     for stdout, stderr in stream:
                         if stdout:
@@ -170,10 +181,48 @@ class DockerExecutor:
                 except Exception:
                     log.exception("job log capture interrupted", extra=context)
 
-            reader = threading.Thread(
-                target=collect_logs, name=f"logs-{spec.attempt_id}", daemon=True
-            )
-            reader.start()
+            def follow_logs(kind: str, stream, captured: int) -> None:
+                try:
+                    for chunk in stream:
+                        if captured:
+                            dropped = min(captured, len(chunk))
+                            chunk, captured = chunk[dropped:], captured - dropped
+                        if chunk:
+                            on_log(kind, chunk)
+                except Exception:
+                    log.exception("job log capture interrupted", extra=context)
+
+            container.reload()
+            if container.status == "created" and not cancel.is_set():
+                # Attach before start: attaching afterwards with logs=True can lose or repeat
+                # output written between the log replay and the live stream.
+                stream = container.attach(stream=True, stdout=True, stderr=True, demux=True)
+                streams.append(stream)
+                readers.append(threading.Thread(target=collect_logs, args=(stream,), daemon=True))
+                container.start()
+                container.reload()
+            if container.status == "created":
+                container.remove()
+                return ExecutionResult("CANCELLED", None, "cancelled before start", True)
+            on_started()
+            if not readers:
+                # An adopted container already ran under an earlier worker instance. Its log
+                # file replays from the beginning and then follows without a gap, one stream
+                # at a time, so the bytes captured before the restart are skipped per stream.
+                for kind in ("stdout", "stderr"):
+                    stream = container.logs(
+                        stdout=kind == "stdout", stderr=kind == "stderr", stream=True, follow=True
+                    )
+                    streams.append(stream)
+                    readers.append(
+                        threading.Thread(
+                            target=follow_logs,
+                            args=(kind, stream, (skip or {}).get(kind, 0)),
+                            daemon=True,
+                        )
+                    )
+            for reader in readers:
+                reader.start()
             started_at = container.attrs["State"].get("StartedAt")
             started_wall = datetime.fromisoformat(started_at.replace("Z", "+00:00")).timestamp()
             remaining = (spec.job.time_limit_s or self.settings.job_time_limit_s) - max(
@@ -188,11 +237,13 @@ class DockerExecutor:
                     reason = "cancelled" if cancel.is_set() else "time limit exceeded"
                     self._stop(container)
                     break
+                if detached():
+                    return None  # Left running; the next instance adopts it.
                 time.sleep(self.settings.runtime_poll_s)
             container.reload()
             if container.attrs["State"]["Running"]:
                 return ExecutionResult("UNKNOWN", None, "termination could not be confirmed", False)
-            if reader:
+            for reader in readers:
                 reader.join(timeout=5)
             state = container.attrs["State"]
             exit_code = state.get("ExitCode")
@@ -227,10 +278,71 @@ class DockerExecutor:
                 "FAILED" if confirmed else "UNKNOWN", None, str(exc)[:2048], confirmed
             )
         finally:
-            if stream is not None:
+            for stream in streams:
                 with suppress(Exception):
                     stream.close()
+            # Closing the sockets ends the readers; wait so no log write outlives this call.
+            for reader in readers:
+                if reader.ident is not None:
+                    reader.join(timeout=5)
             client.close()
+
+    def inventory(self, worker_id: str) -> list[dict]:
+        """Containers carrying this worker's labels, as reported when it registers."""
+        found = []
+        with closing(docker.from_env(timeout=max(10, self.settings.request_timeout_s))) as client:
+            for container in client.containers.list(
+                all=True,
+                filters={"label": ["labflux.managed=true", f"labflux.worker_id={worker_id}"]},
+            ):
+                labels = container.labels
+                attempt_id = labels.get("labflux.attempt_id", "")
+                if labels.get("labflux.worker_id") != worker_id or not ATTEMPT.fullmatch(
+                    attempt_id
+                ):
+                    continue
+                state = container.attrs["State"]
+                started_at = None
+                if container.status != "created" and state.get("StartedAt"):
+                    value = datetime.fromisoformat(state["StartedAt"].replace("Z", "+00:00"))
+                    started_at = value.timestamp() if value.year > 1 else None
+                found.append(
+                    {
+                        "attempt_id": attempt_id,
+                        "worker_id": worker_id,
+                        "status": container.status,
+                        "exit_code": None if state.get("Running") else state.get("ExitCode"),
+                        "oom_killed": bool(state.get("OOMKilled")),
+                        "started_at": started_at,
+                    }
+                )
+        return found
+
+    def remove(self, worker_id: str, attempt_id: str) -> bool:
+        """Stop and remove one of this worker's containers; True once none is left."""
+        with closing(docker.from_env(timeout=max(10, self.settings.stop_grace_s + 5))) as client:
+            for container in client.containers.list(
+                all=True,
+                filters={
+                    "label": [
+                        "labflux.managed=true",
+                        f"labflux.worker_id={worker_id}",
+                        f"labflux.attempt_id={attempt_id}",
+                    ]
+                },
+            ):
+                labels = container.labels
+                if (
+                    labels.get("labflux.worker_id") != worker_id
+                    or labels.get("labflux.attempt_id") != attempt_id
+                ):
+                    return False
+                self._stop(container)
+                container.reload()
+                if container.attrs["State"]["Running"]:
+                    return False
+                container.remove()
+        return True
 
     def stop_unstarted(self, spec: ExecutionSpec) -> ExecutionResult:
         """Handle a STOP received before its START, or a lost local task handle."""

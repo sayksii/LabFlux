@@ -103,10 +103,45 @@ class Capacity(BaseModel):
         return values
 
 
+ATTEMPT_ID = r"^[a-f0-9]{32}$"
+WORKER_ID = r"^[a-zA-Z0-9_.-]{1,64}$"
+
+
+class InventoryAttempt(BaseModel):
+    """A local attempt record that may still matter to the Scheduler."""
+
+    model_config = ConfigDict(extra="forbid")
+    attempt_id: str = Field(pattern=ATTEMPT_ID)
+    # False only while no container can have been created for the attempt.
+    launched: bool = True
+    # A confirmed result that the outbox has not delivered yet.
+    unsent_result: bool = False
+
+
+class InventoryContainer(BaseModel):
+    """A Docker container carrying this worker's LabFlux labels."""
+
+    model_config = ConfigDict(extra="forbid")
+    attempt_id: str = Field(pattern=ATTEMPT_ID)
+    worker_id: str = Field(pattern=WORKER_ID)
+    status: str = Field(min_length=1, max_length=32)
+    exit_code: int | None = None
+    oom_killed: bool = False
+    started_at: float | None = None
+
+
+class Inventory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attempts: list[InventoryAttempt] = Field(default_factory=list, max_length=10000)
+    containers: list[InventoryContainer] = Field(default_factory=list, max_length=10000)
+
+
 class WorkerRegistration(BaseModel):
-    worker_id: str = Field(pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
-    instance_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    worker_id: str = Field(pattern=WORKER_ID)
+    instance_id: str = Field(pattern=ATTEMPT_ID)
     capacity: Capacity
+    # Sent by restarting workers; None keeps the old refusal for unreleased attempts.
+    inventory: Inventory | None = None
 
 
 class GpuObservation(BaseModel):
@@ -121,6 +156,10 @@ class Heartbeat(BaseModel):
     instance_id: str
     observed: dict[str, float] = Field(default_factory=dict)
     gpus: list[GpuObservation] = Field(default_factory=list)
+    # Attempts this instance is executing right now; lets a lapsed node resume them.
+    active_attempts: list[Annotated[str, Field(pattern=ATTEMPT_ID)]] = Field(
+        default_factory=list, max_length=10000
+    )
 
 
 class WorkerEvent(BaseModel):

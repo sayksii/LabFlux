@@ -24,6 +24,7 @@ from labflux.database import (
 from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
+EXPIRED_ATTEMPT = "worker heartbeat expired; termination unconfirmed"
 
 
 class ServiceError(Exception):
@@ -134,8 +135,10 @@ class Scheduler:
                 if pooled & {gpu["uuid"] for gpu in other.capacity.get("gpus", [])}:
                     raise ServiceError(409, f"GPU is already pooled by worker {other.id}")
             allocation = self._allocations(connection, payload.worker_id)
+            legacy = payload.inventory is None
             if (
-                existing
+                legacy
+                and existing
                 and existing._mapping["instance_id"] != payload.instance_id
                 and allocation["jobs"]
             ):
@@ -143,7 +146,12 @@ class Scheduler:
                     409, "worker has unreleased attempts; reconcile them before restarting"
                 )
             status = "ONLINE"
-            if existing and existing._mapping["status"] == "OFFLINE" and allocation["jobs"]:
+            if (
+                legacy
+                and existing
+                and existing._mapping["status"] == "OFFLINE"
+                and allocation["jobs"]
+            ):
                 status = "OFFLINE"
             values = dict(
                 instance_id=payload.instance_id,
@@ -158,15 +166,181 @@ class Scheduler:
                 )
             else:
                 connection.execute(nodes.insert().values(id=payload.worker_id, **values))
+            # Reconciled in this transaction, so nothing is dispatched to an unreconciled node.
+            reconciled = {} if legacy else self._reconcile(connection, payload)
             self._schedule(connection)
-        return {"worker_id": payload.worker_id, "status": status}
+        return {"worker_id": payload.worker_id, "status": status, **reconciled}
+
+    def _reconcile(self, connection, payload: WorkerRegistration) -> dict:
+        """Settle a restarted worker's unreleased attempts against what it found locally.
+
+        A surviving container or an undelivered result is adopted; a record that never reached
+        container creation is started again; anything else has nothing left running, which
+        confirms termination, so it is closed and released.
+        """
+        worker_id, inventory = payload.worker_id, payload.inventory
+        if any(item.worker_id != worker_id for item in inventory.containers):
+            raise ServiceError(422, "inventory lists containers of another worker")
+        containers = {item.attempt_id: item for item in inventory.containers}
+        records = {item.attempt_id: item for item in inventory.attempts}
+        known = {
+            row.id: row_dict(row)
+            for row in connection.execute(
+                select(attempts).where(attempts.c.id.in_(set(containers) | set(records)))
+            )
+        }
+        if any(attempt["node_id"] != worker_id for attempt in known.values()):
+            raise ServiceError(409, "inventory lists attempts of another worker")
+        result = {"adopt": [], "restart": [], "closed": [], "remove": []}
+        unreleased = connection.execute(
+            select(attempts)
+            .where(attempts.c.node_id == worker_id, attempts.c.released.is_(False))
+            .order_by(attempts.c.created_at)
+        ).all()
+        for row in unreleased:
+            attempt = row_dict(row)
+            job = self._job(connection, attempt["job_id"])
+            current = job["current_attempt_id"] == attempt["id"]
+            container = containers.get(attempt["id"])
+            record = records.get(attempt["id"])
+            start = connection.execute(
+                select(commands).where(commands.c.id == f"start-{attempt['id']}")
+            ).first()
+            if container or (record and record.unsent_result):
+                started_at = attempt["started_at"]
+                if started_at is None and container and container.status != "created":
+                    started_at = container.started_at or self.clock()
+                if job["cancel_requested"]:
+                    state = "STOPPING"
+                elif started_at or (record and record.unsent_result):
+                    state = "RUNNING"
+                else:
+                    state = "STARTING"
+                connection.execute(
+                    attempts.update()
+                    .where(attempts.c.id == attempt["id"])
+                    .values(state=state, started_at=started_at, reason="adopted by new instance")
+                )
+                if current:
+                    connection.execute(
+                        jobs.update()
+                        .where(jobs.c.id == job["id"])
+                        .values(
+                            state=state,
+                            reason=(
+                                "waiting for confirmed container termination"
+                                if state == "STOPPING"
+                                else "executing"
+                            ),
+                            updated_at=self.clock(),
+                        )
+                    )
+                logged = {"stdout": 0, "stderr": 0}
+                next_seq = 0
+                for stream, size, last in connection.execute(
+                    select(logs.c.stream, func.sum(func.length(logs.c.data)), func.max(logs.c.seq))
+                    .where(logs.c.attempt_id == attempt["id"])
+                    .group_by(logs.c.stream)
+                ):
+                    logged[stream] = size
+                    next_seq = max(next_seq, last + 1)
+                result["adopt"].append(
+                    {
+                        "attempt_id": attempt["id"],
+                        "payload": start.payload,
+                        "cancel": job["cancel_requested"],
+                        # Used only when the worker lost its local record of the attempt.
+                        "log_bytes": logged,
+                        "next_seq": next_seq,
+                    }
+                )
+            elif record and not record.launched:
+                if job["cancel_requested"]:
+                    self._finish(connection, attempt, job, "CANCELLED", "cancelled before start")
+                    result["closed"].append(attempt["id"])
+                    continue
+                # No container was ever created, so running it from the start is safe.
+                connection.execute(
+                    commands.update()
+                    .where(commands.c.id == f"start-{attempt['id']}")
+                    .values(acked=False)
+                )
+                connection.execute(
+                    attempts.update()
+                    .where(attempts.c.id == attempt["id"])
+                    .values(state="STARTING", reason="restarted after worker restart")
+                )
+                if current:
+                    connection.execute(
+                        jobs.update()
+                        .where(jobs.c.id == job["id"])
+                        .values(
+                            state="STARTING",
+                            reason=f"assigned to {worker_id}",
+                            updated_at=self.clock(),
+                        )
+                    )
+                result["restart"].append(attempt["id"])
+            elif record is None and start is not None and not start.acked:
+                continue  # Never delivered; normal command polling hands it to the new instance.
+            else:
+                self._finish(
+                    connection, attempt, job, "FAILED", "container missing after worker restart"
+                )
+                result["closed"].append(attempt["id"])
+        for item in inventory.containers:
+            attempt = known.get(item.attempt_id)
+            if attempt is None or attempt["released"]:
+                result["remove"].append(item.attempt_id)
+        return result
+
+    def _finish(
+        self,
+        connection,
+        attempt: dict,
+        job: dict,
+        outcome: str,
+        reason: str,
+        exit_code: int | None = None,
+        oom_killed: bool = False,
+    ) -> None:
+        """Record confirmed termination; CPU, RAM and GPUs are released together."""
+        outcome = "CANCELLED" if job["cancel_requested"] else outcome
+        connection.execute(
+            attempts.update()
+            .where(attempts.c.id == attempt["id"])
+            .values(
+                state=outcome,
+                released=True,
+                finished_at=self.clock(),
+                exit_code=exit_code,
+                reason=reason,
+                oom_killed=oom_killed,
+            )
+        )
+        connection.execute(
+            attempt_gpus.update()
+            .where(attempt_gpus.c.attempt_id == attempt["id"])
+            .values(released=True)
+        )
+        if job["current_attempt_id"] == attempt["id"]:
+            connection.execute(
+                jobs.update()
+                .where(jobs.c.id == job["id"])
+                .values(state=outcome, reason=reason, updated_at=self.clock())
+            )
+        connection.execute(
+            commands.update().where(commands.c.attempt_id == attempt["id"]).values(acked=True)
+        )
 
     def heartbeat(self, node_id: str, payload: Heartbeat) -> dict:
         with self.db.transaction() as connection:
             node = self._node(connection, node_id, payload.instance_id)
             status = node["status"]
-            if status == "OFFLINE" and not self._allocations(connection, node_id)["jobs"]:
+            if status == "OFFLINE":
+                # The same instance is back after its heartbeats lapsed; its records are intact.
                 status = "ONLINE"
+                self._resume(connection, node_id, set(payload.active_attempts))
             connection.execute(
                 nodes.update()
                 .where(nodes.c.id == node_id)
@@ -181,6 +355,39 @@ class Scheduler:
             )
             self._schedule(connection)
         return {"status": status}
+
+    def _resume(self, connection, node_id: str, active: set[str]) -> None:
+        """Attempts that went UNKNOWN only through lapsed heartbeats and that the same instance
+        still executes are running again; the rest stay UNKNOWN until their FINISHED event."""
+        lapsed = connection.execute(
+            select(attempts).where(
+                attempts.c.node_id == node_id,
+                attempts.c.released.is_(False),
+                attempts.c.state == "UNKNOWN",
+                attempts.c.reason == EXPIRED_ATTEMPT,
+            )
+        ).all()
+        for row in lapsed:
+            if row.id not in active:
+                continue
+            job = self._job(connection, row.job_id)
+            if job["cancel_requested"]:
+                state, reason = "STOPPING", "waiting for confirmed container termination"
+            elif row.started_at:
+                state, reason = "RUNNING", "executing"
+            else:
+                state, reason = "STARTING", f"assigned to {node_id}"
+            connection.execute(
+                attempts.update()
+                .where(attempts.c.id == row.id)
+                .values(state=state, reason="worker heartbeats resumed")
+            )
+            if job["current_attempt_id"] == row.id and job["state"] == "UNKNOWN":
+                connection.execute(
+                    jobs.update()
+                    .where(jobs.c.id == job["id"])
+                    .values(state=state, reason=reason, updated_at=self.clock())
+                )
 
     def submit(self, owner: str, spec: JobSpec) -> dict:
         if spec.time_limit_s is None:
@@ -362,7 +569,7 @@ class Scheduler:
                         .where(attempts.c.id == attempt.id)
                         .values(
                             state="UNKNOWN",
-                            reason="worker heartbeat expired; termination unconfirmed",
+                            reason=EXPIRED_ATTEMPT,
                         )
                     )
                     connection.execute(
@@ -502,31 +709,14 @@ class Scheduler:
             else:
                 if event.outcome not in TERMINAL:
                     raise ServiceError(422, "a terminal outcome is required")
-                outcome = "CANCELLED" if job["cancel_requested"] else event.outcome
-                connection.execute(
-                    attempts.update()
-                    .where(attempts.c.id == attempt_id)
-                    .values(
-                        state=outcome,
-                        released=True,
-                        finished_at=self.clock(),
-                        exit_code=event.exit_code,
-                        reason=event.reason,
-                        oom_killed=event.oom_killed,
-                    )
-                )
-                connection.execute(
-                    attempt_gpus.update()
-                    .where(attempt_gpus.c.attempt_id == attempt_id)
-                    .values(released=True)
-                )
-                connection.execute(
-                    jobs.update()
-                    .where(jobs.c.id == job["id"])
-                    .values(state=outcome, reason=event.reason, updated_at=self.clock())
-                )
-                connection.execute(
-                    commands.update().where(commands.c.attempt_id == attempt_id).values(acked=True)
+                self._finish(
+                    connection,
+                    attempt,
+                    job,
+                    event.outcome,
+                    event.reason,
+                    event.exit_code,
+                    event.oom_killed,
                 )
                 self._schedule(connection)
         return {"accepted": True}

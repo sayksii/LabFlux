@@ -10,24 +10,58 @@ from labflux.worker import Worker
 
 
 class ControlledExecutor:
+    """A fake container: it lives in `containers` until it finishes, like Docker would keep it
+    across a Worker restart."""
+
     def __init__(self, *, fail=False):
         self.calls = 0
         self.release = threading.Event()
         self.fail = fail
+        self.containers: dict[str, dict] = {}
+        self.adopted: list[tuple[str, dict | None]] = []
+        self.removed: list[str] = []
 
-    def run(self, spec, workspace, outputs, on_log, on_started, cancel):
+    def run(self, spec, workspace, outputs, on_log, on_started, cancel, **options):
         self.calls += 1
         if self.fail:
             raise OSError("daemon is unavailable; state unknown")
+        detach = options.get("detach")
+        if options.get("adopt"):
+            self.adopted.append((spec.attempt_id, options.get("skip")))
+            if spec.attempt_id not in self.containers:
+                return ExecutionResult(
+                    "FAILED", None, "container missing after worker restart", True
+                )
+        else:
+            if options.get("on_launch"):
+                options["on_launch"]()
+            self.containers[spec.attempt_id] = {"worker_id": spec.worker_id, "status": "running"}
+            on_log("stdout", b"live output\n")
         on_started()
-        on_log("stdout", b"live output\n")
         while not self.release.wait(0.01):
             if cancel.is_set():
+                self.containers.pop(spec.attempt_id, None)
                 return ExecutionResult("CANCELLED", 137, "cancelled", True)
+            if detach is not None and detach.is_set():
+                return None
+        self.containers.pop(spec.attempt_id, None)
         return ExecutionResult("SUCCEEDED", 0, "completed", True)
 
     def stop_unstarted(self, spec):
+        self.containers.pop(spec.attempt_id, None)
         return ExecutionResult("CANCELLED", 137, "confirmed stopped", True)
+
+    def inventory(self, worker_id):
+        return [
+            {"attempt_id": attempt_id, "worker_id": value["worker_id"], "status": value["status"]}
+            for attempt_id, value in self.containers.items()
+            if value["worker_id"] == worker_id
+        ]
+
+    def remove(self, worker_id, attempt_id):
+        self.removed.append(attempt_id)
+        self.containers.pop(attempt_id, None)
+        return True
 
 
 def prepare(client, tmp_path, executor):
