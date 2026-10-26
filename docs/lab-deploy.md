@@ -115,8 +115,10 @@ Scheduler 只綁 IPv4，不會從 IPv6 被連到。
 
 ```bash
 uv run labflux --config .labflux/lab/cli.toml nodes
-uv run labflux --config .labflux/lab/cli.toml submit examples/jobs/mnist.json --source examples/mnist --wait
+uv run labflux --config .labflux/lab/cli.toml submit examples/jobs/mnist.json --source examples/mnist --wait --wait-timeout 1800
 ```
+
+`--wait` 預設只等 120 秒；節點第一次執行 torch 工作要下載約 3 GB 套件，所以要加 `--wait-timeout`。
 
 從自己的電腦看 Dashboard：先建立 SSH 轉送，再打開 http://localhost:8770/dashboard ，
 以 `cli.toml` 裡的 `user_token` 登入。
@@ -139,10 +141,12 @@ $SSH labflux@192.0.2.10 systemctl --user status labflux-worker
 
 ## 停止、更新與移除
 
-- **更新：** 合併新版程式後重新執行 `deploy`。有工作在執行時腳本會拒絕重啟，等工作結束或取消後再部署。
-- **停止：** 先確認節點上沒有工作（目前停止 Worker 會停掉它的容器），再執行
-  `$SSH labflux@<host> systemctl --user stop labflux-worker.service`；
+- **更新：** 合併新版程式後重新執行 `deploy`。有工作在執行時，`deploy karma` 可以照常進行，工作由新的
+  Worker 接手；部署 kayle 會重啟 Scheduler，腳本會拒絕，等工作結束或取消後再部署。
+- **停止：** `$SSH labflux@<host> systemctl --user stop labflux-worker.service`；
   kayle 的 Scheduler 是 `labflux-scheduler.service`。`disable` 可避免開機時自動啟動。
+  停止 Worker **不會**停止它的工作容器：工作繼續執行並佔用 GPU，但 Worker 停止期間不檢查執行時限、
+  也不回傳日誌，下一個 Worker 啟動並接手後才補上。要停止工作，先用 `labflux cancel`。
 - **移除：** 在每台執行
   `systemctl --user disable --now labflux-worker.service labflux-scheduler.service`，
   刪除 `~/.config/systemd/user/labflux-*.service` 後 `systemctl --user daemon-reload`，
@@ -155,3 +159,8 @@ $SSH labflux@192.0.2.10 systemctl --user status labflux-worker
 - M6.5、M6.6 尚未完成：有工作在執行時不能重啟或更新 Scheduler（kayle）；Worker 可以。
 - 防火牆規則只支援一台遠端 Worker；之後要加節點時需改成專用 chain。
 - 同一台 Worker 上的工作共用可寫的 uv 快取，彼此需要互相信任。
+- 操作上要避免（PR #2 審查中判定為少見、暫不處理的情況，詳見 `docs/verification.md`）：
+  - 不要用同一個 `worker_id` 再啟動第二個 Worker；新註冊的 instance 會接手並關閉它找不到容器的工作。
+  - 有 GPU 工作執行時不要修改 Worker 的 `gpus` 清單再重啟；接手時卡片不在清單內會失敗。
+  - 不要替已註冊的 Worker 改名；舊名稱仍佔著同一批 GPU，新名稱會註冊失敗，需手動清理資料庫。
+  - 部署者必須是 `scheduler.users` 之一，否則重新部署 kayle 時的重啟檢查無法查詢 Scheduler。

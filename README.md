@@ -47,7 +47,8 @@ uv run labflux --config configs/demo.toml nodes
 uv run labflux --config configs/demo.toml cancel JOB_ID
 ```
 
-`submit --wait` 等到工作完成；失敗、取消、狀態不明或等待逾時會以非零狀態退出。
+`submit --wait` 等到工作完成；失敗、取消或等待逾時（預設 120 秒，可用 `--wait-timeout` 調整）會以非零狀態退出。
+狀態不明（`UNKNOWN`）不算結束：Worker 恢復連線或重啟接手後工作會繼續，所以會持續等待。
 `cancel` 對排隊工作立即生效；執行中的工作會先變成 `STOPPING`，確認容器停止才變成 `CANCELLED`。
 
 Scheduler 在 `/dashboard` 提供監控頁（例如 `http://127.0.0.1:8000/dashboard`），以使用者 Token 登入。
@@ -131,7 +132,8 @@ Worker 主動領取命令，心跳由獨立執行緒每 2 秒回報，避免下�
 同一個 Worker instance 恢復心跳時，節點直接回到 `ONLINE`；它回報仍在執行的 attempt 從 `UNKNOWN`
 回到 `RUNNING`，其餘維持 `UNKNOWN`，直到收到結果才釋放。
 
-Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼續執行。重新啟動的 Worker
+Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼續執行；Worker 停止期間不檢查執行時限，
+要停止工作請用 `labflux cancel`。重新啟動的 Worker
 註冊時附上本機的 attempt 紀錄與帶有自己標籤的容器，Scheduler 在同一個交易內核對每個未釋放的 attempt：
 
 - 容器還在（執行中或已結束），或本機有尚未送出的結果：新 instance 接手，繼續監看與執行時限；

@@ -353,6 +353,39 @@ kayle 的兩個工作同時寫入同一個快取。
   `min_vram_mib = 24000` 分到 karma 的 4090 並完成。張數與型號匹配由上表的三個工作驗證。
 - 7.8 未勾選：checklist 要求至少三個異質節點，目前實體節點只有 kayle 與 karma 兩台。
 
+## PR #2 審查（2026-10-27）
+
+合併前以 code review 檢查整個 PR，共 15 項，另外人工補查到 1 項。判定原則：
+在兩台實體機、少數使用者的環境下實際會遇到、且改動小的才修；少見情況記錄為已知限制，不為它擴大設計。
+
+| # | 位置 | 問題 | 判定與處理 |
+|---|---|---|---|
+| 1 | `scheduler.py` register | 新 instance 帶 inventory 註冊時不檢查舊 instance 是否還活著；同名的第二個 Worker 會關閉它找不到容器的工作並釋放資源 | 少見（需取得 Worker Token 又用同名啟動）；不修，列為操作限制 |
+| 2 | `models.py` env 驗證 | 舊版資料庫中含 `NVIDIA_VISIBLE_DEVICES` 的排隊工作會讓每次排程驗證失敗 | 少見（正式資料庫由新版建立，提交時即被拒絕）；不修 |
+| 3 | `worker.py` 拒絕指令 | 拒絕指令後、結果送出前剛好重啟，工作停在 RUNNING | 少見（Scheduler 不會送出會被拒的指令，時間窗約 0.25 秒）；不修 |
+| 4 | `worker.py` 接手 | 接手時本機紀錄損壞或卡片已不在清單，工作停在 RUNNING、容器無人監看 | 少見；不修，列為操作限制（GPU 工作執行時不改 `gpus`） |
+| 5 | `scheduler.py` STARTED | 節點失聯期間容器啟動，STARTED 被忽略，整段執行都顯示 STARTING | **已修** |
+| 6 | `scheduler.py` 對帳 | 重啟超過 10 秒且 START 尚未送達時，工作整段執行都顯示 UNKNOWN | **已修**（與 #5 同一處） |
+| 7 | `scheduler.py` GPU 衝突 | 已失聯的舊節點仍佔著 GPU UUID，Worker 改名後無法註冊 | 少見；不修，列為操作限制 |
+| 8 | `cli.py` `--wait` | 把 UNKNOWN 當成結束，Worker 重啟時誤報失敗 | **已修** |
+| 9 | `lab_deploy.py` | 第二次重啟檢查未傳 Token，部署者不在 `scheduler.users` 時重新部署 kayle 會被擋 | 目前部署者在名單內；不修，列為操作限制 |
+| 10 | `lab_deploy.py` | 重啟後只檢查 ONLINE，新 Worker 啟動失敗時仍可能顯示成功 | 少見且 `status` 可看出實際狀態；不修 |
+| 11 | `runtime.py` uv 快取 | 同一台 Worker 的工作共用可寫的 uv 快取 | 既定設計（同台使用者互相信任）；文件已說明 |
+| 12 | 註解與文件 | 仍寫「SIGTERM 會停止容器」，與 M6.4 後的行為相反 | **已修**（CLI 說明、unit 註解、README、`docs/lab-deploy.md`） |
+| 13 | `scheduler.py` | STARTED 只處理 STARTING；失聯判斷依賴原因字串 | STARTED 部分隨 #5 修正；原因字串比對維持不變 |
+| 14 | 多處 | attempt ID、GPU UUID 格式重複定義 | 程式風格；不修 |
+| 15 | `scheduler.py`、`worker.py` | 狀態選擇與指令驗證重複 | 程式風格；不修 |
+| 16 | `docs/lab-deploy.md` | MNIST 範例用 `--wait` 卻沒加 `--wait-timeout`，第一次執行必定顯示逾時 | **已修**（人工補查） |
+
+修正內容與驗證：
+
+- STARTED 也會把因心跳中斷而變成 UNKNOWN 的工作改回 RUNNING（已要求取消則為 STOPPING），並補記開始時間。
+  `tests/test_reconnect.py` 新增 3 個案例，分別重現 #5、#6 與取消後的情況；改回原本的程式時這 3 個案例都失敗。
+- `submit --wait` 遇到 UNKNOWN 會提示並繼續等待；`tests/test_cli.py` 的新案例在原本的程式上失敗。
+- `uv run pytest -m 'not docker and not vm'`：136 passed。
+- `uv run pytest -m docker`（kayle，含 3 個 GPU 與 3 個重啟接手測試）：16 passed；測試前兩張卡閒置，測試後沒有殘留容器。
+- `ruff check`、`ruff format --check`、`git diff --check`：通過。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。

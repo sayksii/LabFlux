@@ -261,7 +261,7 @@ def worker_unit() -> str:
         "[Service]\nWorkingDirectory=%h/labflux\n"
         "ExecStart=%h/labflux/.venv/bin/labflux --config %h/labflux/worker.toml worker\n"
         "Restart=on-failure\nRestartSec=5\n"
-        # SIGTERM stops the Worker's job containers before it exits.
+        # SIGTERM leaves job containers running; the timeout covers the final outbox flush.
         "TimeoutStopSec=60\n\n"
         "[Install]\nWantedBy=default.target\n"
     )
