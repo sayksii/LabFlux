@@ -25,6 +25,21 @@ from labflux.runtime import DockerExecutor, ExecutionResult
 
 log = logging.getLogger("labflux.worker")
 ATTEMPT_ID = re.compile(r"[a-f0-9]{32}")
+# Command IDs end up in a URL path, so separators and dots are never allowed.
+COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+
+
+class Unaddressed(Exception):
+    """A command that cannot safely be tied to one of this worker's attempts."""
+
+
+class Invalid(Exception):
+    """A command for one of this worker's attempts that cannot run as sent."""
+
+    def __init__(self, attempt_id: str, reason: str):
+        super().__init__(reason)
+        self.attempt_id = attempt_id
+        self.reason = reason
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -115,6 +130,87 @@ class Worker:
             raise ValueError("command assigns GPUs outside this worker's pool")
         return spec
 
+    def _validate(self, command) -> None:
+        """Classify a polled command before any local state is touched."""
+        if not isinstance(command, dict):
+            raise Unaddressed("command is not an object")
+        payload = command.get("payload")
+        attempt_id = payload.get("attempt_id") if isinstance(payload, dict) else None
+        if attempt_id is None:
+            attempt_id = command.get("attempt_id")
+        if (
+            not isinstance(attempt_id, str)
+            or not ATTEMPT_ID.fullmatch(attempt_id)
+            or command.get("attempt_id", attempt_id) != attempt_id
+        ):
+            raise Unaddressed("invalid attempt ID")
+        named = payload.get("worker_id") if isinstance(payload, dict) else None
+        if (named is not None and named != self.settings.worker_id) or command.get(
+            "node_id", self.settings.worker_id
+        ) != self.settings.worker_id:
+            raise Unaddressed("command is addressed to another worker")
+        if command.get("kind") not in {"START", "STOP"}:
+            raise Invalid(attempt_id, f"unknown command kind {command.get('kind')!r}")
+        try:
+            self._spec(payload)
+        except (ValueError, TypeError) as exc:
+            raise Invalid(attempt_id, str(exc)) from exc
+
+    def process(self, commands: list) -> None:
+        """Accept and ack one poll's commands; a bad command never holds up the others."""
+        for command in commands:
+            try:
+                self._validate(command)
+            except Unaddressed as exc:
+                # Nothing local can be tied to it; the Scheduler keeps its allocation, which
+                # stays safe because nothing is released without confirmed termination.
+                log.error("acked a command that is not for this worker: %s", exc)
+                self._ack(command)
+                continue
+            except Invalid as exc:
+                log.error("rejected command: %s", exc.reason, extra={"attempt_id": exc.attempt_id})
+                self._reject(exc.attempt_id, f"rejected command: {exc.reason}")
+                self._ack(command)
+                continue
+            try:
+                self.accept(command)
+            except Exception:
+                # Unacked, so the next poll retries it; the remaining commands still run.
+                log.exception(
+                    "command failed; it is retried at the next poll",
+                    extra={"attempt_id": command.get("attempt_id")},
+                )
+                continue
+            self._ack(command)
+
+    def _ack(self, command) -> None:
+        command_id = command.get("id") if isinstance(command, dict) else None
+        if not isinstance(command_id, str) or not COMMAND_ID.fullmatch(command_id):
+            log.error("cannot ack a command without a valid ID")
+            return
+        self._post(self._url(f"commands/{command_id}/ack"), {"instance_id": self.instance_id})
+
+    def _reject(self, attempt_id: str, reason: str) -> None:
+        """Report FAILED for a command that never created a container, via the outbox."""
+        with self.lock:
+            if attempt_id in self.handles or self._metadata(attempt_id).exists():
+                log.error(
+                    "rejected command left existing attempt state untouched",
+                    extra={"attempt_id": attempt_id},
+                )
+                return
+            (self.root / attempt_id).mkdir(parents=True, exist_ok=True)
+            record = self._record(None, attempt_id=attempt_id, launched=False)
+            record.update(
+                result=ExecutionResult("FAILED", None, reason[:2048], True).as_dict(),
+                result_event_id=uuid.uuid4().hex,
+                output_sent=True,  # Nothing ran, so there is no output to collect.
+            )
+            write_json(self._metadata(attempt_id), record)
+            done = Future()
+            done.set_result(None)
+            self.handles[attempt_id] = {"cancel": threading.Event(), "future": done}
+
     def accept(self, command: dict) -> None:
         spec = self._spec(command["payload"])
         with self.lock:
@@ -145,9 +241,18 @@ class Worker:
             write_json(self._metadata(spec.attempt_id), self._record(spec, launched=False))
             self._launch(spec, cancel, stop_only=command["kind"] == "STOP")
 
-    def _record(self, spec: ExecutionSpec, *, launched: bool, next_seq: int = 0) -> dict:
+    def _record(
+        self,
+        spec: ExecutionSpec | None,
+        *,
+        launched: bool,
+        next_seq: int = 0,
+        attempt_id: str | None = None,
+    ) -> dict:
         return {
-            "spec": spec.model_dump(),
+            # None for a rejected command, whose payload could not be validated.
+            "spec": spec.model_dump() if spec else None,
+            "attempt_id": spec.attempt_id if spec else attempt_id,
             "instance_id": self.instance_id,
             # Set just before Docker can first create the container.
             "launched": launched,
@@ -188,19 +293,22 @@ class Worker:
                 continue
             try:
                 state = json.loads(path.read_text())
-            except (OSError, ValueError):
+                result = state["result"]
+                confirmed = bool(result and result["termination_confirmed"])
+                sent = bool(state["result_sent"])
+                launched = bool(state.get("launched", True))
+            except (OSError, ValueError, KeyError, TypeError):
+                # Reported as possibly launched, so only a surviving container can keep it.
                 log.warning("unreadable attempt record", extra={"attempt_id": attempt_id})
                 records.append({"attempt_id": attempt_id})
                 continue
-            result = state["result"]
-            confirmed = bool(result and result["termination_confirmed"])
-            if confirmed and state["result_sent"]:
+            if confirmed and sent:
                 continue
             records.append(
                 {
                     "attempt_id": attempt_id,
-                    "launched": state.get("launched", True),
-                    "unsent_result": confirmed and not state["result_sent"],
+                    "launched": launched,
+                    "unsent_result": confirmed and not sent,
                 }
             )
         return {
@@ -247,7 +355,14 @@ class Worker:
                 log.info("removed a stale container", extra={"attempt_id": attempt_id})
                 self._retire(attempt_id, "stale container removed after a worker restart")
         for entry in response.get("adopt", []):
-            self._adopt(entry)
+            try:
+                self._adopt(entry)
+            except (ValueError, TypeError, KeyError):
+                # E.g. its cards left this worker's pool. The allocation stays reserved, which
+                # is safe; failing here would only crash-loop the Worker under systemd.
+                log.exception(
+                    "could not adopt an attempt", extra={"attempt_id": entry.get("attempt_id")}
+                )
 
     def _retire(self, attempt_id: str, reason: str) -> None:
         """Mark a record settled so later restarts no longer report it."""
@@ -604,12 +719,11 @@ class Worker:
                         self._url("commands"), params={"instance_id": self.instance_id}
                     )
                     response.raise_for_status()
-                    for command in response.json():
-                        self.accept(command)
-                        self._post(
-                            self._url(f"commands/{command['id']}/ack"),
-                            {"instance_id": self.instance_id},
-                        )
+                    commands = response.json()
+                    if isinstance(commands, list):
+                        self.process(commands)
+                    else:
+                        log.error("command poll returned a non-list response")
                 except httpx.HTTPError as exc:
                     log.warning("command polling will retry: %s", type(exc).__name__)
                 self.stop_event.wait(self.settings.poll_interval_s)

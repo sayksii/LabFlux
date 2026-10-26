@@ -129,6 +129,21 @@ VM 的實測可分配 RAM：A 1455 MiB、B 2395 MiB、C 3403 MiB，均已扣除 
 - `uv run pytest -m docker`：16 passed，0 skipped（新增 3 個，含 3 個 GPU 測試；執行前兩張卡閒置、無 compute process）。
 - `uv run ruff check .`、`uv run ruff format --check .`、`git diff --check`：通過。
 
+**Worker 拒絕的命令不再讓 Worker 停止。** 在 systemd `Restart=on-failure` 下，被拒絕的命令每次重啟後
+都會再被領取一次，原本會造成 Worker 無限重啟。現在每個命令先分類，再個別 ack：
+
+- 屬於這個 Worker、attempt ID 有效但內容無效（例如分配了本機 GPU 池以外的卡、格式錯誤的工作）：
+  記錄 `FAILED`、`termination_confirmed=True`（沒有建立容器），經 outbox 回報後 Scheduler 釋放資源，並 ack。
+  已經有本機紀錄的 attempt 不會被覆寫。
+- attempt ID 無效或命令指名其他 Worker：記錄 error 並 ack，不建立任何本機狀態；Scheduler 保留原配置。
+- `accept()` 中的意外例外：記錄後不 ack，下一次輪詢重試；同一批的其他命令照常處理。
+- 接手（adopt）時 payload 已無法驗證（例如 GPU 池改變）：記錄 error，保留配置，不中斷啟動。
+
+`tests/test_command_rejection.py`（4 個）：本機池外 GPU 的 START 變成 `FAILED` 且釋放 CPU／GPU；
+格式錯誤、指名其他 Worker、attempt ID 無效與非物件的命令都被 ack，只有有效 ID 得到結果；
+拒絕不覆寫執行中的 attempt；真實 HTTP 下的 Worker 迴圈在收到指名其他 Worker 的命令、
+以及一次 `accept()` 意外例外後仍在運作，並完成下一個有效工作。反向檢查：換回原本的迴圈後，最後一個測試失敗。
+
 尚未處理：對帳後關閉的工作不會自動重排（M6.5）；Scheduler 重啟後的核對（M6.6）仍未交付。
 
 ## M7（進行中）：實體 GPU 節點

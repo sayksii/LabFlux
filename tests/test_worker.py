@@ -47,6 +47,9 @@ class ControlledExecutor:
         self.containers.pop(spec.attempt_id, None)
         return ExecutionResult("SUCCEEDED", 0, "completed", True)
 
+    def check(self):
+        return {}
+
     def stop_unstarted(self, spec):
         self.containers.pop(spec.attempt_id, None)
         return ExecutionResult("CANCELLED", 137, "confirmed stopped", True)
