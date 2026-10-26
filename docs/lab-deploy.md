@@ -8,6 +8,10 @@ LabFlux 只使用其中一部分資源，並以專屬帳號 `labflux` 執行，�
 | kayle（192.0.2.10） | Scheduler + Worker | 16 核、48 GiB | RTX 3090、RTX A5000（驅動 535） |
 | karma（192.0.2.20） | Worker | 16 核、24 GiB | RTX 4090（驅動 580） |
 
+本文件的 IP 都是範例（`192.0.2.0/24` 是文件專用位址）。實際的 IP、資源上限與 GPU 清單只放在
+被 Git 忽略的 `configs/local-lab.toml`（格式見 `configs/lab.example.toml`）；`firewall-instructions`
+與 `deploy` 都依這個檔案的實際值產生指令與設定。
+
 - Scheduler 綁在 `192.0.2.10:8770`，只讓 karma 與 kayle 本機連入（見「防火牆」）。
 - Worker 與 Scheduler 都是 `labflux` 帳號的 systemd **user** service，不需要 sudo 就能部署與重啟。
 - 所有工作容器都以 `labflux`（UID 2001，兩台相同）執行。

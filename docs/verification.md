@@ -148,6 +148,9 @@ VM 的實測可分配 RAM：A 1455 MiB、B 2395 MiB、C 3403 MiB，均已扣除 
 
 ## M7（進行中）：實體 GPU 節點
 
+本節的 IP 與 GPU UUID 以範例值記錄（IP 使用文件專用的 `192.0.2.0/24`）；
+實際值只放在被 Git 忽略的 `configs/local-lab.toml` 與 `.labflux/lab/`。
+
 ### 7.1 實機前置檢查（2026-10-27）
 
 `scripts/lab_deploy.py check` 以部署鑰匙登入兩台的 `labflux` 帳號（host key 固定在 `.labflux/lab/known_hosts`），
