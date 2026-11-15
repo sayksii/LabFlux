@@ -495,8 +495,9 @@ Worker 以開機時間判斷容器是否因主機關機或當機而停止，這�
 - 與其他功能的整合（`tests/test_stream_interplay.py`，6 個）：三種模式下，因執行遺失而重排的工作都會在回來的 Worker 上
   重新派送，`schedule_note` 來自目前的策略，門鈴對該節點只響一次；`fcfs` 讓重跑的工作維持原本順序，`priority` 讓之後提交的
   優先權 9 工作勝過優先權 1 的重跑工作；backfill 的派送也會響門鈴。
-- 只有單元測試；沒有在實體節點或 Docker 上以三種模式執行。正式部署的預設仍是 `fcfs`，
-  `scripts/lab_deploy.py` 與 `configs/lab.example.toml` 尚未提供這個設定。比較實驗屬於 M13。
+- 只有單元測試；沒有在實體節點或 Docker 上以三種模式執行。正式部署的預設仍是 `fcfs`；
+  當時 `scripts/lab_deploy.py` 與 `configs/lab.example.toml` 尚未提供這個設定，M11 起可以用節點清單 `[scheduler]` 的
+  `policy` 設定（見 `docs/lab-deploy.md`）。比較實驗屬於 M13。
 
 ## 門鈴長連線與 outbox 喚醒（T4、T8；M9.1～9.4，kayle，2026-11-15）
 
@@ -697,7 +698,7 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
 
 **排程策略（M8）**
 
-- 預設 `scheduling_policy = "fcfs"`，正式部署的行為不變；部署腳本與範例設定尚未提供這個設定。CLI 沒有 `--priority`，優先權與估計時間寫在工作 JSON。
+- 預設 `scheduling_policy = "fcfs"`，正式部署的行為不變；部署腳本與範例設定當時尚未提供這個設定（M11 起可以用節點清單的 `scheduler.policy` 設定）。CLI 沒有 `--priority`，優先權與估計時間寫在工作 JSON。
 - `JobSpec` 使用 `extra="forbid"`，舊版 Worker 或 CLI 會拒絕新欄位；Scheduler、Worker 與 CLI 必須一起升級。
 - 保留時段以 `(started_at 或 created_at) + time_limit_s` 計算，不含 STARTED 之前的映像下載與原始碼下載時間，所以可能偏早；
   隊首只會等得更久，不會被 backfill 的工作超配，但實際開始時間可能延後。

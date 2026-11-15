@@ -132,7 +132,8 @@ uv run labflux --config CONFIG fetch JOB_ID --directory outputs/mnist
 
 ## 排程與通訊
 
-排程策略由 Scheduler TOML 的 `scheduling_policy` 選擇，預設 `fcfs`：
+排程策略由 Scheduler TOML 的 `scheduling_policy` 選擇，預設 `fcfs`
+（實驗室部署時由節點清單 `[scheduler]` 的 `policy` 設定，見 [docs/lab-deploy.md](docs/lab-deploy.md)）：
 
 | 模式 | 行為 |
 |---|---|

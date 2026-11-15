@@ -83,6 +83,7 @@ def test_inventory_fields(inventory):
         (lambda v: v["scheduler"].update(node="missing"), "scheduler.node"),
         (lambda v: v["scheduler"].update(port=80), "unprivileged"),
         (lambda v: v["scheduler"].update(users=[]), "users"),
+        (lambda v: v["scheduler"].update(policy="easy"), "scheduler.policy must be one of"),
         (
             lambda v: v.update(models={"m": {"image": "x", "argv": ["y"], "datasets": ["hf"]}}),
             "model 'm': no inventory node provides dataset 'hf'",
@@ -159,6 +160,24 @@ def test_generated_tomls_are_valid_settings(inventory):
     cli = Settings.model_validate(tomllib.loads(lab.cli_toml(inventory, "user-secret")))
     assert cli.user_token == "user-secret" and cli.scheduler_url == inventory.scheduler_url
     lab.validate_generated(inventory, tokens())
+
+
+@pytest.mark.parametrize("policy", ["fcfs", "priority", "backfill"])
+def test_scheduling_policy_is_written_to_scheduler_toml(policy):
+    inventory = lab.parse_inventory(inventory_values(policy=policy), root=ROOT)
+    generated = lab.scheduler_toml(inventory, tokens())
+    assert Settings.model_validate(tomllib.loads(generated)).scheduling_policy == policy
+    lab.validate_generated(inventory, tokens())
+
+
+def test_scheduler_toml_without_a_policy_is_unchanged(inventory):
+    """Without the key no line is written, so the Scheduler keeps its default fcfs."""
+    default = lab.scheduler_toml(inventory, tokens())
+    assert inventory.policy is None and "scheduling_policy" not in default
+    assert Settings.model_validate(tomllib.loads(default)).scheduling_policy == "fcfs"
+    chosen = lab.parse_inventory(inventory_values(policy="backfill"), root=ROOT)
+    generated = lab.scheduler_toml(chosen, tokens())
+    assert generated.replace('scheduling_policy = "backfill"\n', "") == default
 
 
 def test_models_pass_through_to_scheduler_toml():
