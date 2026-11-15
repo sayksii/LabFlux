@@ -212,16 +212,22 @@ Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir
 - 那次 attempt 變成 `PREEMPTED`，`/outputs` 照常上傳；`labflux status JOB_ID` 列出所有 attempt，
   `labflux fetch JOB_ID --attempt-id ATTEMPT_ID` 取回被搶占那次的輸出。
 - 工作以原本的提交順序回到 `QUEUED`，之後以新的 attempt 從頭執行（還不支援從 checkpoint 接續）。
+  `labflux logs JOB_ID --follow` 追蹤時，重跑開始後在 stderr 印出 `--- attempt <id> (rerun) ---`，接著從頭印出新 attempt 的輸出。
 - 每個工作最多被搶占 `max_preemptions_per_job` 次（預設 3），之後不再被選中，照常排隊與執行，不會因此失敗。
   被搶占不消耗 `retries_on_node_failure`。
 - 停止期間工作剛好自己結束時，保留原本的結果；使用者同時取消時變成 `CANCELLED`。
 
 誰可以搶占：
 
-- 互動 session：在所有排程策略下（包含 `fcfs`），可以搶占任何優先權的可搶占批次工作。
+- 互動 session 與模型服務的啟動（自動釋放模型的冷啟動、常駐模型的啟動）：在所有排程策略下（包含 `fcfs`），
+  可以搶占任何優先權的可搶占批次工作。
 - 批次工作：只在 `priority` 與 `backfill` 策略下，而且只搶占顯式優先權（`priority`）比自己低、重新排隊後也會排在自己後面的工作。
   排了很久的低優先權工作等待加分很高，重新排隊後可能又排到第一；這種工作不搶，以免兩個工作一直互搶。
-- 只有排在最前面、無法啟動的工作會搶占，整個叢集同時只進行一輪；執行中的 session 不會被搶占。
+- 只有排在最前面、無法啟動的工作會搶占，整個叢集同時只進行一輪；執行中的 session 與模型服務不會被搶占。
+  排在最前面的模型服務搶占不了時（`fcfs`、`priority` 下它不擋住後面的工作），下一個無法啟動的工作可以搶占。
+- 已經在釋放的資源先算成空的：同一台節點上有工作正在停止（例如剛被取消、session 剛結束），或有閒置的自動釋放模型
+  馬上會被回收時，只要等它們釋放就放得下，就不搶占，`schedule_note`（`labflux status JOB_ID`）寫出在等哪個工作或模型；
+  不夠時，以它們已經空出來計算，只停補足差額所需的工作。
 - 有多個可停的工作時，先停這次執行跑得最短的（從頭重跑損失最少），一樣時停優先權較低的，只停到放得下為止。
 
 Scheduler TOML 的相關設定：
@@ -329,6 +335,6 @@ uv run python scripts/lab_deploy.py status
 
 目前交付到 M6.6、M7 的 GPU 配置（整張獨占）、uv 模式、實體機部署工具、M8 的排程策略，
 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身），
-以及 M11 的搶占（被搶占的工作從頭重跑；checkpoint 與模型服務相關的部分之後加入）。
+以及 M11 的搶占（被搶占的工作從頭重跑，checkpoint 之後加入）。
 故障驗證（M6.7）缺少實際 VM 關機；vLLM 依後續階段加入。
 已知限制見 [docs/verification.md](docs/verification.md)。
