@@ -281,6 +281,6 @@ uv run python scripts/lab_deploy.py status
 ## 目前邊界
 
 目前交付到 M6.6、M7 的 GPU 配置（整張獨占）、uv 模式、實體機部署工具、M8 的排程策略，
-以及 M9 的門鈴長連線與快速測試 session。故障驗證（M6.7）缺少實際 VM 關機，
-AI coding 工具從 `labflux shell` 啟動的實測（9.14）尚未進行；vLLM 與搶占依後續階段加入。
+以及 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身）。
+故障驗證（M6.7）缺少實際 VM 關機；vLLM 與搶占依後續階段加入。
 已知限制見 [docs/verification.md](docs/verification.md)。

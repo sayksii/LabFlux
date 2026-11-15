@@ -558,8 +558,7 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
 
 **未勾選與未驗證。**
 
-- **9.14 未勾選：** 檔案與安裝環境跨指令保留、去程刪除、寫回上限與 `.remote` 衝突、額外延遲都已驗證，但還沒有實測任何
-  AI coding 工具從 `labflux shell` 啟動後仍會使用替身。替身與 PATH 只以子程序及手動檢查驗證。
+- **9.14：** 已於 2026-11-16 補上 AI coding 工具的實測並勾選，見下方「9.14 AI coding 工具實測」。
 - `oneshot` 模式只有 Scheduler 端的單元測試，沒有以 Docker 端到端執行；它使用的關閉與重新租用路徑已在 Docker 驗證。
 - Scheduler 重啟時進行中的互動指令：CLI 在連線關閉時回報錯誤並以 125 結束（依程式碼），沒有專門的測試。
 - GPU session、第二台實體機與實驗室部署上的 session 都沒有執行。
@@ -759,6 +758,34 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
 - M15 的項目假設 S2～S4 的版本識別方式，仍是提議；版本格式與正本位置（NAS，或依 S10 經 kayle 以 HTTP 提供）定案後，15.1、15.2 可能要改寫。
 - 9.5 維持資源不足時互動工作等待；是否保留容量給互動工作（Q1）原定與 M8 一起決定，目前仍未決定，沒有列成項目。
 - 尚未決定的提議刻意沒有寫進 plan：D1、D2、D6（Ctrl-C 取消的範圍已於 2026-11-16 決定，見 T10 與 9.13）、D8（在送出指令的機器上開 session）、D9、D11、F2、F5、1 秒延遲目標與保留容量（R17）。
+
+## 9.14 AI coding 工具實測（kayle，2026-11-16）
+
+環境：臨時的 Scheduler 與 Worker（本機 loopback 的空閒 port、暫存資料目錄、唯一的 Worker ID，只用 CPU，映像 `python:3.12-slim`），
+不經過實驗室部署的 Scheduler。測試專案的 `.labflux.toml` 設定 `cpu = 1`、`memory_mib = 256`。
+以虛擬終端機執行 `labflux shell`（bash，使用者原本的 `~/.bashrc`，內含 conda 設定），再從這個 shell 以 headless 模式啟動
+Claude Code（2.1.325，`claude -p ... --allowedTools Bash`），由它的 Bash 工具執行指令。
+
+**替身是否被使用。**請 Claude 依序執行下列指令並原樣回報輸出：
+
+| 指令 | 輸出 | 判讀 |
+|---|---|---|
+| `command -v python` | `/tmp/labflux-standins-…/python` | Bash 工具保留了 `labflux shell` 的 PATH |
+| `python hello.py` | `hello from cf6c5d747b66 cwd /workspace` | 在遠端 session 容器內執行 |
+| `python -c "…gethostname(), getcwd()"` | `cf6c5d747b66 /workspace` | 同上，且沿用同一個容器 |
+| `hostname` | `kayle` | 不在清單上的指令留在本機 |
+| `cat result.txt` | `written remotely on cf6c5d747b66` | 遠端寫出的檔案已寫回本機（D12） |
+| `bash -lc 'command -v python'` | `/tmp/labflux-standins-…/python` | 重新讀取 `~/.profile` 的登入 shell 也沒有蓋掉替身 |
+
+**是否會漏看只在遠端的檔案。**Scheduler 的寫回上限改為 1 MiB，請 Claude「執行 `python make_ckpt.py` 訓練，確認
+`ckpt/model.pt` 已存檔並回報大小與 `metrics.json` 的 loss」。腳本寫出 3 MiB 的 `ckpt/model.pt` 與小的 `metrics.json`。
+Claude 依提示讀了 `.labflux/remote-files.txt`，再用一個送到遠端的 `python -c` 確認檔案存在與大小（3,145,728 bytes），
+回報 loss 0.123，並指出檔案只在遠端、session 結束後刪除、要保留需寫到 `/outputs`。
+它沒有因為本機找不到檔案而誤判訓練失敗，所以先不補說明檔（docs/architecture.md D12 的備案）。
+
+**清理。**測試後關閉 session，確認這兩個 Worker ID 沒有殘留容器，停止臨時的 Scheduler 與 Worker，並刪除替身暫存目錄。
+
+**限制。**只測了 Claude Code 一種 AI 工具與 bash；zsh 與其他 AI 工具沒有實測。觀察只有一次，屬於定性結果。
 
 ## 最後驗證與交付
 
