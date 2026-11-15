@@ -216,6 +216,8 @@ uv run labflux session files           # 只存在遠端 session 的檔案清單
 uv run labflux session close           # 關閉 session，停止容器並釋放資源
 ```
 
+親自走一次檔案流程（寫回、只在遠端的大檔、Ctrl-C、超時、閒置到期）的步驟見 [docs/demo-fast-lane.md](docs/demo-fast-lane.md)。
+
 - 預設送到遠端的指令：`python`、`python3`、`pytest`、`torchrun`、`accelerate`、`deepspeed`、`nvidia-smi`；
   `uv` 只有 `uv run` 送到遠端。其他指令與專案外的指令都在本機執行。`bash run.sh` 在本機執行，
   腳本裡的每個 `python` 各自送到遠端；整個腳本要在遠端執行請用 `labflux run -- bash run.sh`。
