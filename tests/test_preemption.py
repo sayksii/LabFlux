@@ -442,6 +442,25 @@ def test_node_with_less_total_lost_work_is_chosen(make_client, clock):
     assert job(client, older)["state"] == "RUNNING"
 
 
+def test_only_a_node_with_the_preemptors_dataset_is_considered(make_client, clock):
+    client = make_client("priority")
+    nodes = {
+        "karma": register(client, "karma", cpu=1),
+        "kayle": register(client, "kayle", cpu=1, datasets=["mnist"]),
+    }
+    older = run(client, low(client, cpu=1, datasets=["mnist"]), nodes["kayle"])
+    advance(client, clock, 600, nodes)
+    # Started later on karma, so it would be chosen if datasets did not matter.
+    newer = run(client, low(client, cpu=1), nodes["karma"])
+    advance(client, clock, 60, nodes)
+    waiting = high(client, cpu=1, datasets=["mnist"])
+    assert stops(client, nodes["karma"], "karma") == []
+    assert stops(client, nodes["kayle"], "kayle") == [older["current_attempt_id"]]
+    assert job(client, newer)["state"] == "RUNNING"
+    stopped(client, older, nodes["kayle"])
+    assert job(client, waiting)["attempts"][0]["node_id"] == "kayle"
+
+
 def test_gpu_request_stops_the_job_holding_a_matching_card(make_client, clock):
     client = make_client("priority")
     cards = [RTX3090, A5000]
