@@ -11,11 +11,14 @@ import re
 import shutil
 import threading
 import uuid
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
 import psutil
+from websockets.exceptions import WebSocketException
+from websockets.sync.client import connect
 
 from labflux.archives import extract_archive, pack_directory
 from labflux.config import Settings
@@ -27,6 +30,8 @@ log = logging.getLogger("labflux.worker")
 ATTEMPT_ID = re.compile(r"[a-f0-9]{32}")
 # Command IDs end up in a URL path, so separators and dots are never allowed.
 COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+# First retry delay after a failed connection or flush; it doubles up to poll_interval_s.
+RETRY_S = 0.5
 
 
 class Unaddressed(Exception):
@@ -40,6 +45,19 @@ class Invalid(Exception):
         super().__init__(reason)
         self.attempt_id = attempt_id
         self.reason = reason
+
+
+class StopEvent(threading.Event):
+    """Setting it also wakes the threads waiting on the linked wake-up events."""
+
+    def __init__(self, *linked: threading.Event):
+        super().__init__()
+        self.linked = linked
+
+    def set(self) -> None:
+        super().set()
+        for event in self.linked:
+            event.set()
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -84,7 +102,15 @@ class Worker:
         self.assigned_gpus: dict[str, list[str]] = {}
         # Attempts executing in this instance, reported with each heartbeat.
         self.active: set[str] = set()
-        self.stop_event = threading.Event()
+        # Doorbell from the Scheduler: commands are waiting (T4).
+        self.commands_ready = threading.Event()
+        # Something new was written to the outbox (T8).
+        self.outbox_ready = threading.Event()
+        self.stop_event = StopEvent(self.commands_ready, self.outbox_ready)
+        # Handlers for other message types on the doorbell connection (fast lane, T6); they run
+        # on the doorbell thread and must not block.
+        self.handlers: dict[str, Callable[[dict], None]] = {}
+        self.socket = None
         self.lock = threading.RLock()
         self.pool = ThreadPoolExecutor(
             max_workers=settings.max_parallel_jobs, thread_name_prefix="job"
@@ -210,6 +236,7 @@ class Worker:
             done = Future()
             done.set_result(None)
             self.handles[attempt_id] = {"cancel": threading.Event(), "future": done}
+        self.outbox_ready.set()
 
     def accept(self, command: dict) -> None:
         spec = self._spec(command["payload"])
@@ -405,6 +432,7 @@ class Worker:
                     done = Future()
                     done.set_result(None)
                     self.handles[attempt_id] = {"cancel": cancel, "future": done}
+                    self.outbox_ready.set()
                     return
                 self._change(
                     attempt_id, result=None, result_sent=False, output_sent=False, launched=True
@@ -468,6 +496,7 @@ class Worker:
                     state["log_bytes"] += len(chunk)
                 target.flush()
             write_json(self._metadata(attempt_id), state)
+        self.outbox_ready.set()
 
     def _prepare(self, spec: ExecutionSpec, workspace: Path) -> None:
         workspace.mkdir(parents=True, exist_ok=True)
@@ -520,7 +549,7 @@ class Worker:
                     directory / "workspace",
                     directory / "outputs",
                     lambda stream, data: self._log(spec.attempt_id, stream, data),
-                    lambda: self._change(spec.attempt_id, started=True),
+                    lambda: self._started(spec.attempt_id),
                     cancel,
                     detach=self.stop_event,
                     on_launch=lambda: self._change(spec.attempt_id, launched=True),
@@ -555,6 +584,11 @@ class Worker:
                 )
             self.assigned_gpus.pop(spec.attempt_id, None)
             self.active.discard(spec.attempt_id)
+        self.outbox_ready.set()
+
+    def _started(self, attempt_id: str) -> None:
+        self._change(attempt_id, started=True)
+        self.outbox_ready.set()
 
     def flush(self) -> None:
         with self.lock:
@@ -589,6 +623,8 @@ class Worker:
                             {**payload, "instance_id": self.instance_id},
                         )
                         state = self._change(attempt_id, log_offset=source.tell())
+                    else:
+                        self.outbox_ready.set()  # More lines may remain; flush again.
             state = self._read(attempt_id)
             if state["result"] is not None:
                 if log_path.exists() and state["log_offset"] < log_path.stat().st_size:
@@ -695,25 +731,99 @@ class Worker:
                 self.stop_event.wait(self.settings.heartbeat_interval_s)
 
     def _outbox(self) -> None:
+        """Flush when something is written (T8), else every poll_interval_s; back off while
+        the Scheduler is unreachable instead of retrying on every new log line."""
+        delay = min(RETRY_S, self.settings.poll_interval_s)
         while not self.stop_event.is_set():
+            self.outbox_ready.clear()
             try:
                 self.flush()
-            except httpx.HTTPError as exc:
-                log.warning("outbox will retry: %s", type(exc).__name__)
-            except Exception:
-                log.exception("outbox failure")
-            self.stop_event.wait(self.settings.poll_interval_s)
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPError):
+                    log.warning("outbox will retry: %s", type(exc).__name__)
+                else:
+                    log.exception("outbox failure")
+                self.stop_event.wait(delay)
+                delay = min(delay * 2, self.settings.poll_interval_s)
+                continue
+            delay = min(RETRY_S, self.settings.poll_interval_s)
+            self.outbox_ready.wait(self.settings.poll_interval_s)
+
+    def _doorbell(self) -> None:
+        """Keep the WebSocket to the Scheduler open; a ring wakes the command loop (T4)."""
+        base = self.settings.scheduler_url.rstrip("/").replace("http", "ws", 1)
+        url = f"{base}{self._url('ws')}?instance_id={self.instance_id}"
+        delay = min(RETRY_S, self.settings.poll_interval_s)
+        while not self.stop_event.is_set():
+            try:
+                with connect(
+                    url,
+                    additional_headers={"Authorization": f"Bearer {self.settings.worker_token}"},
+                    open_timeout=self.settings.request_timeout_s,
+                    close_timeout=self.settings.request_timeout_s,
+                    proxy=None,
+                ) as socket:
+                    self.socket = socket
+                    delay = min(RETRY_S, self.settings.poll_interval_s)
+                    self.commands_ready.set()  # Catch up on rings missed while disconnected.
+                    while not self.stop_event.is_set():
+                        try:
+                            message = socket.recv(timeout=1)
+                        except TimeoutError:
+                            continue  # Only to notice stop_event; nothing is sent.
+                        self._on_message(message)
+            except (OSError, WebSocketException) as exc:
+                log.warning("doorbell connection will retry: %s", type(exc).__name__)
+            finally:
+                self.socket = None
+            self.stop_event.wait(delay)
+            delay = min(delay * 2, self.settings.poll_interval_s)
+
+    def _on_message(self, raw) -> None:
+        try:
+            message = json.loads(raw)
+        except ValueError:
+            log.warning("ignored a malformed doorbell message")
+            return
+        if not isinstance(message, dict):
+            return
+        if message.get("type") == "commands":
+            self.commands_ready.set()
+            return
+        handler = self.handlers.get(message.get("type"))
+        if handler is None:
+            return
+        try:
+            handler(message)
+        except Exception:
+            log.exception("doorbell handler failed for a %r message", message.get("type"))
+
+    def send(self, message: dict) -> bool:
+        """Send a JSON message to the Scheduler over the doorbell connection; False when it is
+        not connected. Delivery is best effort, like the relay it feeds (T6)."""
+        socket = self.socket
+        if socket is None:
+            return False
+        try:
+            socket.send(json.dumps(message))
+        except (OSError, WebSocketException):
+            return False
+        return True
 
     def run(self) -> None:
         self.executor.check()
         self.register()
         heartbeat = threading.Thread(target=self._heartbeats, name="heartbeats", daemon=True)
         outbox = threading.Thread(target=self._outbox, name="outbox", daemon=True)
+        doorbell = threading.Thread(target=self._doorbell, name="doorbell", daemon=True)
         heartbeat.start()
         outbox.start()
+        doorbell.start()
         log.info("worker registered", extra={"job_id": None, "attempt_id": None})
         try:
             while not self.stop_event.is_set():
+                # Cleared before polling, so a ring arriving mid-poll triggers another poll.
+                self.commands_ready.clear()
                 try:
                     response = self.client.get(
                         self._url("commands"), params={"instance_id": self.instance_id}
@@ -726,13 +836,14 @@ class Worker:
                         log.error("command poll returned a non-list response")
                 except httpx.HTTPError as exc:
                     log.warning("command polling will retry: %s", type(exc).__name__)
-                self.stop_event.wait(self.settings.poll_interval_s)
+                self.commands_ready.wait(self.settings.poll_interval_s)
         finally:
             # Job containers keep running; the next instance adopts them when it registers.
             self.stop_event.set()
             self.pool.shutdown(wait=True)
             heartbeat.join(timeout=self.settings.request_timeout_s + 1)
             outbox.join(timeout=self.settings.request_timeout_s + 1)
+            doorbell.join(timeout=self.settings.request_timeout_s + 2)
             try:
                 self.flush()
             except httpx.HTTPError:

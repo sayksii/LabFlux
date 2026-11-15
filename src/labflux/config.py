@@ -27,7 +27,8 @@ class Settings(BaseModel):
     heartbeat_interval_s: float = Field(default=2, gt=0)
     offline_timeout_s: float = Field(default=10, gt=0)
     scheduler_interval_s: float = Field(default=0.25, gt=0)
-    poll_interval_s: float = Field(default=0.25, gt=0)
+    # Worker fallback for command polls and outbox flushes when no wake-up arrives (T4, T8).
+    poll_interval_s: float = Field(default=5, gt=0)
     request_timeout_s: float = Field(default=3, gt=0)
     job_time_limit_s: float = Field(default=3600, gt=0)
     stop_grace_s: int = Field(default=2, ge=0)

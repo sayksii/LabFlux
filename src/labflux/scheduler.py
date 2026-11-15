@@ -43,6 +43,13 @@ class Scheduler:
         self.settings = settings
         self.clock = clock
         self.db = Database(settings.data_dir)
+        # Wakes a node's Worker after its commands commit (the API wires it to the hub).
+        self.doorbell: Callable[[str], None] = lambda node_id: None
+
+    def _ring(self, node_id: str) -> None:
+        """Call next to every command insert or redelivery: rings once the transaction commits.
+        A missed ring only delays the command until the Worker's fallback poll."""
+        self.db.after_commit(self.doorbell, node_id)
 
     def _node(self, connection, node_id: str, instance_id: str) -> dict:
         row = connection.execute(select(nodes).where(nodes.c.id == node_id)).first()
@@ -265,6 +272,7 @@ class Scheduler:
                     .where(commands.c.id == f"start-{attempt['id']}")
                     .values(acked=False)
                 )
+                self._ring(worker_id)
                 connection.execute(
                     attempts.update()
                     .where(attempts.c.id == attempt["id"])
@@ -341,6 +349,7 @@ class Scheduler:
                 # The same instance is back after its heartbeats lapsed; its records are intact.
                 status = "ONLINE"
                 self._resume(connection, node_id, set(payload.active_attempts))
+                self._ring(node_id)  # START commands are handed out again.
             connection.execute(
                 nodes.update()
                 .where(nodes.c.id == node_id)
@@ -528,6 +537,7 @@ class Scheduler:
                     created_at=now,
                 )
             )
+            self._ring(node["id"])
             connection.execute(
                 jobs.update()
                 .where(jobs.c.id == job["id"])
@@ -632,6 +642,11 @@ class Scheduler:
                 value["allocated"] = self._allocations(connection, value["id"])
                 result.append(value)
             return result
+
+    def check_instance(self, node_id: str, instance_id: str) -> None:
+        """Raise unless instance_id is the node's current registered instance."""
+        with self.db.transaction() as connection:
+            self._node(connection, node_id, instance_id)
 
     def poll_commands(self, node_id: str, instance_id: str) -> list[dict]:
         with self.db.transaction() as connection:
@@ -797,6 +812,7 @@ class Scheduler:
                                 created_at=self.clock(),
                             )
                         )
+                        self._ring(attempt.node_id)
         return self.get_job(job_id, owner)
 
     def upload_log(self, node_id: str, attempt_id: str, payload: LogUpload) -> dict:

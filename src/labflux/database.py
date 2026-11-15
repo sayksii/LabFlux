@@ -1,5 +1,6 @@
 """SQLite persistence and serialized allocation transactions."""
 
+import logging
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
@@ -22,6 +23,7 @@ from sqlalchemy import (
     select,
 )
 
+log = logging.getLogger("labflux.database")
 metadata = MetaData()
 schema_version = Table("schema_version", metadata, Column("version", Integer, primary_key=True))
 nodes = Table(
@@ -132,6 +134,7 @@ class Database:
             f"sqlite:///{self.path}", connect_args={"check_same_thread": False, "timeout": 30}
         )
         self.lock = RLock()
+        self._callbacks: dict[tuple, None] | None = None
 
         @event.listens_for(self.engine, "connect")
         def configure_sqlite(connection, _):
@@ -160,7 +163,9 @@ class Database:
     @contextmanager
     def transaction(self):
         # BEGIN IMMEDIATE protects read -> reserve -> dispatch, including concurrent API threads.
+        callbacks: dict[tuple, None] = {}
         with self.lock, self.engine.connect() as connection:
+            self._callbacks = callbacks
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             try:
                 yield connection
@@ -168,6 +173,19 @@ class Database:
             except BaseException:
                 connection.rollback()
                 raise
+            finally:
+                self._callbacks = None
+        # Committed and unlocked: notifications never run inside the transaction.
+        for function, *args in callbacks:
+            try:
+                function(*args)
+            except Exception:
+                log.exception("after-commit callback failed")
+
+    def after_commit(self, function, *args) -> None:
+        """Call function(*args) once the current transaction commits; dropped on rollback.
+        Repeated identical calls within one transaction run once."""
+        self._callbacks[(function, *args)] = None
 
     def close(self) -> None:
         self.engine.dispose()

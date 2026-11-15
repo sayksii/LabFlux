@@ -8,12 +8,13 @@ import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 
 from labflux import __version__
 from labflux.artifacts import ArtifactStore
 from labflux.config import Settings
+from labflux.hub import Hub
 from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
 from labflux.scheduler import Scheduler, ServiceError
 
@@ -25,9 +26,13 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     service = Scheduler(settings, clock)
+    hub = Hub()
+    service.doorbell = hub.ring
 
     @asynccontextmanager
     async def lifespan(app):
+        hub.bind(asyncio.get_running_loop())
+
         async def scheduling_loop():
             while True:
                 await asyncio.to_thread(service.tick)
@@ -41,10 +46,12 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            hub.bind(None)
             service.db.close()
 
     app = FastAPI(title="LabFlux", version=__version__, lifespan=lifespan)
     app.state.scheduler = service
+    app.state.hub = hub
     app.state.settings = settings
     store = ArtifactStore(service)
 
@@ -138,6 +145,24 @@ def create_app(
             service._attempt(connection, attempt_id, node_id, instance_id)
         upload = await store.receive(request, settings.max_output_bytes)
         return store.store_output(node_id, attempt_id, instance_id, upload)
+
+    @app.websocket("/internal/workers/{node_id}/ws")
+    async def worker_socket(websocket: WebSocket, node_id: str, instance_id: str = ""):
+        """The doorbell connection (T4); also carries the fast-lane relay (T6)."""
+        token = websocket.headers.get("authorization", "")
+        if not token.startswith("Bearer ") or not hmac.compare_digest(
+            token[7:], settings.worker_token
+        ):
+            await websocket.close(code=1008, reason="invalid worker token")
+            return
+        try:
+            # A blocking DB transaction, so it must not run on the event loop.
+            await asyncio.to_thread(service.check_instance, node_id, instance_id)
+        except ServiceError as exc:
+            await websocket.close(code=1008, reason=exc.detail)
+            return
+        await websocket.accept()
+        await hub.serve_worker(node_id, instance_id, websocket)
 
     @app.post("/internal/workers/register", dependencies=[Depends(worker)])
     def register(payload: WorkerRegistration):
