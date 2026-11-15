@@ -11,12 +11,13 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 
-from labflux import __version__
+from labflux import __version__, relay
 from labflux.artifacts import ArtifactStore
 from labflux.config import Settings
 from labflux.hub import Hub
 from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
 from labflux.scheduler import Scheduler, ServiceError
+from labflux.session_protocol import SessionRequest
 
 DASHBOARD_PAGE = Path(__file__).parent / "dashboard.html"
 
@@ -64,12 +65,17 @@ def create_app(
             raise ServiceError(401, "Bearer token required")
         return authorization[7:]
 
-    def user(authorization: str | None = Header(default=None)) -> str:
-        token = bearer(authorization)
+    def identify(token: str) -> str | None:
         for identity, expected in settings.users.items():
             if hmac.compare_digest(token, expected):
                 return identity
-        raise ServiceError(401, "invalid user token")
+        return None
+
+    def user(authorization: str | None = Header(default=None)) -> str:
+        identity = identify(bearer(authorization))
+        if identity is None:
+            raise ServiceError(401, "invalid user token")
+        return identity
 
     def worker(authorization: str | None = Header(default=None)) -> None:
         if not hmac.compare_digest(bearer(authorization), settings.worker_token):
@@ -107,6 +113,28 @@ def create_app(
         owner: str = Depends(user),
     ):
         return service.get_logs(job_id, owner, after, attempt_id)
+
+    @app.post("/api/sessions")
+    def open_session(request: SessionRequest, owner: str = Depends(user)):
+        return service.open_session(owner, request)
+
+    @app.get("/api/sessions/current")
+    def current_session(owner: str = Depends(user)):
+        return service.current_session(owner)
+
+    @app.post("/api/sessions/current/close")
+    def close_session(owner: str = Depends(user)):
+        return service.close_session(owner)
+
+    @app.websocket("/api/sessions/{session_id}/ws")
+    async def session_socket(websocket: WebSocket, session_id: str):
+        """One fast-lane command (T6); the token is accepted only in the header."""
+        header = websocket.headers.get("authorization", "")
+        owner = identify(header[7:]) if header.startswith("Bearer ") else None
+        if owner is None:
+            await websocket.close(code=1008, reason="invalid user token")
+            return
+        await relay.serve(websocket, owner, session_id, service, hub)
 
     @app.get("/api/nodes")
     def list_nodes(owner: str = Depends(user)):
