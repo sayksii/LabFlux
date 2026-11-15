@@ -606,6 +606,30 @@ def test_backfill_does_not_hand_resources_being_freed_to_a_later_job(make_client
     assert job(client, later)["state"] == "QUEUED"
 
 
+def test_backfill_does_not_hand_the_room_beside_a_cancel_in_progress_to_a_later_job(
+    make_client, clock
+):
+    """Bob's cancelled job is stopping, so the head waits for it instead of preempting. It
+    needs that CPU and the free one: a short job in the free CPU, ending long before the
+    cancelled job's hard limit, would leave the head blocked again once the stop is confirmed."""
+    client = make_client("backfill")
+    instance = register(client, "kayle", cpu=2)
+    old = run(client, high(client, cpu=1, time_limit_s=86400), instance)
+    response = client.post(f"/api/jobs/{old['id']}/cancel", headers=user_headers("bob"))
+    assert response.status_code == 200 and response.json()["state"] == "STOPPING"
+    head = high(client, cpu=2)
+    later = submit(client, cpu=1, time_limit_s=600)
+    waiting = job(client, head)
+    assert waiting["state"] == "QUEUED" and waiting["attempts"] == []
+    assert f"waiting for job {short(old)} on kayle to stop" in waiting["schedule_note"]
+    assert "reserved on kayle as soon as they stop" in waiting["schedule_note"]
+    value = job(client, later)
+    assert value["state"] == "QUEUED" and value["attempts"] == []
+    stopped(client, old, instance)
+    assert job(client, head)["state"] == "STARTING"
+    assert job(client, later)["state"] == "QUEUED"
+
+
 # 10. Heartbeat lapses and Worker restarts during the stop --------------------------------------
 
 

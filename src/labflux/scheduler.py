@@ -626,7 +626,9 @@ class Scheduler:
         An attempt that has not reported STARTED counts from dispatch, so image pulls and source
         downloads are not part of the estimate. A session has no hard limit: it is held until
         its current lease expiry, which every command moves forward. An attempt being stopped
-        for a preemption ends now, so the head job's reservation covers what it frees.
+        ends now, so the head job's reservation covers what it frees: every stop (a cancel, a
+        session end, a model stop or a preemption) marks the job cancel_requested or the attempt
+        preempted_by, whether the attempt is STOPPING or UNKNOWN after lapsed heartbeats.
         """
         result: dict[str, list[Booking]] = {node["id"]: [] for node in available}
         cards: dict[str, set[str]] = {}
@@ -646,6 +648,7 @@ class Scheduler:
                 attempts.c.preempted_by,
                 jobs.c.spec,
                 jobs.c.lease_expires_at,
+                jobs.c.cancel_requested,
             )
             .select_from(attempts.join(jobs, jobs.c.id == attempts.c.job_id))
             .where(attempts.c.released.is_(False), attempts.c.node_id.in_(list(result)))
@@ -655,7 +658,7 @@ class Scheduler:
             end = row.lease_expires_at or (row.started_at or row.created_at) + limit
             result[row.node_id].append(
                 Booking(
-                    end=now if row.preempted_by else end,
+                    end=now if row.cancel_requested or row.preempted_by else end,
                     cpu=row.resources["cpu"],
                     memory_mib=row.resources["memory_mib"],
                     gpus=frozenset(cards.get(row.id, ())),
