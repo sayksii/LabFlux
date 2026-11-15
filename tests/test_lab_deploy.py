@@ -81,17 +81,6 @@ def test_inventory_fields(inventory):
         (lambda v: v["scheduler"].update(node="missing"), "scheduler.node"),
         (lambda v: v["scheduler"].update(port=80), "unprivileged"),
         (lambda v: v["scheduler"].update(users=[]), "users"),
-        (
-            lambda v: v["nodes"].append(
-                {
-                    "name": "third",
-                    "host": "192.0.2.21",
-                    "allocatable_cpu": 1,
-                    "allocatable_memory_mib": 1024,
-                }
-            ),
-            "one remote Worker",
-        ),
     ],
 )
 def test_inventory_rejects_invalid_values(change, message):
@@ -101,16 +90,46 @@ def test_inventory_rejects_invalid_values(change, message):
         lab.parse_inventory(values)
 
 
-def test_firewall_rule_only_drops_and_unit_removes_the_same_rule(inventory):
-    rule = "INPUT -d 192.0.2.10 -p tcp --dport 8770 ! -i lo ! -s 192.0.2.20 -j DROP"
-    assert lab.firewall_rule(inventory) == rule
+def test_firewall_chain_passes_loopback_and_every_remote_worker_then_drops():
+    values = inventory_values()
+    values["nodes"].append(
+        {
+            "name": "third",
+            "host": "192.0.2.30",
+            "allocatable_cpu": 1,
+            "allocatable_memory_mib": 1024,
+        }
+    )
+    inventory = lab.parse_inventory(values, root=ROOT)
+    jump = "INPUT -d 192.0.2.10 -p tcp --dport 8770 -j LABFLUX-SCHEDULER"
+    install, remove = lab.firewall_rules(inventory)
+    assert install == [
+        "-N LABFLUX-SCHEDULER",
+        "-A LABFLUX-SCHEDULER -i lo -j RETURN",
+        "-A LABFLUX-SCHEDULER -s 192.0.2.20 -j RETURN",
+        "-A LABFLUX-SCHEDULER -s 192.0.2.30 -j RETURN",
+        "-A LABFLUX-SCHEDULER -j DROP",
+        f"-I {jump}",  # Last: the chain is complete before traffic reaches it.
+    ]
+    assert remove == [f"-D {jump}", "-F LABFLUX-SCHEDULER", "-X LABFLUX-SCHEDULER"]
     unit = lab.firewall_unit(inventory)
-    assert f"ExecStart=/usr/sbin/iptables -w -I {rule}\n" in unit
-    assert f"ExecStop=/usr/sbin/iptables -w -D {rule}\n" in unit
+    iptables = "/usr/sbin/iptables -w"
+    assert unit.count("ExecStart=") == len(install)
+    assert all(f"ExecStart={iptables} {rule}\n" in unit for rule in install)
+    # Leftovers of an interrupted start, or an already removed rule, must not fail the unit.
+    assert all(f"ExecStartPre=-{iptables} {rule}\n" in unit for rule in remove)
+    assert all(f"ExecStop=-{iptables} {rule}\n" in unit for rule in remove)
     assert "ACCEPT" not in unit and "ufw" not in unit
     instructions = lab.firewall_instructions(inventory)
-    assert "sudo systemctl enable --now labflux-firewall.service" in instructions
-    assert "sudo iptables -S INPUT" in instructions and "disable --now" in instructions
+    assert "sudo systemctl restart labflux-firewall.service" in instructions
+    assert "sudo iptables -S LABFLUX-SCHEDULER" in instructions and "disable --now" in instructions
+
+
+def test_firewall_chain_without_remote_workers_allows_only_loopback():
+    values = inventory_values()
+    del values["nodes"][1]
+    install, _ = lab.firewall_rules(lab.parse_inventory(values, root=ROOT))
+    assert install[1:3] == ["-A LABFLUX-SCHEDULER -i lo -j RETURN", "-A LABFLUX-SCHEDULER -j DROP"]
 
 
 def test_generated_tomls_are_valid_settings(inventory):
@@ -179,6 +198,7 @@ def test_restart_guard():
         in lab.scheduler_restart_blockers(scheduler_active=True, scheduler_nodes=busy)[0]
     )
     assert lab.WORKER_RESTART_REQUIRES_IDLE is False  # M6.4 adoption is verified.
+    assert lab.SCHEDULER_RESTART_REQUIRES_IDLE is False  # M6.6 restart recovery is verified.
 
 
 def test_dry_run_executes_nothing(inventory, monkeypatch, capsys):
