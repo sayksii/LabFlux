@@ -880,7 +880,35 @@ Scheduler 設定新增 `models`（每個模型的映像、參數、資源、權�
   回應完整送完後才到的取消不會把它標成未完成。
 - 取消改為關閉連到模型的 socket：假模型每個字間隔 5 秒時，取消後 1.5 秒內結束（原本要等下一個字或讀取逾時）。
 
-- 10.10（實體 GPU 上的 gemma-4-31B 與自動釋放模型）尚未執行：需要先把新版部署到三台。
+
+### 10.10 實驗室部署與 gemma-4-31B（kindred，2026-11-16）
+
+以 commit `17b1486`（main `1504cdd` 加上 `feat/third-node` 與本次 M10）執行 `lab_deploy.py deploy`，三台一起升級。
+部署前三台都沒有配置；先在 kayle 以 SQLite backup API 備份 Scheduler 資料庫（schema 版本 2、21 個工作），
+新版 Scheduler 啟動時升級到版本 5，原本 21 個工作都保留。三台部署後都是 `ONLINE`。
+
+gemma 的設定沿用原本 compose 的參數（`vllm/vllm-openai:v0.30.0`、tensor parallel 2、`--max-model-len=65536`、
+`--gpu-memory-utilization=0.90`、`--language-model-only`）：資源 8 CPU、48 GiB、2 張 A40，`shm_mib = 16384`；
+權重是 kindred 上登錄為資料集 `hf-models` 的 Hugging Face 快取（唯讀掛載、`HF_HUB_OFFLINE=1`）。
+容器以 `labflux` 帳號（UID 2001，容器內沒有對應的 passwd 項目）執行，所以另設 `USER`／`LOGNAME`；
+`cap_drop=ALL`、`no-new-privileges` 與記憶體上限都照常生效，vLLM 可以啟動。
+
+第一階段為自動釋放模式（閒置 180 秒），驗證啟動、共用與交還 GPU：
+
+| 檢查 | 結果 |
+|---|---|
+| 第一個請求（冷啟動） | `/v1/chat/completions` 等待中模型被排到 kindred 的卡 3、4；306 秒後回應 HTTP 200，內容為 gemma 的中文自我介紹 |
+| 三個客戶端同時請求（kayle、karma、kindred，同一個帳號） | 都是 HTTP 200；`labflux models` 顯示進行中 3 個請求、同一個服務；一般請求約 2.7～3.0 秒完成，串流請求 0.09 秒收到第一個位元組、2.3 秒完成 |
+| 提前回收與交還 GPU | 模型服務中時提交 `gpu_model = "A40"` 的 MNIST，因兩張卡都被佔用而排隊；最後一個請求結束約 60 秒後模型被停止，MNIST 立刻分到卡 3 並完成（142 秒、99.0%） |
+
+第二階段改為常駐模式（啟動上限 600 秒），只重新部署 kayle（重啟 Scheduler）：沒有任何請求，gemma 在部署完成後
+238 秒自己啟動並進入可服務狀態；`/v1/models` 顯示 `persistent`、`serving`、`kindred`，`/v1/completions` 0.29 秒回應；
+模型容器沒有開放任何 port，卡 3、4 各用約 41 GB VRAM，與原本的 compose 容器相同。
+
+- 重新部署 kayle 時沒有未釋放的配置，所以這次沒有實際驗證「有常駐模型執行時重啟 Scheduler」；這個情況依賴 M6.6 的還原機制，
+  已在 Docker 測試驗證。
+- 「多人共用」以三台機器上的三個客戶端同時使用同一個服務驗證；實驗室目前只有一個 LabFlux 帳號，沒有以不同帳號測試。
+- 指令調整過的模型對 `/v1/completions` 的純文字續寫會產生沒有意義的文字，這是模型本身的行為，聊天介面正常。
 
 **已知限制（M10）**
 
