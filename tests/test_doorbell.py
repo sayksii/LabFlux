@@ -13,12 +13,14 @@ from starlette.websockets import WebSocketDisconnect
 from test_reconnect import deliver, restart
 from test_worker import ControlledExecutor
 
+from labflux import worker as worker_module
 from labflux.api import create_app
 from labflux.config import Settings
 from labflux.database import Database
 from labflux.worker import Worker
 
 DEMO_USER = {"Authorization": "Bearer dev-user-token"}  # Settings() default user
+WORKER_TOKEN = "Bearer dev-worker-token"  # Settings() default worker token
 SPEC = {"image": "python:3.12-slim", "argv": ["true"], "resources": {"cpu": 1}}
 
 
@@ -224,12 +226,22 @@ def live_lab(tmp_path, **worker_settings):
 
 def test_a_ring_makes_the_worker_poll_long_before_its_fallback(tmp_path):
     with live_lab(tmp_path, poll_interval_s=30) as (app, worker, client, accepted):
-        wait_for(lambda: "vm-a" in app.state.hub.workers)
+        wait_for(lambda: "vm-a" in app.state.hub.workers and worker.socket is not None)
         time.sleep(0.2)  # Let the catch-up poll after connecting finish.
-        before = time.monotonic()
+        # Hold the ring back first: while it is held nothing else delivers the START, so the
+        # catch-up poll is over and only the ring can explain the delivery that follows.
+        ring, held = app.state.scheduler.doorbell, []
+        app.state.scheduler.doorbell = held.append
         job = client.post("/api/jobs", json=SPEC).json()
-        wait_for(lambda: accepted.get(f"start-{job['current_attempt_id']}"), timeout=5)
-        assert accepted[f"start-{job['current_attempt_id']}"] - before < 2
+        start = f"start-{job['current_attempt_id']}"
+        wait_for(lambda: held)
+        time.sleep(0.5)
+        assert start not in accepted and held == ["vm-a"]
+        app.state.scheduler.doorbell = ring
+        before = time.monotonic()
+        ring("vm-a")
+        wait_for(lambda: accepted.get(start), timeout=5)
+        assert accepted[start] - before < 2
         # The outbox is woken by the result too, so the job finishes without any fallback.
         wait_for(
             lambda: client.get(f"/api/jobs/{job['id']}").json()["state"] == "SUCCEEDED",
@@ -272,6 +284,45 @@ def test_fallback_poll_delivers_commands_while_the_socket_is_down(tmp_path, monk
             timeout=5,
         )
         assert app.state.hub.workers == {}
+
+
+def test_fallback_poll_delivers_after_a_partition_that_also_cut_the_socket(tmp_path, monkeypatch):
+    """The Docker partition test (test_fault_docker) cuts only the Worker's HTTP requests.
+    Here the doorbell WebSocket goes down with them and stays down after HTTP is back."""
+    http_cut, socket_cut = threading.Event(), threading.Event()
+    request, connect = httpx.HTTPTransport.handle_request, worker_module.connect
+
+    def gated_request(transport, message):
+        # Only Worker requests carry the worker token; the test's own client stays connected.
+        if http_cut.is_set() and message.headers.get("authorization") == WORKER_TOKEN:
+            raise httpx.ConnectError("network is unreachable", request=message)
+        return request(transport, message)
+
+    def gated_connect(*args, **options):
+        if socket_cut.is_set():
+            raise OSError("network is unreachable")
+        return connect(*args, **options)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", gated_request)
+    monkeypatch.setattr(worker_module, "connect", gated_connect)
+    with live_lab(tmp_path, poll_interval_s=0.3) as (app, worker, client, accepted):
+        hub = app.state.hub
+        wait_for(lambda: "vm-a" in hub.workers and worker.socket is not None)
+        http_cut.set()
+        socket_cut.set()
+        hub.loop.call_soon_threadsafe(hub.workers["vm-a"].queue.put_nowait, None)
+        wait_for(lambda: hub.workers == {} and worker.socket is None)
+        job = client.post("/api/jobs", json=SPEC).json()
+        start = f"start-{job['current_attempt_id']}"
+        time.sleep(0.7)
+        assert start not in accepted  # Fully partitioned: neither a ring nor a poll gets through.
+        http_cut.clear()
+        wait_for(lambda: accepted.get(start), timeout=5)
+        wait_for(
+            lambda: client.get(f"/api/jobs/{job['id']}").json()["state"] == "SUCCEEDED",
+            timeout=5,
+        )
+        assert hub.workers == {} and worker.socket is None  # Delivered by the poll alone.
 
 
 def test_outbox_writes_wake_the_flush_thread(client, tmp_path):

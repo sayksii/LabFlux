@@ -8,6 +8,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import closing, suppress
 from dataclasses import asdict, dataclass
@@ -23,6 +24,18 @@ from labflux.models import ExecutionSpec
 
 log = logging.getLogger("labflux.runtime")
 ATTEMPT = re.compile(r"[a-f0-9]{32}")
+SESSION_VENV_BIN = "/workspace/.venv/bin"
+DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"  # Docker's own.
+
+# A session command records "<pid> <token>" and then execs the real argv. Docker starts every
+# exec as the leader of a new process group, so that pid names the group of the command and
+# its children. This needs a POSIX sh in the image (echo, read, [ and kill are builtins) and a
+# writable /tmp; without them a cancel falls back to ending the session.
+COMMAND_FILE = "/tmp/.labflux-command"
+RUN_COMMAND = 'echo "$$ $2" > "$1"; shift 2; exec "$@"'
+# Exit 0: signalled; 1: no process is left in the group; 3: this command recorded no pid (yet).
+# `kill -SIG -PID` is the one spelling that dash, bash and busybox sh all accept for a group.
+SIGNAL_COMMAND = 'read pid token < "$1" && [ "$token" = "$2" ] || exit 3; kill "-$3" "-$pid"'
 
 
 @dataclass
@@ -35,6 +48,15 @@ class ExecutionResult:
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+def session_path(image_config: dict | None) -> str:
+    """PATH for a session container: the image's own PATH with the workspace venv in front,
+    so a custom image keeps its interpreter and tools."""
+    for item in (image_config or {}).get("Env") or []:
+        if item.startswith("PATH="):
+            return f"{SESSION_VENV_BIN}:{item[5:]}"
+    return f"{SESSION_VENV_BIN}:{DEFAULT_PATH}"
 
 
 def container_name(spec: ExecutionSpec) -> str:
@@ -102,12 +124,13 @@ class DockerExecutor:
                 if cancel.is_set():
                     return ExecutionResult("CANCELLED", None, "cancelled before start", True)
                 try:
-                    client.images.get(spec.job.image)
+                    image = client.images.get(spec.job.image)
                 except ImageNotFound:
                     with closing(
                         docker.from_env(timeout=self.settings.image_pull_timeout_s)
                     ) as puller:
                         puller.images.pull(spec.job.image)
+                    image = client.images.get(spec.job.image)
                 if cancel.is_set():
                     return ExecutionResult("CANCELLED", None, "cancelled before start", True)
                 if detached():
@@ -125,6 +148,9 @@ class DockerExecutor:
                     volumes[str(path)] = {"bind": f"/datasets/{dataset}", "mode": "ro"}
                 memory = spec.job.resources.memory_mib * 1024**2
                 environment = {**spec.job.env, "PYTHONUNBUFFERED": "1"}
+                if spec.session:
+                    # Replaces any PATH in the session's env: that one is not the image's.
+                    environment["PATH"] = session_path(image.attrs.get("Config"))
                 if self.settings.uv_cache_dir:
                     # Created here so Docker never creates a missing bind source as root.
                     self.settings.uv_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -300,20 +326,23 @@ class DockerExecutor:
     ) -> tuple[int | None, bool, bool]:
         """Run one command in a session container: (exit code, timed out, stopped).
 
-        On a timeout or `stop`, on_abort(timed_out) is called once; the caller terminates the
-        whole container there (Docker cannot kill an exec), which ends the output stream. This
-        method never stops the container itself, and it returns once the output reader is done
-        so that no output arrives after it.
+        `stop` ends only the command: its process group gets TERM, then KILL after the stop
+        grace, and the container stays. On a timeout, or when that group cannot be stopped,
+        on_abort(timed_out) is called once; the caller terminates the whole container there,
+        which ends the output stream. This method never stops the container itself, and it
+        returns once the output reader is done so that no output arrives after it.
         """
         client = docker.from_env(timeout=max(10, self.settings.request_timeout_s))
         stream = None
         reader = None
         context = {"job_id": spec.job_id, "attempt_id": spec.attempt_id}
+        name = container_name(spec)
+        token = uuid.uuid4().hex
         try:
             api = client.api
             exec_id = api.exec_create(
-                container_name(spec),
-                argv,
+                name,
+                ["sh", "-c", RUN_COMMAND, "sh", COMMAND_FILE, token, *argv],
                 workdir=workdir,
                 stdout=True,
                 stderr=True,
@@ -340,6 +369,11 @@ class DockerExecutor:
             while reader.is_alive():
                 if give_up is None and (stop.is_set() or time.monotonic() >= deadline):
                     stopped, timed_out = stop.is_set(), not stop.is_set()
+                    if stopped and self._stop_group(api, name, token, reader):
+                        reader.join(timeout=5)
+                        if not reader.is_alive():
+                            return None, False, True
+                        # Its output is still open, so the command itself did not end.
                     if on_abort:
                         on_abort(timed_out)
                     give_up = time.monotonic() + self.settings.stop_grace_s + 30
@@ -359,6 +393,28 @@ class DockerExecutor:
             if reader is not None and reader.ident is not None:
                 reader.join(timeout=5)
             client.close()
+
+    def _stop_group(self, api, name: str, token: str, reader: threading.Thread) -> bool:
+        """TERM a command's process group, KILL it after the stop grace; True once no process
+        of the group is left, False when that could not be confirmed."""
+        signal = "TERM"
+        kill_at = time.monotonic() + self.settings.stop_grace_s
+        while True:
+            try:
+                exec_id = api.exec_create(
+                    name, ["sh", "-c", SIGNAL_COMMAND, "sh", COMMAND_FILE, token, signal]
+                )["Id"]
+                api.exec_start(exec_id)
+                code = api.exec_inspect(exec_id).get("ExitCode")
+            except DockerException:
+                return False
+            if code == 1 or (code == 3 and not reader.is_alive()):
+                return True
+            if code not in (0, 3) or time.monotonic() >= kill_at + self.settings.stop_grace_s + 5:
+                return False
+            if code == 0:  # Delivered; from now on only probe until it is time for KILL.
+                signal = "KILL" if time.monotonic() >= kill_at else "0"
+            time.sleep(self.settings.runtime_poll_s)
 
     def inventory(self, worker_id: str) -> list[dict]:
         """Containers carrying this worker's labels, as reported when it registers."""

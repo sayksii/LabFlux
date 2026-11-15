@@ -240,7 +240,7 @@ def test_fast_lane_commands_sync_files_and_end_sessions(lane, tmp_path):
     assert (local.returncode, local.stdout) == (0, f"{project}\n"), local.stderr
     assert lane.current()["id"] == session["id"]
 
-    # Ctrl-C ends the whole session container; resources are released after termination.
+    # Ctrl-C stops only the command; the same session container runs the next one.
     process = lane.popen(
         "run", "--", "python", "-c", "import time; print('started', flush=True); time.sleep(30)"
     )
@@ -248,17 +248,33 @@ def test_fast_lane_commands_sync_files_and_end_sessions(lane, tmp_path):
     process.send_signal(signal.SIGINT)
     _, stderr = process.communicate(timeout=60)
     assert process.returncode == 130, stderr
-    lane.wait_released(session["id"])
+    again = lane.run(
+        "run",
+        "--",
+        "python",
+        "-c",
+        "import pathlib; print(pathlib.Path('/tmp/marker').read_text())",
+    )
+    assert (again.returncode, again.stdout) == (0, "same container\n"), again.stderr
+    assert lane.current()["id"] == session["id"]
+    assert lane.job(session["id"])["current_attempt_id"] == attempt_id
 
-    # Over the command time limit (3 s here): exit 124, the container is terminated, resources
-    # are freed and the next command leases a new session.
+    # Over the command time limit (3 s here): exit 124, the container is terminated and its
+    # resources are freed.
     started = time.monotonic()
     slow = lane.run("run", "--", "python", "-c", "import time; time.sleep(30)")
     assert slow.returncode == 124, slow.stderr
     assert time.monotonic() - started < 25
     assert "command time limit exceeded" in slow.stderr
+    lane.wait_released(session["id"])
+    assert lane.current() is None
+
+    # The next command leases a new session.
+    fresh = lane.run("run", "--", "python", "-c", "print('new')")
+    assert (fresh.returncode, fresh.stdout) == (0, "new\n"), fresh.stderr
     jobs = [job["id"] for job in lane.client.get("/api/jobs").json()]
     assert len(jobs) == 2 and session["id"] in jobs
+    assert lane.run("session", "close").returncode == 0
     lane.wait_released(next(job for job in jobs if job != session["id"]))
     assert lane.current() is None
 

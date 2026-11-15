@@ -55,6 +55,7 @@ COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 RETRY_S = 0.5
 # How long a finished session attempt waits for its in-flight command to send its result.
 COMMAND_JOIN_S = 30
+CANCELLED = "command cancelled by the client"
 
 
 class Unaddressed(Exception):
@@ -902,8 +903,17 @@ class Worker:
             return
         try:
             handler(message)
-        except Exception:
+        except Exception as exc:
             log.exception("doorbell handler failed for a %r message", message.get("type"))
+            # Answer at once; otherwise the client waits for the Scheduler's guard time.
+            command_id = message.get("id")
+            run = self.runs.get(command_id) if isinstance(command_id, str) else None
+            if run is not None and run.thread is not None:
+                return  # The command is running; its thread sends the result.
+            if run is not None:
+                self._drop_run(run)
+            if isinstance(command_id, str) and re.fullmatch(r"[0-9a-f]{32}", command_id):
+                self._reply(command_id, outcome="error", reason=f"worker error: {exc}"[:2048])
 
     def send(self, message: dict) -> bool:
         """Send a JSON message to the Scheduler over the doorbell connection; False when it is
@@ -929,6 +939,27 @@ class Worker:
 
     def _reply(self, command_id: str, **fields) -> None:
         self._relay(CommandResult(id=command_id, **fields).model_dump())
+
+    def _session_state(self, attempt_id: str) -> dict:
+        """What a session keeps between commands: the last snapshot's file list, the synced
+        dependency hash, and the files ({path: size}) that exist only in its workspace because
+        they were over a write-back limit."""
+        state = {"files": [], "deps": None, "remote": {}}
+        path = self.root / attempt_id / "session.json"
+        if path.exists():
+            state.update(json.loads(path.read_text()))
+        return state
+
+    @staticmethod
+    def _remote_only(session: dict) -> dict:
+        """The result fields listing a session's remote-only files (CommandResult.skipped)."""
+        listed = [SkippedFile(path=p, size=size) for p, size in sorted(session["remote"].items())]
+        return {"skipped": listed[:MAX_SKIPPED_LISTED], "skipped_count": len(listed)}
+
+    def _reply_early(self, run: CommandRun, **fields) -> None:
+        """Result of a command that ended before its thread started; the session lives on, so
+        the result still carries its remote-only files."""
+        self._reply(run.id, **fields, **self._remote_only(self._session_state(run.attempt_id)))
 
     def _relay_lost(self) -> None:
         with self.lock:
@@ -1017,7 +1048,7 @@ class Worker:
                 raise ValueError("snapshot size or checksum mismatch")
         except (ValueError, OSError) as exc:
             self._drop_run(run)
-            self._reply(run.id, outcome="error", reason=str(exc)[:2048])
+            self._reply_early(run, outcome="error", reason=str(exc)[:2048])
             return
         thread = threading.Thread(
             target=self._run_command, args=(run,), name=f"command-{run.id[:8]}", daemon=True
@@ -1035,9 +1066,11 @@ class Worker:
             return
         if run.thread is None:
             self._drop_run(run)  # Nothing ran yet, so the session stays as it was.
-            self._reply(run.id, outcome="cancelled", reason="cancelled before the command started")
+            self._reply_early(
+                run, outcome="cancelled", reason="cancelled before the command started"
+            )
         else:
-            run.cancel.set()
+            run.cancel.set()  # Stops only the command; the session stays usable.
 
     def _command_output(self, run: CommandRun, stream: str, data: bytes) -> None:
         limit = run.command.output_limit_bytes
@@ -1067,16 +1100,20 @@ class Worker:
         with self.lock:
             handle = self.handles[attempt_id]
 
+        session = {"remote": {}}
+
         def abort(reason: str) -> Callable[[bool], None]:
+            # Called for a time limit, or for a cancel whose processes could not be stopped.
             return lambda timed_out: self._end_session(
-                attempt_id, reason if timed_out else "command cancelled by the client"
+                attempt_id, reason if timed_out else "the cancelled command could not be stopped"
             )
+
+        def reply(**fields) -> None:
+            self._reply(run.id, **fields, **self._remote_only(session))
 
         try:
             spec = ExecutionSpec.model_validate(self._read(attempt_id)["spec"])
-            session = {"files": [], "deps": None}
-            if session_path.exists():
-                session = json.loads(session_path.read_text())
+            session = self._session_state(attempt_id)
             try:
                 session["files"] = apply_snapshot(
                     workspace,
@@ -1086,10 +1123,12 @@ class Worker:
                     self.settings.max_archive_members,
                 )
             except (ValueError, OSError, tarfile.TarError, EOFError) as exc:
-                self._reply(run.id, outcome="error", reason=f"snapshot rejected: {exc}"[:2048])
+                reply(outcome="error", reason=f"snapshot rejected: {exc}"[:2048])
                 return
             finally:
                 run.path.unlink(missing_ok=True)
+            for path in session["files"]:
+                session["remote"].pop(path, None)  # The snapshot's copy replaced it.
             write_json(session_path, session)
 
             # Only the snapshot's dependency files count: a uv.lock that `uv sync` generated
@@ -1108,23 +1147,25 @@ class Worker:
                     command.sync_timeout_s,
                     on_abort=abort("dependency sync time limit exceeded"),
                 )
-                if timed_out or stopped or handle["cancel"].is_set():
+                # In each case deps is not stored, so the next command syncs again.
+                if timed_out or handle["cancel"].is_set():
                     outcome = "timeout" if timed_out else "cancelled"
-                    self._reply(run.id, **self._session_ended(attempt_id, outcome))
+                    reply(**self._session_ended(attempt_id, outcome))
+                    return
+                if stopped:
+                    reply(outcome="cancelled", reason=CANCELLED)
                     return
                 if code is None:
-                    self._reply(run.id, outcome="error", reason="uv sync exit status unavailable")
+                    reply(outcome="error", reason="uv sync exit status unavailable")
                     return
                 if code != 0:
-                    # deps is not stored, so the next command tries again.
-                    self._reply(run.id, outcome="exited", exit_code=code, reason="uv sync failed")
+                    reply(outcome="exited", exit_code=code, reason="uv sync failed")
                     return
                 session["deps"] = deps
                 write_json(session_path, session)
 
             if not is_directory(workspace, command.cwd):
-                self._reply(
-                    run.id,
+                reply(
                     outcome="error",
                     reason=f"working directory {command.cwd or '.'} is not in the session "
                     "workspace",
@@ -1142,58 +1183,59 @@ class Worker:
             )
             if timed_out:
                 fields = self._session_ended(attempt_id, "timeout")
-            elif stopped or handle["cancel"].is_set():
+            elif handle["cancel"].is_set():
                 fields = self._session_ended(attempt_id, "cancelled")
+            elif stopped:  # Only the command's processes were stopped; the session stays.
+                fields = {"outcome": "cancelled", "reason": CANCELLED}
             elif code is None:
                 fields = {"outcome": "error", "reason": "the command's exit status is unavailable"}
             else:
                 fields = {"outcome": "exited", "exit_code": code}
-            fields.update(self._write_back(run, workspace, before, archive))
+            fields.update(self._write_back(run, workspace, before, archive, session))
+            write_json(session_path, session)
             fields.setdefault("session_ended", handle["cancel"].is_set())
-            self._reply(run.id, **fields)
+            reply(**fields)
         except Exception as exc:
             log.exception("fast-lane command failed", extra={"attempt_id": attempt_id})
-            self._reply(run.id, outcome="error", reason=f"worker error: {exc}"[:2048])
+            reply(outcome="error", reason=f"worker error: {exc}"[:2048])
         finally:
             archive.unlink(missing_ok=True)
             self._drop_run(run)
 
-    def _write_back(self, run: CommandRun, workspace: Path, before: dict, archive: Path) -> dict:
-        """Stream new and modified files (up to the cap) and return the result fields."""
+    def _write_back(
+        self, run: CommandRun, workspace: Path, before: dict, archive: Path, session: dict
+    ) -> dict:
+        """Stream new and modified files, up to the size cap and the archive member limit, and
+        return the write-back result fields. session["remote"] becomes the files that now exist
+        only here: those over a limit, now or in an earlier command, until they are written back
+        or deleted. A listed file is tried again only when a command changes it."""
         after = scan(workspace)
         limit = run.command.writeback_limit_bytes
-        selected, skipped, total = [], [], 0
+        remote = set(session["remote"])
+        selected, total = [], 0
         for path in sorted(p for p, value in after.items() if before.get(p) != value):
             size = after[path][0]
-            if total + size <= limit:
+            if total + size <= limit and len(selected) < self.settings.max_archive_members:
                 selected.append(path)
                 total += size
             else:
-                skipped.append(SkippedFile(path=path, size=size))
-        fields = {"skipped": skipped[:MAX_SKIPPED_LISTED], "skipped_count": len(skipped)}
-        if skipped:
-            megabytes = sum(item.size for item in skipped) / 1024**2
-            names = ", ".join(item.path for item in skipped[:10])
-            text = (
-                f"{len(skipped)} files ({megabytes:.1f} MB) over the write-back limit stay in "
-                f"the session: {names}" + (", ..." if len(skipped) > 10 else "")
-            )
-            self._relay(Notice(id=run.id, text=text[:2048]).model_dump())
+                remote.add(path)
         packed = pack_files(workspace, selected, archive) if selected else []
+        remote = (remote & after.keys()) - set(packed)
+        session["remote"] = {path: after[path][0] for path in remote}
         if not packed:
-            return fields
+            return {}
         digest = hashlib.sha256()
         with archive.open("rb") as stream:
             for text, final in iter_chunks(stream):
                 data = decode(text)
                 digest.update(data)
                 self._relay(WritebackChunk(id=run.id, data=text, final=final).model_dump())
-        fields.update(
-            writeback_size=archive.stat().st_size,
-            writeback_sha256=digest.hexdigest(),
-            writeback_files=len(packed),
-        )
-        return fields
+        return {
+            "writeback_size": archive.stat().st_size,
+            "writeback_sha256": digest.hexdigest(),
+            "writeback_files": len(packed),
+        }
 
     def run(self) -> None:
         self.executor.check()

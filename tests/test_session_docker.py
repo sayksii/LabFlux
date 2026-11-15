@@ -116,7 +116,94 @@ def test_a_session_container_runs_commands_with_docker_exec(runtime, tmp_path):
         read = ["python", "-c", "print(open('gen.txt').read())"]
         assert runtime.exec(spec, read, WORKSPACE, output, cancel, 30) == (0, False, False)
         assert b"".join(data for _, _, data in arrivals) == b"kept\n"
+        # Arguments reach the program unchanged, and a missing program is exit 127.
+        arrivals.clear()
+        echo = ["python", "-c", "import sys; print(sys.argv[1:])", "a b", "$HOME;", ""]
+        assert runtime.exec(spec, echo, WORKSPACE, output, cancel, 30) == (0, False, False)
+        assert b"".join(data for _, _, data in arrivals) == b"['a b', '$HOME;', '']\n"
+        missing = runtime.exec(spec, ["no-such-program"], WORKSPACE, output, cancel, 30)
+        assert missing == (127, False, False)
         assert thread.is_alive()
+
+
+def test_a_session_keeps_the_image_path_behind_the_workspace_venv(runtime, tmp_path):
+    spec = session_spec()
+    with closing(docker.from_env()) as client:
+        environment = client.images.get(spec.job.image).attrs["Config"]["Env"]
+    [image_path] = [item[5:] for item in environment if item.startswith("PATH=")]
+    with session_container(runtime, tmp_path, spec) as (cancel, thread, outcome):
+        output = []
+        show = ["sh", "-c", 'echo "$PATH $VIRTUAL_ENV"']
+        result = runtime.exec(
+            spec, show, WORKSPACE, lambda _, data: output.append(data), cancel, 30
+        )
+        assert result == (0, False, False)
+        assert b"".join(output).decode().split() == [
+            f"/workspace/.venv/bin:{image_path}",
+            "/workspace/.venv",
+        ]
+
+
+def test_a_stop_ends_only_the_commands_process_group(runtime, tmp_path):
+    spec = session_spec()
+    with session_container(runtime, tmp_path, spec) as (cancel, thread, outcome):
+        output, aborted = [], []
+
+        def stopped_once_started(argv):
+            """Run argv and stop it as soon as it has printed something."""
+            output.clear()
+            stop = threading.Event()
+
+            def on_output(stream, data):
+                output.append(data)
+                stop.set()
+
+            begun = time.monotonic()
+            result = runtime.exec(spec, argv, WORKSPACE, on_output, stop, 60, aborted.append)
+            return result, time.monotonic() - begun
+
+        # An ordinary command and its child end on TERM, well within the grace period.
+        polite = ["sh", "-c", "sleep 311 & echo started; sleep 311"]
+        result, elapsed = stopped_once_started(polite)
+        assert result == (None, False, True) and elapsed < 1
+        # A command and a child that ignore TERM are killed after the 1 s grace.
+        stubborn = ["sh", "-c", "trap '' TERM; (trap '' TERM; sleep 311) & echo started; sleep 311"]
+        result, elapsed = stopped_once_started(stubborn)
+        assert result == (None, False, True) and 1 <= elapsed < 8
+        assert aborted == []  # The container was never asked to end.
+        # Nothing of either command is left, and the same container runs the next one.
+        output.clear()
+        listing = "import glob; print([open(p).read() for p in glob.glob('/proc/[0-9]*/cmdline')])"
+        result = runtime.exec(
+            spec,
+            ["python", "-c", listing],
+            WORKSPACE,
+            lambda _, data: output.append(data),
+            cancel,
+            30,
+        )
+        assert result == (0, False, False)
+        assert b"sleep" in b"".join(output) and b"311" not in b"".join(output)
+        assert thread.is_alive()
+
+
+def test_a_stop_that_cannot_end_the_command_asks_for_the_container_to_end(runtime, tmp_path):
+    spec = session_spec()
+    with session_container(runtime, tmp_path, spec) as (cancel, thread, outcome):
+        aborted = []
+        stop = threading.Event()
+
+        def abort(timed_out):
+            aborted.append(timed_out)
+            cancel.set()  # What the Worker's _end_session does.
+
+        # The command removes the record of its pid, so its process group cannot be signalled.
+        argv = ["sh", "-c", "rm /tmp/.labflux-command; echo started; sleep 311"]
+        result = runtime.exec(spec, argv, WORKSPACE, lambda *_: stop.set(), stop, 60, abort)
+        assert result == (None, False, True)
+        assert aborted == [False]
+        thread.join(timeout=30)
+        assert outcome["result"].termination_confirmed
 
 
 def test_a_command_timeout_terminates_the_whole_container(runtime, tmp_path):
