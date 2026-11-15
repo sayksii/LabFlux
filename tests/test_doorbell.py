@@ -8,8 +8,9 @@ from contextlib import contextmanager
 import httpx
 import pytest
 import uvicorn
-from conftest import register, submit, user_headers, worker_headers
+from conftest import heartbeat, register, submit, user_headers, worker_headers
 from starlette.websockets import WebSocketDisconnect
+from test_reconnect import deliver, restart
 from test_worker import ControlledExecutor
 
 from labflux.api import create_app
@@ -96,24 +97,81 @@ def test_after_commit_callbacks_run_once_after_commit_and_never_after_rollback(t
     db.close()
 
 
-def test_hub_relays_messages_both_ways_by_type_and_id(client):
+def test_hub_relays_messages_both_ways_by_type_and_node_scoped_id(client):
     instance = register(client)
+    other = register(client, name="vm-b")
     hub = client.app.state.hub
     by_type, by_id = [], []
     hub.on("output", lambda node, message: by_type.append((node, message)))
-    unsubscribe = hub.subscribe("run-1", lambda node, message: by_id.append(message))
+    unsubscribe = hub.subscribe("vm-a", "run-1", lambda node, message: by_id.append(message))
+    with client.websocket_connect(socket_url(other, node="vm-b"), headers=worker_headers()) as b:
+        # Another node reusing the id does not reach vm-a's subscription.
+        b.send_json({"type": "output", "id": "run-1", "data": "x"})
+        wait_for(lambda: by_type)
     with client.websocket_connect(socket_url(instance), headers=worker_headers()) as ws:
         wait_for(lambda: "vm-a" in hub.workers)
         hub.send("vm-a", {"type": "exec", "id": "run-1", "argv": ["pytest"]})
         assert ws.receive_json() == {"type": "exec", "id": "run-1", "argv": ["pytest"]}
         ws.send_json({"type": "output", "id": "run-1", "data": "a"})
         ws.send_json({"type": "output", "id": "run-2", "data": "b"})
-        wait_for(lambda: by_id and by_type)
+        wait_for(lambda: by_id and len(by_type) == 2)
         unsubscribe()
         ws.send_json({"type": "output", "id": "run-1", "data": "c"})
-        wait_for(lambda: len(by_type) == 2)
+        wait_for(lambda: len(by_type) == 3)
     assert [m["data"] for m in by_id] == ["a"]
-    assert [(node, m["data"]) for node, m in by_type] == [("vm-a", "b"), ("vm-a", "c")]
+    assert [(node, m["data"]) for node, m in by_type] == [
+        ("vm-b", "x"),
+        ("vm-a", "b"),
+        ("vm-a", "c"),
+    ]
+
+
+def test_a_newer_connection_replaces_the_older_one_for_the_same_node(client):
+    instance = register(client)
+    hub = client.app.state.hub
+    with client.websocket_connect(socket_url(instance), headers=worker_headers()) as old:
+        wait_for(lambda: "vm-a" in hub.workers)
+        first = hub.workers["vm-a"]
+        with client.websocket_connect(socket_url(instance), headers=worker_headers()) as new:
+            wait_for(lambda: hub.workers.get("vm-a") not in (None, first))
+            with pytest.raises(WebSocketDisconnect):
+                old.receive_json()  # The Scheduler closed the replaced connection.
+            hub.ring("vm-a")
+            assert new.receive_json() == {"type": "commands"}
+            assert "vm-a" in hub.workers  # The old connection's cleanup kept the new one.
+    wait_for(lambda: hub.workers == {})
+
+
+def test_heartbeat_after_expiry_rings_for_the_withheld_start(client, service, clock):
+    instance = register(client, cpu=1)
+    with client.websocket_connect(socket_url(instance), headers=worker_headers()) as ws:
+        wait_for(lambda: "vm-a" in client.app.state.hub.workers)
+        submit(client)
+        assert ws.receive_json() == {"type": "commands"}
+        clock[0] += 30
+        service.tick()  # Heartbeats lapsed before the Worker fetched its START.
+        assert service.list_nodes()[0]["status"] == "OFFLINE"
+        assert service.poll_commands("vm-a", instance) == []
+        rings, ring = [], service.doorbell
+        service.doorbell = lambda node: (rings.append(node), ring(node))
+        heartbeat(client, "vm-a", instance)
+        assert rings == ["vm-a"]  # Checked first, so a missing ring fails instead of hanging.
+        assert ws.receive_json() == {"type": "commands"}
+        assert [c["kind"] for c in service.poll_commands("vm-a", instance)] == ["START"]
+
+
+def test_restart_rings_for_a_redelivered_start(client, service):
+    old = register(client, cpu=1)
+    submit(client)
+    command = deliver(client, service, old, started=False)
+    rings = []
+    service.doorbell = rings.append
+    new, response = restart(
+        client, {"attempts": [{"attempt_id": command["attempt_id"], "launched": False}]}
+    )
+    assert response.json()["restart"] == [command["attempt_id"]]
+    assert rings == ["vm-a"]
+    assert [c["id"] for c in service.poll_commands("vm-a", new)] == [command["id"]]
 
 
 @contextmanager
@@ -186,6 +244,22 @@ def test_a_ring_makes_the_worker_poll_long_before_its_fallback(tmp_path):
         assert worker.send({"type": "pong", "id": received[0]["id"]})
         wait_for(lambda: replies)
         assert replies == [("vm-a", {"type": "pong", "id": "p1"})]
+
+
+def test_worker_catches_up_on_missed_rings_after_reconnecting(tmp_path):
+    with live_lab(tmp_path, poll_interval_s=30) as (app, worker, client, accepted):
+        hub = app.state.hub
+        wait_for(lambda: "vm-a" in hub.workers)
+        time.sleep(0.2)  # Let the catch-up poll after connecting finish.
+        app.state.scheduler.doorbell = lambda node: None  # Rings are lost, as while offline.
+        job = client.post("/api/jobs", json=SPEC).json()
+        start = f"start-{job['current_attempt_id']}"
+        time.sleep(0.3)
+        assert start not in accepted  # Nothing rang, and the fallback poll is 30 s away.
+        first = hub.workers["vm-a"]
+        hub.loop.call_soon_threadsafe(first.queue.put_nowait, None)  # The Scheduler drops it.
+        wait_for(lambda: hub.workers.get("vm-a") not in (None, first), timeout=5)
+        wait_for(lambda: accepted.get(start), timeout=3)
 
 
 def test_fallback_poll_delivers_commands_while_the_socket_is_down(tmp_path, monkeypatch):

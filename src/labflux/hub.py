@@ -40,7 +40,7 @@ class Hub:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.workers: dict[str, Peer] = {}
         self.handlers: dict[str, Handler] = {}
-        self.subscriptions: dict[str, Handler] = {}
+        self.subscriptions: dict[tuple[str, str], Handler] = {}
 
     def bind(self, loop: asyncio.AbstractEventLoop | None) -> None:
         self.loop = loop
@@ -73,17 +73,19 @@ class Hub:
         """Handle Worker messages whose "type" is kind and whose "id" nobody subscribed to."""
         self.handlers[kind] = handler
 
-    def subscribe(self, message_id: str, handler: Handler) -> Callable[[], None]:
-        """Route Worker messages carrying this "id" to handler (e.g. one fast-lane command's
-        output); returns the matching unsubscribe."""
-        self.subscriptions[message_id] = handler
-        return lambda: self.subscriptions.pop(message_id, None)
+    def subscribe(self, node_id: str, message_id: str, handler: Handler) -> Callable[[], None]:
+        """Route messages carrying this "id" from this node's Worker to handler (e.g. one
+        fast-lane command's output); returns the matching unsubscribe. Keyed by node too, so
+        another Worker cannot inject into a session that targets a different node."""
+        key = (node_id, message_id)
+        self.subscriptions[key] = handler
+        return lambda: self.subscriptions.pop(key, None)
 
     async def _dispatch(self, node_id: str, message) -> None:
         if not isinstance(message, dict):
             log.warning("dropped a non-object message from %s", node_id)
             return
-        handler = self.subscriptions.get(message.get("id")) or self.handlers.get(
+        handler = self.subscriptions.get((node_id, message.get("id"))) or self.handlers.get(
             message.get("type")
         )
         if handler is None:
@@ -114,7 +116,12 @@ class Hub:
                 del self.workers[node_id]
             for task in (writer, reader):
                 task.cancel()
-            await asyncio.gather(writer, reader, return_exceptions=True)
+            # wait, not gather: a gather cancelled by the host's own cancellation (TestClient
+            # teardown, server shutdown) could escape the host's cancel scope.
+            await asyncio.wait({writer, reader})
+            for task in (writer, reader):
+                if not task.cancelled():
+                    task.exception()  # Retrieved: a failed send just ends the connection.
             try:
                 await websocket.close()
             except Exception:
