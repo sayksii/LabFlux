@@ -228,6 +228,51 @@ def test_one_command_at_a_time_until_the_result(make_client):
         context.__exit__(None, None, None)
 
 
+def test_a_command_rejected_as_busy_does_not_end_the_running_one(make_client):
+    client = make_client(fast_lane_mode="oneshot")  # Ending a command would close the session.
+    with ready_session(client) as (worker, session):
+        context, first, command = begin(client, worker, session)
+        with client.websocket_connect(session_url(session), headers=user_headers()) as second:
+            second.send_json(exec_request())
+            assert receive_error(second) == "busy"
+        assert current(client).json()["state"] == "RUNNING"
+        assert client.app.state.scheduler.session_busy == {session["id"]}
+        context.__exit__(None, None, None)
+
+
+def test_another_user_cannot_mark_a_session_busy(make_client, monkeypatch):
+    client = make_client()
+    service = client.app.state.scheduler
+    begin_command = service.begin_command
+    busy_at_begin = []
+
+    def spy(owner, session_id):
+        busy_at_begin.append((owner, session_id in service.session_busy))
+        return begin_command(owner, session_id)
+
+    monkeypatch.setattr(service, "begin_command", spy)
+    with ready_session(client) as (worker, session):
+        with client.websocket_connect(session_url(session), headers=user_headers("bob")) as ws:
+            ws.send_json(exec_request())
+            assert receive_error(ws) == "not_found"
+        assert busy_at_begin == [("bob", False)]
+        # Still not_found, not busy, while the owner's command runs; and the owner's command
+        # is not disturbed.
+        context, first, command = begin(client, worker, session)
+        with client.websocket_connect(session_url(session), headers=user_headers("bob")) as ws:
+            ws.send_json(exec_request())
+            assert receive_error(ws) == "not_found"
+        assert service.session_busy == {session["id"]}
+        while not next_message(worker)["final"]:
+            pass
+        worker.send_json(
+            CommandResult(id=command["id"], outcome="exited", exit_code=0).model_dump()
+        )
+        assert first.receive_json()["type"] == "result"
+        context.__exit__(None, None, None)
+        wait_for(lambda: not service.session_busy)
+
+
 def test_snapshot_size_is_enforced_while_streaming(make_client):
     client = make_client()
     with ready_session(client) as (worker, session):
