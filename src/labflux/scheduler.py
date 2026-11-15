@@ -1,4 +1,4 @@
-"""FCFS scheduling and durable job/worker lifecycle transitions."""
+"""Policy-driven scheduling and durable job/worker lifecycle transitions."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Callable
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from labflux.config import Settings
 from labflux.database import (
@@ -22,6 +22,17 @@ from labflux.database import (
     nodes,
 )
 from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
+from labflux.policy import (
+    Booking,
+    Ranked,
+    Reservation,
+    clock_text,
+    dominant_share,
+    earliest_start,
+    fits_at,
+    make_policy,
+    short,
+)
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 EXPIRED_ATTEMPT = "worker heartbeat expired; termination unconfirmed"
@@ -43,6 +54,7 @@ class Scheduler:
         self.settings = settings
         self.clock = clock
         self.db = Database(settings.data_dir)
+        self.policy = make_policy(settings)
 
     def _node(self, connection, node_id: str, instance_id: str) -> dict:
         row = connection.execute(select(nodes).where(nodes.c.id == node_id)).first()
@@ -394,6 +406,10 @@ class Scheduler:
             spec = spec.model_copy(update={"time_limit_s": self.settings.job_time_limit_s})
         if spec.image is None:
             spec = spec.model_copy(update={"image": self.settings.default_image})
+        if spec.priority is None:
+            spec = spec.model_copy(update={"priority": self.settings.default_priority})
+        if spec.estimated_runtime_s is not None and spec.estimated_runtime_s > spec.time_limit_s:
+            raise ServiceError(422, "estimated_runtime_s cannot exceed time_limit_s")
         job_id = uuid.uuid4().hex
         now = self.clock()
         with self.db.transaction() as connection:
@@ -430,8 +446,143 @@ class Scheduler:
             self._schedule(connection)
         return self.get_job(job_id, owner)
 
+    def _candidates(self, spec: JobSpec, available: list, allocated: dict, held: set) -> list:
+        """Nodes where the job fits right now, each with its eligible cards (best first)."""
+        request = spec.resources.model_dump()
+        candidates = []
+        for node in available:
+            cap, used = node["capacity"], allocated[node["id"]]
+            if not set(spec.datasets).issubset(cap["datasets"]):
+                continue
+            cards = self._eligible_gpus(node, request, held) if request["gpu"] else []
+            if (
+                request["cpu"] <= cap["cpu"] - used["cpu"] + 1e-9
+                and request["memory_mib"] <= cap["memory_mib"] - used["memory_mib"]
+                and used["jobs"] < self.settings.max_parallel_jobs
+                and len(cards) >= request["gpu"]
+            ):
+                candidates.append((node, cards))
+        return candidates
+
+    def _bookings(self, connection, available: list) -> dict[str, list[Booking]]:
+        """Unreleased attempts per node, each held until its start plus its hard time limit.
+
+        An attempt that has not reported STARTED counts from dispatch, so image pulls and source
+        downloads are not part of the estimate.
+        """
+        result: dict[str, list[Booking]] = {node["id"]: [] for node in available}
+        cards: dict[str, set[str]] = {}
+        for row in connection.execute(
+            select(attempt_gpus.c.attempt_id, attempt_gpus.c.gpu_uuid).where(
+                attempt_gpus.c.released.is_(False)
+            )
+        ):
+            cards.setdefault(row.attempt_id, set()).add(row.gpu_uuid)
+        for row in connection.execute(
+            select(
+                attempts.c.id,
+                attempts.c.node_id,
+                attempts.c.resources,
+                attempts.c.created_at,
+                attempts.c.started_at,
+                jobs.c.spec,
+            )
+            .select_from(attempts.join(jobs, jobs.c.id == attempts.c.job_id))
+            .where(attempts.c.released.is_(False), attempts.c.node_id.in_(list(result)))
+        ):
+            limit = row.spec.get("time_limit_s") or self.settings.job_time_limit_s
+            result[row.node_id].append(
+                Booking(
+                    end=(row.started_at or row.created_at) + limit,
+                    cpu=row.resources["cpu"],
+                    memory_mib=row.resources["memory_mib"],
+                    gpus=frozenset(cards.get(row.id, ())),
+                )
+            )
+        return result
+
+    def _recent_usage(self, connection, now: float, available: list) -> dict[str, float]:
+        """Per-user reserved minutes in the usage window, scaled by the dominant cluster share."""
+        capacity = {
+            "cpu": sum(node["capacity"]["cpu"] for node in available),
+            "memory_mib": sum(node["capacity"]["memory_mib"] for node in available),
+            "gpu": sum(len(node["capacity"].get("gpus", [])) for node in available),
+        }
+        since = now - self.settings.usage_window_s
+        usage: dict[str, float] = {}
+        for row in connection.execute(
+            select(
+                jobs.c.owner,
+                attempts.c.resources,
+                attempts.c.created_at,
+                attempts.c.finished_at,
+                attempts.c.released,
+            )
+            .select_from(attempts.join(jobs, jobs.c.id == attempts.c.job_id))
+            .where(or_(attempts.c.released.is_(False), attempts.c.finished_at > since))
+        ):
+            end = (row.finished_at or now) if row.released else now
+            seconds = max(0.0, min(end, now) - max(row.created_at, since))
+            share = dominant_share(row.resources, capacity)
+            usage[row.owner] = usage.get(row.owner, 0.0) + seconds / 60 * share
+        return usage
+
+    def _reserve(
+        self, entry: Ranked, available: list, bookings: dict, now: float
+    ) -> Reservation | None:
+        """Earliest time and node at which the blocked head job fits, from hard time limits."""
+        request = entry.spec.resources.model_dump()
+        best = None
+        for node in available:
+            if not set(entry.spec.datasets).issubset(node["capacity"]["datasets"]):
+                continue
+            cards = frozenset(gpu["uuid"] for gpu in self._eligible_gpus(node, request, set()))
+            at = earliest_start(
+                node, cards, bookings[node["id"]], request, now, self.settings.max_parallel_jobs
+            )
+            if at is not None and (best is None or (at, node["id"]) < best[:2]):
+                best = (at, node["id"], cards)
+        if best is None:
+            return None
+        return Reservation(entry.job["id"], best[1], best[0], request, best[2])
+
+    def _keeps_reservation(
+        self, reservation: Reservation, bookings: dict, node: dict, cards: list, spec, now: float
+    ) -> bool:
+        """EASY rule: starting here must leave the head job able to start at its reservation."""
+        if node["id"] != reservation.node_id:
+            return True
+        request = spec.resources.model_dump()
+        limit = spec.time_limit_s or self.settings.job_time_limit_s
+        chosen = frozenset(gpu["uuid"] for gpu in cards[: request["gpu"]])
+        trial = bookings[node["id"]] + [
+            Booking(now + limit, request["cpu"], request["memory_mib"], chosen)
+        ]
+        return fits_at(
+            node,
+            reservation.cards,
+            trial,
+            reservation.request,
+            reservation.start,
+            self.settings.max_parallel_jobs,
+        )
+
+    def _note(self, connection, job: dict, note: str) -> None:
+        if job.get("schedule_note") != note:
+            connection.execute(
+                jobs.update().where(jobs.c.id == job["id"]).values(schedule_note=note)
+            )
+
     def _schedule(self, connection) -> None:
+        """Consider queued jobs in policy order and dispatch every job allowed to start now.
+
+        Without backfilling, the first job that cannot start blocks every later job. With it, that
+        head job gets a reservation and a later job starts only if it cannot delay it (EASY).
+        """
         now = self.clock()
+        queued = connection.execute(select(jobs).where(jobs.c.state == "QUEUED")).all()
+        if not queued:
+            return
         available = [
             row_dict(row)
             for row in connection.execute(
@@ -443,36 +594,72 @@ class Scheduler:
         ]
         allocated = {node["id"]: self._allocations(connection, node["id"]) for node in available}
         held = self._held_gpus(connection)
-        queued = connection.execute(
-            select(jobs).where(jobs.c.state == "QUEUED").order_by(jobs.c.submission_seq)
-        ).all()
-        for row in queued:
-            job = row_dict(row)
-            spec = JobSpec.model_validate(job["spec"])
+        policy = self.policy
+        usage = self._recent_usage(connection, now, available) if policy.uses_usage else {}
+        bookings = self._bookings(connection, available) if policy.backfill else {}
+        entries = [(row_dict(row), JobSpec.model_validate(row.spec)) for row in queued]
+        head: dict | None = None
+        reservation: Reservation | None = None
+        for entry in policy.order(entries, now, usage):
+            job, spec = entry.job, entry.spec
             request = spec.resources.model_dump()
-            candidates = []
-            for node in available:
-                cap, used = node["capacity"], allocated[node["id"]]
-                if not set(spec.datasets).issubset(cap["datasets"]):
-                    continue
-                cards = self._eligible_gpus(node, request, held) if request["gpu"] else []
-                if (
-                    request["cpu"] <= cap["cpu"] - used["cpu"] + 1e-9
-                    and request["memory_mib"] <= cap["memory_mib"] - used["memory_mib"]
-                    and used["jobs"] < self.settings.max_parallel_jobs
-                    and len(cards) >= request["gpu"]
-                ):
-                    candidates.append((node, cards))
+            limit = spec.time_limit_s or self.settings.job_time_limit_s
+            if head is not None and not policy.backfill:
+                waiting = f"waiting behind job {short(head['id'])}"
+                self._note(connection, job, f"{policy.name}: {entry.why}; {waiting}")
+                continue
+            candidates = self._candidates(spec, available, allocated, held)
+            fits_now = bool(candidates)
+            if reservation is not None:
+                candidates = [
+                    (node, cards)
+                    for node, cards in candidates
+                    if self._keeps_reservation(reservation, bookings, node, cards, spec, now)
+                ]
             if not candidates:
-                reason = (
-                    "no online worker"
-                    if not available
-                    else "waiting for matching CPU/RAM/GPU capacity or datasets"
-                )
-                connection.execute(
-                    jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
-                )
-                break  # Strict FCFS: never bypass an unschedulable head job.
+                if head is None:
+                    head = job
+                    reason = (
+                        "no online worker"
+                        if not available
+                        else "waiting for matching CPU/RAM/GPU capacity or datasets"
+                    )
+                    connection.execute(
+                        jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
+                    )
+                    note = f"{policy.name}: first in line ({entry.why}); {reason}"
+                    if policy.backfill:
+                        reservation = self._reserve(entry, available, bookings, now)
+                        if reservation is None:
+                            note += "; no online node can ever fit it, so later jobs may start"
+                        elif reservation.start <= now:
+                            note += (
+                                f"; reserved on {reservation.node_id} as soon as attempts past "
+                                "their time limit release resources"
+                            )
+                        else:
+                            note += (
+                                f"; reserved on {reservation.node_id} at "
+                                f"{clock_text(reservation.start)}"
+                            )
+                elif fits_now:
+                    estimate = (
+                        f" (estimate {spec.estimated_runtime_s:.0f}s is advisory only)"
+                        if spec.estimated_runtime_s
+                        else ""
+                    )
+                    note = (
+                        f"{policy.name}: {entry.why}; its {limit:.0f}s time limit would delay "
+                        f"job {short(head['id'])} reserved on {reservation.node_id} at "
+                        f"{clock_text(reservation.start)}{estimate}"
+                    )
+                else:
+                    note = (
+                        f"{policy.name}: {entry.why}; no matching capacity now; job "
+                        f"{short(head['id'])} is first in line"
+                    )
+                self._note(connection, job, note)
+                continue
             node, cards = min(
                 candidates,
                 key=lambda c: (
@@ -486,61 +673,100 @@ class Scheduler:
                 ),
             )
             gpu_uuids = [gpu["uuid"] for gpu in cards[: request["gpu"]]]
-            attempt_id = uuid.uuid4().hex
-            connection.execute(
-                attempts.insert().values(
-                    id=attempt_id,
-                    job_id=job["id"],
-                    node_id=node["id"],
-                    state="STARTING",
-                    resources=request,
-                    released=False,
-                    created_at=now,
-                    reason="dispatched",
-                    oom_killed=False,
+            if head is None:
+                note = f"{policy.name}: started on {node['id']} ({entry.why})"
+            elif reservation is None:
+                note = (
+                    f"{policy.name}: started on {node['id']} ahead of job {short(head['id'])}, "
+                    f"which no online node can fit ({entry.why})"
                 )
-            )
-            for gpu_uuid in gpu_uuids:
-                connection.execute(
-                    attempt_gpus.insert().values(
-                        attempt_id=attempt_id,
-                        gpu_uuid=gpu_uuid,
-                        node_id=node["id"],
-                        released=False,
-                    )
+            else:
+                if node["id"] != reservation.node_id:
+                    safe = f"the reserved job waits for {reservation.node_id}"
+                elif now + limit <= reservation.start:
+                    safe = "its time limit ends before the reservation"
+                else:
+                    safe = "it leaves enough room for the reserved job"
+                note = (
+                    f"{policy.name}: backfilled on {node['id']} ahead of job "
+                    f"{short(head['id'])} reserved on {reservation.node_id} at "
+                    f"{clock_text(reservation.start)}; {safe} ({entry.why})"
                 )
+            self._dispatch(connection, job, spec, node["id"], gpu_uuids, now, note)
             held.update(gpu_uuids)
-            payload = {
-                "job_id": job["id"],
-                "attempt_id": attempt_id,
-                "worker_id": node["id"],
-                "job": spec.model_dump(),
-                "gpu_uuids": gpu_uuids,
-            }
-            connection.execute(
-                commands.insert().values(
-                    id=f"start-{attempt_id}",
-                    node_id=node["id"],
-                    attempt_id=attempt_id,
-                    kind="START",
-                    payload=payload,
-                    acked=False,
-                    created_at=now,
-                )
-            )
-            connection.execute(
-                jobs.update()
-                .where(jobs.c.id == job["id"])
-                .values(
-                    state="STARTING",
-                    current_attempt_id=attempt_id,
-                    reason=f"assigned to {node['id']}",
-                    updated_at=now,
-                )
-            )
             allocated[node["id"]]["cpu"] += request["cpu"]
             allocated[node["id"]]["memory_mib"] += request["memory_mib"]
             allocated[node["id"]]["jobs"] += 1
+            if policy.backfill:
+                bookings[node["id"]].append(
+                    Booking(
+                        now + limit, request["cpu"], request["memory_mib"], frozenset(gpu_uuids)
+                    )
+                )
+
+    def _dispatch(
+        self,
+        connection,
+        job: dict,
+        spec: JobSpec,
+        node_id: str,
+        gpu_uuids: list[str],
+        now: float,
+        note: str,
+    ) -> None:
+        """Reserve the resources in a new attempt and queue its START command."""
+        attempt_id = uuid.uuid4().hex
+        connection.execute(
+            attempts.insert().values(
+                id=attempt_id,
+                job_id=job["id"],
+                node_id=node_id,
+                state="STARTING",
+                resources=spec.resources.model_dump(),
+                released=False,
+                created_at=now,
+                reason="dispatched",
+                oom_killed=False,
+            )
+        )
+        for gpu_uuid in gpu_uuids:
+            connection.execute(
+                attempt_gpus.insert().values(
+                    attempt_id=attempt_id,
+                    gpu_uuid=gpu_uuid,
+                    node_id=node_id,
+                    released=False,
+                )
+            )
+        payload = {
+            "job_id": job["id"],
+            "attempt_id": attempt_id,
+            "worker_id": node_id,
+            "job": spec.model_dump(),
+            "gpu_uuids": gpu_uuids,
+        }
+        connection.execute(
+            commands.insert().values(
+                id=f"start-{attempt_id}",
+                node_id=node_id,
+                attempt_id=attempt_id,
+                kind="START",
+                payload=payload,
+                acked=False,
+                created_at=now,
+            )
+        )
+        connection.execute(
+            jobs.update()
+            .where(jobs.c.id == job["id"])
+            .values(
+                state="STARTING",
+                current_attempt_id=attempt_id,
+                reason=f"assigned to {node_id}",
+                schedule_note=note,
+                updated_at=now,
+            )
+        )
 
     def tick(self) -> None:
         with self.db.transaction() as connection:
