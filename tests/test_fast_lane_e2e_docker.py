@@ -107,6 +107,7 @@ def lane(tmp_path):
         data_dir=tmp_path / "scheduler",
         scheduler_interval_s=0.05,
         session_command_timeout_s=3,
+        session_writeback_bytes=1024**2,
     )
     worker_id = f"fl-{uuid.uuid4().hex[:8]}"
     worker_settings = Settings(
@@ -240,22 +241,33 @@ def test_fast_lane_commands_sync_files_and_end_sessions(lane, tmp_path):
     assert (local.returncode, local.stdout) == (0, f"{project}\n"), local.stderr
     assert lane.current()["id"] == session["id"]
 
-    # Ctrl-C stops only the command; the same session container runs the next one.
+    # Ctrl-C stops only the command: exit 130, what it wrote so far comes back, and the same
+    # session container, with the files of the earlier commands, runs the next one.
     process = lane.popen(
-        "run", "--", "python", "-c", "import time; print('started', flush=True); time.sleep(30)"
+        "run",
+        "--",
+        "python",
+        "-c",
+        "import pathlib, time; pathlib.Path('partial.txt').write_text('before the cancel'); "
+        "print('started', flush=True); time.sleep(30)",
     )
     assert process.stdout.readline() == "started\n"
     process.send_signal(signal.SIGINT)
     _, stderr = process.communicate(timeout=60)
     assert process.returncode == 130, stderr
+    assert "the command was stopped; the session is still running" in stderr
+    assert "the session was closed" not in stderr
+    assert (project / "partial.txt").read_text() == "before the cancel"
     again = lane.run(
         "run",
         "--",
         "python",
         "-c",
-        "import pathlib; print(pathlib.Path('/tmp/marker').read_text())",
+        "import pathlib; print(pathlib.Path('/tmp/marker').read_text()); "
+        "print(pathlib.Path('gen.txt').read_text(), pathlib.Path('partial.txt').read_text())",
     )
-    assert (again.returncode, again.stdout) == (0, "same container\n"), again.stderr
+    assert again.returncode == 0, again.stderr
+    assert again.stdout == "same container\ngenerated before the cancel\n"
     assert lane.current()["id"] == session["id"]
     assert lane.job(session["id"])["current_attempt_id"] == attempt_id
 
@@ -277,6 +289,65 @@ def test_fast_lane_commands_sync_files_and_end_sessions(lane, tmp_path):
     assert lane.run("session", "close").returncode == 0
     lane.wait_released(next(job for job in jobs if job != session["id"]))
     assert lane.current() is None
+
+
+def test_fast_lane_remote_only_files_and_concurrent_commands(lane):
+    project = lane.project
+    manifest = project / ".labflux" / "remote-files.txt"
+    size = 2 * 1024**2  # Twice the write-back limit of this Scheduler.
+
+    # A file over the write-back limit stays in the session: listed locally, one hint line.
+    first = lane.run(
+        "run",
+        "--",
+        "python",
+        "-c",
+        "import pathlib; pathlib.Path('checkpoints').mkdir(); "
+        f"pathlib.Path('checkpoints/model.bin').write_bytes(bytes({size})); "
+        "pathlib.Path('small.txt').write_text('small')",
+    )
+    assert first.returncode == 0, first.stderr
+    assert (project / "small.txt").read_text() == "small"
+    assert not (project / "checkpoints").exists()
+    hints = [line for line in first.stderr.splitlines() if "checkpoints/model.bin" in line]
+    assert len(hints) == 1, first.stderr
+    assert "1 file (2.0 MB) exists only in the remote session" in hints[0]
+    assert ".labflux/remote-files.txt" in hints[0] and "/outputs" in hints[0]
+    listed = [line for line in manifest.read_text().splitlines() if not line.startswith("#")]
+    assert listed == [f"checkpoints/model.bin\t{size} bytes (2.0 MB)"]
+    session = lane.current()
+    attempt_id = lane.job(session["id"])["current_attempt_id"]
+
+    # The next routed command reads it at the same path; an unchanged list prints no hint.
+    reader = lane.run(
+        "_standin",
+        "python",
+        "--",
+        "-c",
+        "import os; print(os.path.getsize('checkpoints/model.bin'))",
+    )
+    assert (reader.returncode, reader.stdout) == (0, f"{size}\n"), reader.stderr
+    assert "remote session" not in reader.stderr
+    assert not (project / "checkpoints").exists()
+    files = lane.run("session", "files")
+    assert files.returncode == 0 and files.stdout == manifest.read_text()
+
+    # Two commands started at the same time both succeed, one after the other, in this session.
+    script = "import time; time.sleep(1.5); print('done')"
+    pair = [lane.popen("run", "--", "python", "-c", script) for _ in range(2)]
+    results = [process.communicate(timeout=60) for process in pair]
+    for process, (stdout, stderr) in zip(pair, results, strict=True):
+        assert (process.returncode, stdout) == (0, "done\n"), stderr
+    waited = [stderr for _, stderr in results if "waiting for it to finish" in stderr]
+    assert len(waited) == 1, results
+    assert lane.current()["id"] == session["id"]
+    assert lane.job(session["id"])["current_attempt_id"] == attempt_id
+    assert len(lane.containers()) == 1
+
+    # Closing the session ends the remote-only files, and the local list with them.
+    assert lane.run("session", "close").returncode == 0
+    assert not manifest.exists()
+    lane.wait_released(session["id"])
 
 
 def test_fast_lane_latency_with_a_running_session(lane):
