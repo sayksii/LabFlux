@@ -266,7 +266,8 @@ def test_client_cancel_and_disconnect_forward_a_cancel(make_client):
             pass
         ws.send_json({"type": "cancel"})
         assert next_message(worker) == {"type": "cancel", "id": command["id"]}
-        result = CommandResult(id=command["id"], outcome="cancelled", session_ended=True)
+        # Cancelled before it started, so the session stays.
+        result = CommandResult(id=command["id"], outcome="cancelled", session_ended=False)
         worker.send_json(result.model_dump())
         assert ws.receive_json() == result.model_dump()
         context.__exit__(None, None, None)
@@ -325,3 +326,28 @@ def test_no_result_in_time_counts_as_lost(make_client, monkeypatch):
         view = current(client).json()
         assert view["state"] == "STOPPING"
         assert view["reason"].startswith("no command result")
+
+
+def test_a_session_the_worker_ended_stops_at_once_and_the_next_open_is_new(make_client):
+    client = make_client()
+    service = client.app.state.scheduler
+    with ready_session(client) as (worker, session):
+        context, ws, command = begin(client, worker, session)
+        while not next_message(worker)["final"]:
+            pass
+        result = CommandResult(
+            id=command["id"],
+            outcome="timeout",
+            reason="command time limit exceeded",
+            session_ended=True,
+        )
+        worker.send_json(result.model_dump())
+        assert ws.receive_json() == result.model_dump()
+        context.__exit__(None, None, None)
+        wait_for(lambda: not service.session_busy)
+        # Before the attempt's FINISHED event: STOPPING, resources still held.
+        view = job(client, session["id"])
+        assert view["state"] == "STOPPING"
+        assert view["reason"].startswith("command time limit exceeded")
+        fresh = open_session(client)
+        assert fresh["created"] is True and fresh["id"] != session["id"]

@@ -69,8 +69,11 @@ class SessionExecutor:
         cwd = workspace / os.path.relpath(workdir, WORKSPACE)
         if argv[0] == "uv":
             (workspace / ".venv").mkdir(exist_ok=True)
+            if "--locked" not in argv:
+                (workspace / "uv.lock").write_bytes(b"generated")  # As a real `uv sync` does.
             on_output("stdout", b"Resolved 0 packages\n")
-            return self.sync_code, False, False
+            code = self.sync_code
+            return (code() if callable(code) else code), False, False
         code = self.script(argv, cwd, on_output)
         if code != "hang":
             return code, False, False
@@ -324,6 +327,60 @@ def test_dependency_changes_trigger_uv_sync_once(lab):
     del project["uv.lock"]
     run(worker, attempt_id, snapshot(tmp_path, project))
     assert executor.calls[5:] == [["uv", "sync"], ["python", "main.py"]]
+
+
+def test_a_generated_uv_lock_does_not_count_as_a_snapshot_lock(lab):
+    worker, executor, tmp_path = lab
+    attempt_id = start_session(worker)
+    project = {"pyproject.toml": b"[project]\nname='x'\n", "main.py": b""}
+    run(worker, attempt_id, snapshot(tmp_path, project))
+    assert (executor.workspaces[attempt_id] / "uv.lock").read_bytes() == b"generated"
+    run(worker, attempt_id, snapshot(tmp_path, project))
+    assert executor.calls == [["uv", "sync"], ["python", "main.py"], ["python", "main.py"]]
+    project["pyproject.toml"] += b"dependencies = ['rich']\n"
+    run(worker, attempt_id, snapshot(tmp_path, project))
+    assert executor.calls[3:] == [["uv", "sync"], ["python", "main.py"]]
+
+
+def test_a_stop_during_uv_sync_reports_the_session_closed(lab):
+    worker, executor, tmp_path = lab
+    attempt_id = start_session(worker)
+
+    def stopped_sync():
+        worker.handles[attempt_id]["cancel"].set()  # `session close` kills the container.
+        return 137
+
+    executor.sync_code = stopped_sync
+    data = snapshot(tmp_path, {"pyproject.toml": b"[project]\n"})
+    result = run(worker, attempt_id, data)[1]
+    assert (result["outcome"], result["reason"], result["session_ended"]) == (
+        "cancelled",
+        "session closed",
+        True,
+    )
+
+
+def test_a_session_that_ends_during_the_snapshot_answers_the_command(lab):
+    worker, executor, tmp_path = lab
+    attempt_id = start_session(worker)
+    data = snapshot(tmp_path, {})
+    command = WorkerExec(
+        id=uuid.uuid4().hex,
+        attempt_id=attempt_id,
+        argv=["python"],
+        snapshot_size=len(data),
+        snapshot_sha256=hashlib.sha256(data).hexdigest(),
+        **LIMITS,
+    )
+    worker._on_message(json.dumps(command.model_dump()))  # No snapshot chunk yet.
+    worker.handles[attempt_id]["cancel"].set()
+    result = result_of(worker, command.id)[-1]
+    assert (result["outcome"], result["reason"], result["session_ended"]) == (
+        "cancelled",
+        "session closed",
+        True,
+    )
+    assert executor.calls == []
 
 
 def test_a_failed_sync_skips_the_command_and_is_retried(lab):

@@ -671,6 +671,7 @@ class Worker:
             for run in runs:
                 if run.thread is None:
                     self._drop_run(run)  # Its snapshot was still arriving; nothing ran.
+                    self._reply(run.id, **self._session_ended(spec.attempt_id, "cancelled"))
                 else:
                     run.thread.join(COMMAND_JOIN_S)
             with self.lock:
@@ -1018,10 +1019,11 @@ class Worker:
             self._drop_run(run)
             self._reply(run.id, outcome="error", reason=str(exc)[:2048])
             return
-        run.thread = threading.Thread(
+        thread = threading.Thread(
             target=self._run_command, args=(run,), name=f"command-{run.id[:8]}", daemon=True
         )
-        run.thread.start()
+        thread.start()
+        run.thread = thread  # Only once started, so _execute never joins an unstarted thread.
 
     def _on_cancel(self, message: dict) -> None:
         try:
@@ -1090,11 +1092,13 @@ class Worker:
                 run.path.unlink(missing_ok=True)
             write_json(session_path, session)
 
-            deps = dependency_hash(workspace)
+            # Only the snapshot's dependency files count: a uv.lock that `uv sync` generated
+            # in the workspace must neither force --locked nor change the hash.
+            deps = dependency_hash(workspace, session["files"])
             pyproject = workspace / "pyproject.toml"
             if pyproject.is_file() and not pyproject.is_symlink() and deps != session["deps"]:
                 self._relay(Notice(id=run.id, text="running uv sync").model_dump())
-                locked = (workspace / "uv.lock").is_file()
+                locked = "uv.lock" in session["files"]
                 code, timed_out, stopped = self.executor.exec(
                     spec,
                     ["uv", "sync", "--locked"] if locked else ["uv", "sync"],
@@ -1104,9 +1108,12 @@ class Worker:
                     command.sync_timeout_s,
                     on_abort=abort("dependency sync time limit exceeded"),
                 )
-                if timed_out or stopped or code is None:
+                if timed_out or stopped or handle["cancel"].is_set():
                     outcome = "timeout" if timed_out else "cancelled"
                     self._reply(run.id, **self._session_ended(attempt_id, outcome))
+                    return
+                if code is None:
+                    self._reply(run.id, outcome="error", reason="uv sync exit status unavailable")
                     return
                 if code != 0:
                     # deps is not stored, so the next command tries again.

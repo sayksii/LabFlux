@@ -195,12 +195,12 @@ def pack_files(workspace: Path, relatives: list[str], target: Path) -> list[str]
     return packed
 
 
-def dependency_hash(workspace: Path) -> str | None:
-    """sha256 over the dependency files present, or None when there are none."""
+def dependency_hash(workspace: Path, snapshot_files: list[str]) -> str | None:
+    """sha256 over the dependency files the snapshot has, or None when it has none."""
     digest = hashlib.sha256()
     found = False
     for name in DEPENDENCY_FILES:
-        opened = _open_file(workspace, name)
+        opened = _open_file(workspace, name) if name in snapshot_files else None
         if opened is None:
             continue
         found = True

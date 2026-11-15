@@ -195,6 +195,10 @@ async def serve(
                     break
             await send(item)
             if isinstance(message, CommandResult):
+                if message.session_ended:
+                    # The Worker already ended the container; STOPPING at once lets the next
+                    # command open a new session instead of reaching this one before FINISHED.
+                    stop_reason = message.reason or "session ended by the worker"
                 break
     finally:
         if reader is not None:
