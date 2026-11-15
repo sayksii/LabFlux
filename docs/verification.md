@@ -794,6 +794,21 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
 - 9.5 維持資源不足時互動工作等待；是否保留容量給互動工作（Q1）原定與 M8 一起決定，目前仍未決定，沒有列成項目。
 - 尚未決定的提議刻意沒有寫進 plan：D1、D2、D6（Ctrl-C 取消的範圍已於 2026-11-16 決定，見 T10 與 9.13）、D8（在送出指令的機器上開 session）、D9、D11、F2、F5、1 秒延遲目標與保留容量（R17）。
 
+## 驗證時另外發現的罕見情況（2026-11-16，使用者確認記為限制）
+
+審查修正後，兩個獨立的檢查 agent 回報 6 個罕見情況。使用者確認都記為已知限制、不修；其中兩項上一節已有記錄。
+
+- **lease 過期但指令仍在執行**：backfill 把這個 session 視為「現在」釋放（上一節 backfill 那一條已記錄）。
+- **本機新建與遠端同名的檔案**：只在遠端的檔案（超過寫回上限）如果在本機新建了同一個路徑，下一份快照會依 D4b 以本機為準覆蓋遠端那份，
+  而且該檔案直接從 `.labflux/remote-files.txt` 移除，不另外提示。
+- **AI 工具直接砍掉指令**（第二次 Ctrl-C、SIGTERM、程序被殺）：Worker 會停止指令並照樣送出寫回，但 CLI 已經離開，Scheduler 丟棄這份寫回。
+  這次指令改過的檔案留在遠端，不會出現在本機，也不在遠端檔案清單裡；之後的指令也不會再寫回它們，因為變更偵測只比對每個指令的前後。
+- **同一個 session 並行的兩個指令**：等待中的指令在連線前就打包快照，而前一個指令送出結果後就釋放忙碌標記，
+  此時前一個指令的寫回可能還沒套用到本機。所以第二個指令的快照可能比較舊，套用到遠端時會把前一個指令剛改過的檔案換回舊版。
+- **寫回路徑經過本機的 symlink 目錄**：該檔案跳過並提示（上一節寫回路徑那一條已記錄）。
+- **子 shell 重新讀取啟動檔**：AI 工具另外開的 shell 如果重新讀取 `~/.profile` 或 `~/.bashrc`，而它們無條件把其他目錄加到 PATH 最前面，
+  替身可能被蓋掉。2026-11-16 在 kayle 實測 `bash -lc 'command -v python'` 仍找到替身（見下一節），但結果取決於使用者的啟動檔。
+
 ## 9.14 AI coding 工具實測（kayle，2026-11-16）
 
 環境：臨時的 Scheduler 與 Worker（本機 loopback 的空閒 port、暫存資料目錄、唯一的 Worker ID，只用 CPU，映像 `python:3.12-slim`），
@@ -1135,6 +1150,120 @@ kindred 的 Worker 重新啟動時，常駐的 gemma4-31b 沒有被重啟：`lab
   能搶占的隊首（session、模型服務，或 `priority`、`backfill` 的批次工作）才列出。`preemption_enabled = false` 時都不列出。
 - 隊首被擋住的每一輪排程（約每 0.25 秒及每次心跳）都查詢一次執行中的批次工作並驗證它們的 JobSpec，再查詢一次停止中的 attempt
   與執行中的模型服務；`fcfs`、`priority` 下排在最前面的模型服務被擋住時也會查詢。成本隨執行中的工作數增加；在實驗室規模下可接受。
+
+## 6.1 專案目錄保留在節點、下一次接著開始（kayle，2026-11-16）
+
+範圍：`docs/architecture.md` 6.1 的 P0～P7（做法 B），使用者同意 P1～P7 的提議預設值。資料庫新增 `project_results` 表（rebase 到 M11 之後為 schema 版本 7，見「6.1 接在 M11 之後」）。
+
+驗證方式：
+
+- `tests/test_project_results.py`（19 個，含下方審查修正新增的 4 個；假的容器，Worker 以 TestClient 連到真的 Scheduler）：
+  - P1：`submit --source` 以資料夾名稱或 `.labflux.toml` 的 `[project] name` 填入 `project`，工作 JSON 的欄位優先，
+    沒有來源就沒有 `project`，無效的 `.labflux.toml` 以 1 結束；快速測試的專案名稱規則相同。
+  - P0a：目錄保留、`.venv` 刪除、大小與 `labflux results ls` 的內容；別的使用者看不到。
+  - P0b／P3：下一個工作看到上一次產生的 `ckpt/model.pt`，但看不到上一次快照的檔案、快取與 symbolic link；
+    同名時以這次的快照為準；第三個工作接續第二個（不是第一個）；上一份目錄沒有被改動；複製保留修改時間。
+  - 同時執行：兩個同專案的工作以 barrier 確認同時在跑，各自一份目錄，都從同一份結果開始，互相看不到。
+  - P0c：有結果的節點優先（否則依 ID 會選另一台）；那台滿了就排到別台、不等待，`schedule_note` 說明有檔案的節點都排不下；別的使用者同名專案不受影響。
+    有最新結果的節點忙碌時，排到有較舊結果的節點、從那份開始，而不是 best fit 會選的空節點。
+  - P2：重跑從自己上一個 attempt 開始，即使中間有同專案的另一個工作在那台結束；Worker 重啟判定遺失時目錄保留給重跑，重跑讀到中斷前寫的檔案。
+    開始前就取消的 attempt 不算一次執行。
+    節點重啟一次判定同專案 4 個工作遺失時，每個重跑都從自己的 attempt 開始（記錄第 4 份時不淘汰第 1 份）；每個工作結束後它的舊目錄才被淘汰，最後留 3 份。
+  - P4：第 4 次執行後只留 3 份，最舊的一份產生 `prune-<attempt>` 命令；Worker 刪除目錄並 ack，重送無害；其他專案不受影響；
+    `deleted_by_next_run` 標在第 3 份。兩個複製以 barrier 確認同時從同一份目錄進行；這時另一份目錄的 PRUNE 立即執行（「複製最新的、刪除最舊的」不互等），
+    這份目錄的 PRUNE 不 ack、目錄保留，之後才要開始的複製不讀它；兩個複製結束後命令迴圈被喚醒，PRUNE 再次處理時刪除並 ack。
+  - 重送的事件：附 `kept_bytes` 的 FINISHED 原樣重送只接受一次（只有一列保留紀錄），內容不同回 409；舊版 Scheduler 存的事件（沒有 `kept_bytes`）重送時視為重複。
+  - P5：session 從最近的結果開始，指令讀得到 checkpoint、只寫回指令改過的檔案；session 結束時目錄刪除，不算一次執行，下一個工作仍從原本的結果開始。
+  - 沒有 `project` 的工作：目錄照舊刪除，START 沒有 `previous_attempt_id`，`results ls` 是空的。
+  - 舊版資料庫升級後有 `project_results` 表（目前為版本 7）。
+- `tests/test_project_results_docker.py`（真的 HTTP、Worker 執行緒與 Docker 容器，`python:3.12-slim`，只用 CPU，唯一的 Worker ID `results-e2e-*`）：
+  以 `labflux submit --source trainer --wait` 送兩次同一個程式；第一次寫出 `ckpt/model.pt`（`step`），第二次讀它並附加一行。
+  檢查第二次的日誌為兩行、Scheduler 列出兩份保留的目錄（專案 `trainer`）、兩個目錄在磁碟上的內容各自正確，測試後沒有殘留容器。
+
+指令與結果：
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：320 passed、1 skipped（審查修正後；第一版 316 passed，改動前 301 passed；跳過的是沒有 zsh 的測試）。
+- `uv run ruff check src tests`、`uv run ruff format --check src tests`：通過。
+- `uv run pytest -q tests/test_project_results_docker.py`：1 passed。
+
+未驗證：實驗室節點（kayle、karma）與兩台以上的 Docker Worker、GPU 工作、uv 模式實際建立的 `.venv`、大型 checkpoint 的複製時間、Docker 中的 session。
+
+已知限制（依「少見情況記為限制」的原則，不另加機制）：
+
+- **專案以擁有者加名稱識別。**同一位使用者兩個不同的 repo 剛好資料夾同名（例如都叫 `experiments`），會被當成同一個專案而複製到對方產生的檔案；
+  遇到時在 `.labflux.toml` 設定不同的 `[project] name`。CLI 只讀 `--source` 目錄本身的 `.labflux.toml`，不往上找。
+- **節點故障（P7）。**保留的結果只在那台機器上，節點永久故障就遺失；它的列仍留在 `results ls`，排程說明會提到結果在那台。
+  同一個 `worker_id` 以清空的磁碟回來時，下一個工作找不到目錄，記錄警告後從頭開始，之後的執行照常把舊列淘汰。
+- **沒有刪除指令與磁碟預算。**只有同專案在同一台的新執行會淘汰舊目錄；不再執行的專案的 3 份目錄一直保留，沒有 `labflux results rm`。
+  複製是完整複製（沒有 hardlink 或 copy-on-write），一個專案在一台最多佔「保留份數 + 執行中份數」倍的 checkpoint 空間；
+  磁碟滿時複製失敗，工作在準備階段 `FAILED`，不重跑。F5 的磁碟門檻仍是提議。
+- **複製的範圍。**上一次快照路徑上的檔案一律不複製，即使程式在執行中改寫過它（例如原地修改的設定檔）；symbolic link（例如 `latest.pt -> ckpt/epoch3.pt`）
+  不複製，要用固定檔名或重新產生連結。保留的目錄刪除 `.venv`；大小在結束時量一次，不再更新。
+- **Worker 重啟時判定遺失的 attempt** 記為保留，但大小未知（`size` 為 null）；Worker 本機紀錄損壞時，這一列可能指向已刪除的目錄，下一個工作就從頭開始。
+- **派送與複製之間被淘汰。**工作派送時選定的來源目錄，若在它開始複製前被淘汰（需要同專案在同一台、短短幾秒內又有 `results_keep` 個執行結束），
+  工作從頭開始。已經開始的複製不受影響：PRUNE 等它們結束才刪除，不會留下複製到一半的目錄。
+- **等待重跑時可能超過保留份數。**排隊等重跑的工作，它的目錄不淘汰，所以一台機器上同專案的目錄可能暫時多於 `results_keep` 份，
+  在那個工作結束（或被取消）時刪除；`deleted_by_next_run` 不標示這種目錄。
+- **session。**session 的專案在開啟時決定；每位使用者只有一個 session，從另一個專案目錄送來的指令會沿用已開的 session，不重新複製。
+  session 也偏好有專案結果的節點，D8（在送出指令的機器上開 session）仍是提議、未實作。
+- **重跑。**只有 Worker 重啟核對時判定遺失的 attempt 會重跑（M6.5）；原節點不回來時，重跑排到別台，就從那台這個專案最近的結果開始（若有）。
+- **PRUNE 命令**只在節點 `ONLINE` 時送出；Scheduler 在決定淘汰時就刪除那一列，所以 `results ls` 不再列出、但磁碟上的目錄要等 Worker 處理命令才刪除。
+
+### 6.1 審查修正（2026-11-16）
+
+審查找到四個問題，各加一個沒有修正就會失敗的測試（以第一版的 `scheduler.py`、`worker.py` 執行新測試確認失敗）：
+
+- **淘汰刪掉等待重跑的目錄（MAJOR）。**淘汰原本計算該節點這個專案的所有列，包括排隊等重跑的工作；它的列被刪後，重跑改從別的工作最新的結果開始。
+  修正：只淘汰工作已結束（SUCCEEDED／FAILED／CANCELLED）的列；淘汰改在記錄結束、更新工作狀態之後執行，涵蓋這個專案在每台的列，
+  所以等待重跑的列在它的工作結束時（或排隊中被取消時）被刪除，保留份數仍會收斂。`results ls` 的 `deleted_by_next_run` 也只標示會被刪的列。
+  測試：`test_pruning_spares_the_directories_of_jobs_waiting_for_a_retry`。
+- **只偏好有最新結果的那台（MINOR）。**那台排不下時，有較舊結果的節點不被偏好，best fit 可能選空節點。修正：依每台最好的來源在清單中的位置排序，
+  沒有結果的節點最後；`schedule_note` 在有檔案的節點都排不下時列出這些節點。測試：`test_placement_falls_back_to_a_node_with_an_older_result`。
+- **同一份目錄的複製輪流進行（MINOR）。**改為讀者計數：多個複製可以同時讀同一份目錄。PRUNE 到達時標記這份目錄，之後的複製不讀它；
+  還有複製在進行時 PRUNE 不 ack（留給之後的輪詢），命令迴圈不等待，最後一個複製結束時喚醒命令迴圈。
+  測試：`test_copies_share_a_kept_directory_and_its_prune_waits_for_them`（取代原本的互斥測試）。
+- **升級後重送的事件一直回 409（MINOR）。**比對重送的事件前，先以目前的 `WorkerEvent` 正規化存下的內容，舊版存的事件沒有 `kept_bytes` 也能比對。
+  測試：`test_an_event_stored_before_kept_bytes_still_matches_its_resend`；另加 `test_a_finished_event_with_kept_bytes_is_accepted_once` 補上原本沒有測試的重送路徑。
+
+指令與結果：
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：320 passed、1 skipped。
+- `uv run ruff check src tests`、`uv run ruff format --check src tests`：通過。
+- `uv run pytest -q tests/test_project_results_docker.py`：1 passed（只用 CPU）。
+
+### 6.1 接在 M10 之後（rebase 到 main `29f66ce`，2026-11-16）
+
+以上兩次的測試數是 rebase 前（main `1504cdd`）的結果。分支重新接在 #5（多 Worker 部署）與 M10 之後：
+
+- migration：M10 的版本 5（`jobs.service`）不變，`project_results` 改為版本 6。`test_a_version_5_database_gains_the_results_table`
+  從 M10 的版本 5 升級；`test_v1_database_upgrades_to_current_and_keeps_jobs` 也先刪掉 `project_results`，從版本 1 一路升級。
+- 兩邊都改到的地方合併保留：Scheduler 設定（`models`、Gateway 的兩個設定與 `results_keep`）、`ExecutionSpec`（`service` 與 `previous_attempt_id`）、
+  START 命令（模型服務帶 `service`，有來源的專案工作帶 `previous_attempt_id`）。
+- 模型服務不當成專案工作：`_model_spec` 明確設 `project=None`；Scheduler 記錄保留、淘汰與挑選來源時排除 `MODEL`；Worker 不保留 `service` 容器的目錄。
+  測試：`test_a_model_service_is_not_a_project_job`（START 沒有 `previous_attempt_id`；FINISHED 即使帶了 `kept_bytes` 也不記錄保留）。
+
+指令與結果：
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：363 passed、1 skipped（main `29f66ce` 為 343 passed；加上本分支的 19 個與上面 1 個）。
+- `uv run ruff check src tests`、`uv run ruff format --check src tests`：通過。
+- Docker（只用 CPU，一次一個檔案）：`tests/test_project_results_docker.py` 1 passed、`tests/test_model_docker.py` 2 passed，測試後沒有殘留容器。
+
+### 6.1 接在 M11 之後（rebase 到 main `090b230`，2026-11-16）
+
+M11（搶占）先合併，`attempts.preempted_by` 用了 migration 6，所以 `project_results` 改為 migration 7。
+
+- `JobSpec` 同時有 M11 的 `retries_on_node_failure`、`safe_to_rerun`、`preemptible` 與本分支的 `project`。
+  本分支測試裡的 `max_retries=1` 改成 `retries_on_node_failure=1, safe_to_rerun=True`。
+- `test_a_version_6_database_gains_the_results_table` 從 M11 的版本 6 升級；版本 1 一路升級的測試也先刪掉 `project_results`。
+- 新增 `test_a_preempted_run_continues_from_its_own_directory`：專案工作被搶占，Worker 確認停止並保留目錄後，
+  這份目錄記為結果；搶占它的工作結束後，重跑的 attempt 的 START 帶著被搶占那個 attempt 的 `previous_attempt_id`。
+  每個 PREEMPTED 結果都經過 `Scheduler._finish`，所以不需要另外的程式。
+
+指令與結果：
+
+- `uv run pytest -q`：465 passed、1 skipped（zsh）。
+- `uv run ruff check src tests scripts`、`uv run ruff format --check src tests scripts`：通過。
+- Docker（只用 CPU）：`tests/test_project_results_docker.py`、`tests/test_end_to_end_docker.py` 2 passed；`tests/test_preemption_docker.py`（非 GPU）1 passed。
 
 ## 最後驗證與交付
 

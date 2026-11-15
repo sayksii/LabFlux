@@ -133,6 +133,8 @@ class Settings(BaseModel):
     gateway_max_request_bytes: int = Field(default=16 * 1024**2, gt=0)
     # Longest silence from the model server (no new response bytes) before a request fails.
     gateway_read_timeout_s: float = Field(default=600, gt=0, allow_inf_nan=False)
+    # Kept project directories per owner, project and node (6.1 P4); older ones are deleted.
+    results_keep: int = Field(default=3, ge=1)
 
     @model_validator(mode="after")
     def validate_settings(self) -> Settings:

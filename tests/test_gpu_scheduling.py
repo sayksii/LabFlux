@@ -6,7 +6,13 @@ from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from labflux.database import SCHEMA_VERSION, Database, attempt_gpus, schema_version
+from labflux.database import (
+    SCHEMA_VERSION,
+    Database,
+    attempt_gpus,
+    project_results,
+    schema_version,
+)
 from labflux.models import Capacity, GpuDevice, JobSpec, ResourceRequest
 from labflux.scheduler import Scheduler
 
@@ -222,6 +228,7 @@ def test_v1_database_upgrades_to_current_and_keeps_jobs(settings):
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN lease_expires_at")
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN service")  # Added by version 5.
         connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN preempted_by")  # Version 6.
+        project_results.drop(connection)  # Added by version 7.
         connection.execute(update(schema_version).values(version=1))
     first.db.close()
     database = Database(settings.data_dir)

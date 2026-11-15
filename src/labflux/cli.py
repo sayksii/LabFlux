@@ -121,6 +121,8 @@ def submit(
         if source:
             if not source.is_dir():
                 raise typer.BadParameter("--source must be a directory")
+            if job.project is None:
+                job.project = _source_project(source)
             with tempfile.TemporaryDirectory(prefix="labflux-source-") as temp:
                 archive = Path(temp) / "source.tar.gz"
                 links = pack_directory(source, archive)
@@ -159,6 +161,21 @@ def submit(
         show(result)
         if wait and result["state"] != "SUCCEEDED":
             raise typer.Exit(1)
+
+
+def _source_project(source: Path) -> str | None:
+    """The project of a --source directory (6.1 P1): [project] name in its .labflux.toml, else
+    the directory's own name."""
+    from labflux import fastlane
+
+    config = None
+    if (source / fastlane.PROJECT_FILE).is_file():
+        try:
+            config = fastlane.load_project(source)
+        except fastlane.ProjectError as exc:
+            typer.echo(f"labflux: {exc}", err=True)
+            raise typer.Exit(1) from exc
+    return fastlane.project_name(source, config)
 
 
 @app.command()
@@ -358,6 +375,17 @@ def shell(
     config = Path(config) if config else None
     program = program or os.environ.get("SHELL") or "/bin/sh"
     raise typer.Exit(fastlane.run_shell(program, config, fastlane.standin_names(project)))
+
+
+results_app = typer.Typer(no_args_is_help=True, help="Inspect kept project results")
+app.add_typer(results_app, name="results")
+
+
+@results_app.command("ls")
+def results_ls(ctx: typer.Context) -> None:
+    """List your project directories kept on the nodes, newest first per project and node."""
+    with api_client(ctx.obj) as client:
+        show(checked(client.get("/api/results")).json())
 
 
 session_app = typer.Typer(no_args_is_help=True, help="Inspect or close your fast-lane session")
