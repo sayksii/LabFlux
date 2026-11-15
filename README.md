@@ -185,7 +185,7 @@ Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼�
 內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
 `/health` 不需認證，`/docs` 提供 API 規格。
 
-SQLite schema 在啟動時依序套用編號 migration（目前為版本 5）；也可執行 `uv run labflux db-upgrade`。
+SQLite schema 在啟動時依序套用編號 migration（目前為版本 6）；也可執行 `uv run labflux db-upgrade`。
 Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir`。
 新增的工作欄位與 WebSocket 介面需要 Scheduler、Worker 與 CLI 同時升級。
 

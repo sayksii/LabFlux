@@ -686,9 +686,9 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
 - 程式自己以非零 exit code（OOM 以外）結束、而主機在 Worker 記錄結果前停機，會被當成遺失而重跑；exit 0 與 OOM 排除在外，成功的結果不會被丟棄。
 - 容器在 Worker 盤點與接手之間消失時，結果經 FINISHED 以 `FAILED`（`container missing after worker restart`）送達，不重跑；重跑只在 `_reconcile` 觸發。
 - 準備階段的失敗（例如 Scheduler 剛好重啟導致原始碼下載失敗、Worker 執行中的 Docker API 錯誤）回報為 `FAILED`，不重跑。
-- 重跑次數為 attempt 數減 1；M11 的搶占重排需要自己的計數，或共用這個上限。
-- 重跑的工作保留原本的 `submission_seq`。嚴格 FCFS 下若已經沒有節點放得下（例如遺失的節點是唯一夠大的），它會擋住隊首直到容量回來；
-  等待原因顯示一般訊息，重跑說明只留在遺失 attempt 的紀錄中。重跑不會指定回原節點，通常因為該節點在同一個交易內註冊而落在那裡。
+- 重跑次數為 attempt 數減 1。M11 起不計 `PREEMPTED` 的 attempt，搶占另有自己的計數（見「M11」一節）。
+- 重跑的工作保留原本的 `submission_seq`。嚴格 FCFS 下若已經沒有節點放得下（例如遺失的節點是唯一夠大的），它會擋住隊首直到容量回來。
+  M11 起工作原因保留重跑說明（`queued for retry n of m`），等待的原因只寫在 `schedule_note`。重跑不會指定回原節點，通常因為該節點在同一個交易內註冊而落在那裡。
 - Worker 只在程序啟動時註冊。Scheduler 以空的或換過的資料目錄重啟時，執行中的 Worker 每次心跳都得到 404，要手動重啟；
   被另一個 instance 接手 `worker_id` 而得到 409 的舊 Worker 也會繼續空轉。
 - Scheduler 重啟後，存活的 Worker instance 只以 instance_id 檢查核對，不做完整盤點；這依賴 SQLite 保存所有已 commit 的變更，以及 Worker outbox 保存所有尚未 ack 的資料。
@@ -934,6 +934,52 @@ gemma 的設定沿用原本 compose 的參數（`vllm/vllm-openai:v0.30.0`、ten
 - 每個中途被切斷的回應，uvicorn 會另外記一筆 `Exception in ASGI application` 的 ERROR 與 traceback（切斷連線的副作用）。
 - 設定改變時停止模型也會中斷它正在處理的請求。Scheduler 重啟後的第一次排程之前，若有心跳或註冊觸發派送，
   排隊中的模型可能先以舊設定啟動，下一輪再被停止並以新設定重啟；節點在重啟後先處於 `RECONCILING`，實際上很少發生。
+
+## M11：終止後重跑的搶占（kayle，2026-11-16）
+
+在 `feat/m11` 分支、kayle 上執行。規則見 `docs/architecture.md` 4.4（PE1～PE9）；與模型服務有關的部分等 M10 合併後再做。
+
+**實作。** `JobSpec` 加入 `safe_to_rerun`、`preemptible`，`max_retries` 改名為 `retries_on_node_failure`（舊名稱由
+`model_validator(mode="before")` 轉換）。設定 `preemption_enabled`（`true`）與 `max_preemptions_per_job`（3）。
+migration 6 加入 `attempts.preempted_by`，attempt 狀態多一個 `PREEMPTED`。`_schedule` 的隊首啟動不了時呼叫 `_preempt`；
+選擇被搶占工作的純函式在 `policy.py`（`Victim`、`lost_seconds`、`choose_victims`、`cheapest_preemption`）。
+停止沿用 `_request_stop`，多一個 `preempted_by` 參數：不設 `cancel_requested`，在 attempt 記下搶占它的工作。
+`_finish` 把停止生效或執行遺失的 attempt 記為 `PREEMPTED`，工作以原本的 `submission_seq` 回到 `QUEUED`。
+`handle_event` 的 STARTED、`_resume` 與 `_reconcile` 把 `preempted_by` 當成取消處理，不會回到執行中，也不會重送 START。
+backfill 的 `_bookings` 把停止中的被搶占 attempt 當作現在結束。Dashboard 的 attempt 表格顯示 `PREEMPTED`；
+被搶占而停止中的工作仍可以取消。
+
+| 行為（contract 編號） | 驗證 |
+|---|---|
+| 1 欄位驗證、舊名稱、兩個名稱都給 | `tests/test_models.py`；`tests/test_preemption.py` 的 `test_preemptible_or_node_failure_retries_require_safe_to_rerun` 等 5 個 |
+| 2 確認停止後才交出資源，被搶占的工作以新 attempt 重跑 | `test_higher_priority_job_gets_the_node_only_after_the_victim_is_confirmed_stopped` |
+| 3 不搶占：不可搶占、優先權相同或較高、`fcfs` 的批次工作、`preemption_enabled=false`、互搶規則、達到次數上限 | `test_job_not_marked_preemptible_is_not_stopped` 等 6 個（互搶規則同時測可搶占與不可搶占的對照） |
+| 4 session 在三種策略下都可搶占；批次工作不搶占 session | `test_session_preempts_a_preemptible_batch_job_of_any_priority`、`test_batch_job_never_preempts_a_running_session` |
+| 5 損失少的先停；損失總和少的節點；GPU 只停持有符合卡片的工作 | 3 個 API 測試；`tests/test_preemption_policy.py` 的 10 個純函式測試 |
+| 6 同時只進行一輪 | `test_no_second_preemption_starts_while_one_is_in_progress` |
+| 7 停止期間自己結束（`SUCCEEDED`、`FAILED`）保留結果；使用者取消變成 `CANCELLED` | 2 個 |
+| 8 搶占與節點失聯的重跑分開計數 | `test_preemptions_do_not_consume_node_failure_retries`、`test_node_failure_retries_do_not_count_as_preemptions` |
+| 9 backfill 不把即將空出的資源交給後面的工作 | `test_backfill_does_not_hand_resources_being_freed_to_a_later_job` |
+| 10 停止期間心跳中斷又恢復、遲到的 STARTED、Worker 重啟後容器已不在 | 3 個 |
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：348 passed、1 skipped、28 deselected，約 45 秒（main 為 301 passed）。
+- `tests/test_fault_docker.py`（改用新欄位名稱）：3 passed，約 21 秒，沒有殘留容器。
+- `uv run ruff check src tests`、`uv run ruff format --check src tests`：通過。
+- **未執行：** 行為 11 的 Docker 端到端測試（實際容器被搶占、取回被搶占那次的 `/outputs`、重跑成功）。
+  被搶占 attempt 的輸出上傳只依程式碼確認（上傳不檢查 attempt 狀態，`get_job` 列出所有 attempt 的輸出），沒有實際執行。
+
+**M11 已知限制**
+
+- 整個叢集同時只進行一輪：被搶占的 attempt 卡在離線節點上（`UNKNOWN`，資源未釋放）時，新的搶占會暫停，直到該節點回來或它的 Worker 重新註冊。
+- 停止開始後不撤回：等待的工作在別的節點拿到資源、被取消（包括客戶端已離開而被取消的排隊 session）時，被停掉的工作照樣變成
+  `PREEMPTED` 並重新排隊，也算一次搶占。
+- 釋放的資源不專門保留給搶占的工作：釋放當下策略排在最前面的工作（例如新到的 session）會先拿到。
+- 被搶占容器的輸出上傳失敗（例如超過伺服器上限）時，Worker 回報 `FAILED`，工作以 `FAILED` 結束，不會重新排隊。
+- STOP 到達時程式剛好正常結束，Worker 回報 `CANCELLED`，attempt 記為 `PREEMPTED` 並重跑。
+- 舊版 Worker 會拒絕含新欄位的 START（`extra="forbid"`），Scheduler、Worker 與 CLI 要一起升級；資料庫與 Worker 本機紀錄裡用
+  `max_retries` 的舊工作照常讀得懂。同時給 `max_retries`（大於 0）與 `"safe_to_rerun": false` 回傳 422。
+- `fcfs` 下被擋住的批次隊首不能搶占，所以 `schedule_note` 不列出正在停止的工作；能搶占的隊首（session，或 `priority`、`backfill` 的批次工作）才列出。
+- 隊首被擋住的每一輪排程（約每 0.25 秒及每次心跳）都查詢一次執行中的批次工作並驗證它們的 JobSpec，成本隨執行中的工作數增加；在實驗室規模下可接受。
 
 ## 最後驗證與交付
 
