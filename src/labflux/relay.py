@@ -63,7 +63,7 @@ async def serve(
         """From the client reader: makes the forward loop reply with this error and stop."""
         queue.put_nowait(ErrorMessage(code=code, message=message))
 
-    registered = began = False
+    began = False  # This connection holds the session's busy mark and owes an end_command.
     stop_reason: str | None = None
     unsubscribe = None
     reader: asyncio.Task | None = None
@@ -84,16 +84,17 @@ async def serve(
         if request.snapshot_size > settings.max_source_bytes:
             await send(error("too_large", f"snapshot exceeds {settings.max_source_bytes} bytes"))
             return
-        if session_id in service.session_busy:
-            await send(error("busy", "another command is running in this session"))
-            return
-        service.session_busy.add(session_id)
-        registered = True
         try:
             attempt_id, node_id = await asyncio.to_thread(service.begin_command, owner, session_id)
         except ServiceError as exc:
             await send(error("not_found" if exc.status == 404 else "not_ready", exc.detail))
             return
+        # Only now that begin_command has accepted the owner, so that nobody else can mark the
+        # session busy. No await between the check and the add.
+        if session_id in service.session_busy:
+            await send(error("busy", "another command is running in this session"))
+            return
+        service.session_busy.add(session_id)
         began = True
         peer = hub.workers.get(node_id)
         if peer is None:
@@ -213,7 +214,7 @@ async def serve(
                 # expire between the two.
                 await asyncio.to_thread(service.end_command, session_id, stop_reason)
         finally:
-            if registered:
+            if began:
                 service.session_busy.discard(session_id)
             with suppress(Exception):
                 await websocket.close(code=1000)

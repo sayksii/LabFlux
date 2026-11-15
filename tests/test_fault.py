@@ -184,9 +184,13 @@ def test_scheduler_restart_keeps_work_and_dispatches_only_after_the_worker_retur
         assert value["state"] == "RUNNING" and len(value["attempts"]) == 1
         waiting = submit(client)
         assert waiting["state"] == "QUEUED"
-        assert service.poll_commands("vm-a", instance) == []
         clock[0] += settings.offline_timeout_s - 1
         service.tick()
+        # Neither the submission nor a tick dispatched to the unreconciled node. A dispatch
+        # always records an attempt; poll_commands would hide its START from this node.
+        value = get_job(client, waiting)
+        assert value["state"] == "QUEUED" and value["attempts"] == []
+        assert node(client)["allocated"]["cpu"] == 1
         heartbeat(client, "vm-a", instance)
         assert node(client)["status"] == "ONLINE"
         assert get_job(client, waiting)["state"] == "STARTING"
