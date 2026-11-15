@@ -143,6 +143,20 @@ def test_recent_heavy_usage_is_penalized_and_ages_out(make_client, clock):
     assert usage(4600 + 3600).get("alice", 0) == 0
 
 
+def test_recent_usage_is_normalized_by_the_cluster_gpu_count(make_client, clock):
+    client = make_client("priority")
+    cards = [RTX3090, A5000]
+    instance = register(client, cpu=8, memory=8192, gpus=cards)
+    heartbeat(client, "vm-a", instance, cards)
+    # One of two cards for an hour: half the cluster by GPU, an eighth of it by CPU.
+    submit(client, cpu=1, user="alice", resources={"gpu": 1})
+    advance(client, clock, 3600, "vm-a", instance, cards)
+    mine = submit(client, user="alice", resources={"gpu": 2})
+    theirs = submit(client, user="bob", resources={"gpu": 2})
+    assert "recent usage 30 min" in job(client, mine)["schedule_note"]
+    assert "recent usage 0 min" in job(client, theirs)["schedule_note"]
+
+
 def test_backfill_never_delays_the_reserved_job(make_client, clock):
     client = make_client("backfill")
     instance = register(client, "kayle", cpu=4, memory=8192)
@@ -215,6 +229,30 @@ def test_backfill_may_not_take_a_card_the_reserved_job_needs(make_client, clock)
     assert "would delay job" in job(client, rival)["schedule_note"]
 
 
+def test_backfill_prefers_a_card_the_reserved_job_cannot_use(make_client, clock):
+    client = make_client("backfill")
+    second_3090 = {**RTX3090, "uuid": "GPU-00000003-0000-0000-0000-000000000000", "index": 2}
+    a6000 = {
+        "uuid": "GPU-00000004-0000-0000-0000-000000000000",
+        "index": 3,
+        "name": "NVIDIA RTX A6000",
+        "memory_total_mib": 49140,
+    }
+    cards = [RTX3090, second_3090, a6000]
+    instance = register(client, "kayle", cpu=8, memory=8192, gpus=cards)
+    heartbeat(client, "kayle", instance, cards)
+    submit(client, resources={"gpu": 1, "gpu_model": "3090"}, time_limit_s=600)
+    head = submit(client, user="bob", resources={"gpu": 2, "gpu_model": "3090"})
+    assert job(client, head)["schedule_note"].endswith(f"reserved on kayle at {clock_text(1600)}")
+    # Smallest first would pick the free 3090, which the head job is waiting for.
+    anygpu = submit(client, resources={"gpu": 1}, time_limit_s=3600)
+    assert job(client, anygpu)["attempts"][0]["gpu_uuids"] == [a6000["uuid"]]
+    assert "it leaves enough room" in job(client, anygpu)["schedule_note"]
+    rival = submit(client, resources={"gpu": 1}, time_limit_s=3600)
+    assert job(client, rival)["state"] == "QUEUED"
+    assert "would delay job" in job(client, rival)["schedule_note"]
+
+
 def test_backfill_without_any_reservation_lets_later_jobs_start(make_client, clock):
     client = make_client("backfill")
     register(client, cpu=2)
@@ -271,3 +309,5 @@ def test_reservation_helpers():
     assert earliest_start(node, cards, bookings, cpu, 1000, 1) == 3000
     capacity = {"cpu": 16, "memory_mib": 32768, "gpu": 0}
     assert dominant_share({"cpu": 4, "memory_mib": 16384, "gpu": 0}, capacity) == 0.5
+    assert dominant_share({"cpu": 4, "memory_mib": 16384, "gpu": 1}, capacity) == 0.5
+    assert dominant_share({"cpu": 4, "memory_mib": 4096, "gpu": 3}, {**capacity, "gpu": 4}) == 0.75

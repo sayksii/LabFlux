@@ -12,7 +12,7 @@ from labflux.config import Settings
 from labflux.database import Database, commands, jobs, schema_version
 from labflux.models import JobSpec
 from labflux.policy import clock_text
-from labflux.scheduler import Scheduler, ServiceError
+from labflux.scheduler import QUEUED_SESSION_TIMEOUT_S, Scheduler, ServiceError
 from labflux.session_protocol import KEEPALIVE_ARGV, SESSION_ENV
 
 
@@ -127,6 +127,66 @@ def test_a_waiting_session_blocks_batch_under_fcfs_and_is_reserved_under_backfil
     long = submit(client, cpu=1, user="bob", time_limit_s=3600)
     assert job(client, long["id"], "bob")["state"] == "QUEUED"
     assert "would delay job" in job(client, long["id"], "bob")["schedule_note"]
+
+
+def test_backfill_books_a_session_until_its_renewed_lease(make_client, clock):
+    client = make_client("backfill", scheduling_policy="backfill")
+    service = client.app.state.scheduler
+    instance = register(client, cpu=8, memory=8192)
+    session = open_session(client, resources={"cpu": 3})
+    start(client, session, instance)  # Lease until t=1600.
+    clock[0] += 500
+    service.begin_command("alice", session["id"])
+    service.end_command(session["id"])  # Lease until t=2100.
+    clock[0] += 200  # t=1700: past the first lease, and the session still holds 3 CPUs.
+    heartbeat(client, "vm-a", instance)
+    submit(client, cpu=2, time_limit_s=100)  # Holds 2 CPUs until t=1800.
+    head = submit(client, cpu=4, user="bob")
+    filler = submit(client, cpu=2, time_limit_s=3600)
+    # The head fits at t=1800 next to the session, unless the filler takes 2 of those 5 CPUs.
+    note = job(client, head["id"], "bob")["schedule_note"]
+    assert note.endswith(f"reserved on vm-a at {clock_text(1800)}")
+    assert job(client, filler["id"])["state"] == "QUEUED"
+    assert "would delay job" in job(client, filler["id"])["schedule_note"]
+
+
+def test_a_queued_session_is_cancelled_once_its_client_stops_polling(client, service, clock):
+    instance = register(client, cpu=1)
+    running = submit(client, cpu=1, time_limit_s=3600)
+    session = open_session(client, resources={"cpu": 1})
+    batch = submit(client, cpu=1, user="bob")
+    assert "waiting behind job" in job(client, batch["id"], "bob")["schedule_note"]
+    for _ in range(3):  # A waiting client keeps it queued for as long as it polls.
+        clock[0] += QUEUED_SESSION_TIMEOUT_S - 1
+        heartbeat(client, "vm-a", instance)
+        assert current(client).json()["state"] == "QUEUED"
+        service.tick()
+    assert job(client, session["id"])["state"] == "QUEUED"
+    clock[0] += QUEUED_SESSION_TIMEOUT_S + 1
+    heartbeat(client, "vm-a", instance)
+    service.tick()
+    abandoned = job(client, session["id"])
+    assert abandoned["state"] == "CANCELLED"
+    assert abandoned["reason"] == "cancelled while queued: its client stopped waiting for it"
+    assert abandoned["attempts"] == []
+    assert current(client).status_code == 404
+    assert service.session_polled == {}
+    # It no longer holds the head of the queue.
+    assert "first in line" in job(client, batch["id"], "bob")["schedule_note"]
+    assert finish(client, job(client, running["id"]), instance).status_code == 200
+    assert job(client, batch["id"], "bob")["state"] == "STARTING"
+
+
+def test_a_queued_session_gets_a_full_window_after_a_scheduler_restart(make_client, clock):
+    session = open_session(make_client())  # No worker: it stays queued.
+    clock[0] += 3600
+    client = make_client()  # A second Scheduler over the same data directory.
+    service = client.app.state.scheduler
+    service.tick()
+    assert job(client, session["id"])["state"] == "QUEUED"
+    clock[0] += QUEUED_SESSION_TIMEOUT_S + 1
+    service.tick()
+    assert job(client, session["id"])["state"] == "CANCELLED"
 
 
 def test_reuse_conflicts_and_one_session_per_user(client, service):

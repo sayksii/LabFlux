@@ -50,6 +50,9 @@ EXPIRED_ATTEMPT = "worker heartbeat expired; termination unconfirmed"
 # its instance (heartbeat) or registers a new one with an inventory.
 RECONCILING = "RECONCILING"
 STOP_WAIT = "waiting for confirmed container termination"
+# A queued session is cancelled when its client has not asked about it for this long. The CLI
+# polls four times a second while it waits, so only a client that is gone stays silent.
+QUEUED_SESSION_TIMEOUT_S = 30.0
 
 
 class ServiceError(Exception):
@@ -74,6 +77,9 @@ class Scheduler:
         # Sessions with a fast-lane command in flight. Only the relay changes it, on the event
         # loop; tick() only reads it, so a lease never expires during a command.
         self.session_busy: set[str] = set()
+        # Queued sessions: when their client last asked about them. In memory only, so after a
+        # restart every queued session gets a full window again.
+        self.session_polled: dict[str, float] = {}
         self.restore()
 
     def restore(self) -> None:
@@ -539,7 +545,8 @@ class Scheduler:
         """Unreleased attempts per node, each held until its start plus its hard time limit.
 
         An attempt that has not reported STARTED counts from dispatch, so image pulls and source
-        downloads are not part of the estimate.
+        downloads are not part of the estimate. A session has no hard limit: it is held until
+        its current lease expiry, which every command moves forward.
         """
         result: dict[str, list[Booking]] = {node["id"]: [] for node in available}
         cards: dict[str, set[str]] = {}
@@ -557,6 +564,7 @@ class Scheduler:
                 attempts.c.created_at,
                 attempts.c.started_at,
                 jobs.c.spec,
+                jobs.c.lease_expires_at,
             )
             .select_from(attempts.join(jobs, jobs.c.id == attempts.c.job_id))
             .where(attempts.c.released.is_(False), attempts.c.node_id.in_(list(result)))
@@ -564,7 +572,8 @@ class Scheduler:
             limit = row.spec.get("time_limit_s") or self.settings.job_time_limit_s
             result[row.node_id].append(
                 Booking(
-                    end=(row.started_at or row.created_at) + limit,
+                    # Only a session that has started has a lease.
+                    end=row.lease_expires_at or (row.started_at or row.created_at) + limit,
                     cpu=row.resources["cpu"],
                     memory_mib=row.resources["memory_mib"],
                     gpus=frozenset(cards.get(row.id, ())),
@@ -682,6 +691,13 @@ class Scheduler:
             candidates = self._candidates(spec, available, allocated, held)
             fits_now = bool(candidates)
             if reservation is not None:
+                # Cards the head job cannot use are taken first; a stable sort, so smaller
+                # cards still lead within each group. Dispatch below uses the same order.
+                reserved = reservation.cards
+                candidates = [
+                    (node, sorted(cards, key=lambda gpu: gpu["uuid"] in reserved))
+                    for node, cards in candidates
+                ]
                 candidates = [
                     (node, cards)
                     for node, cards in candidates
@@ -884,7 +900,32 @@ class Scheduler:
                         )
                     )
             self._expire_leases(connection)
+            self._cancel_abandoned_sessions(connection)
             self._schedule(connection)
+
+    def _cancel_abandoned_sessions(self, connection) -> None:
+        """Cancel queued sessions whose client stopped asking about them (a CLI killed while
+        it waited), so that they do not hold their place in the queue forever."""
+        now = self.clock()
+        waiting = {}
+        for session_id in connection.execute(
+            select(jobs.c.id).where(jobs.c.kind == SESSION_KIND, jobs.c.state == "QUEUED")
+        ).scalars():
+            polled = self.session_polled.get(session_id, now)
+            if polled < now - QUEUED_SESSION_TIMEOUT_S:
+                connection.execute(
+                    jobs.update()
+                    .where(jobs.c.id == session_id)
+                    .values(
+                        state="CANCELLED",
+                        cancel_requested=True,
+                        reason="cancelled while queued: its client stopped waiting for it",
+                        updated_at=now,
+                    )
+                )
+            else:
+                waiting[session_id] = polled
+        self.session_polled = waiting
 
     def _expire_leases(self, connection) -> None:
         """Stop idle sessions whose lease has passed; a session with a command in flight waits.
@@ -1208,6 +1249,10 @@ class Scheduler:
     # ledger, dispatch, STOP, UNKNOWN handling, reconcile and _finish apply to it unchanged.
 
     def _session_view(self, connection, job: dict, created: bool = False) -> dict:
+        """The session as its owner sees it. Every caller is a request from the owner, which
+        is the sign of life that keeps a queued session from being cancelled as abandoned."""
+        if job["state"] == "QUEUED":
+            self.session_polled[job["id"]] = self.clock()
         node_id = None
         if job["current_attempt_id"]:
             node_id = connection.execute(
@@ -1248,7 +1293,8 @@ class Scheduler:
                 env=dict(SESSION_ENV),
                 resources=request.resources,
                 datasets=request.datasets,
-                # Used only by backfill bookings; the Worker never enforces it on sessions.
+                # Used only by backfill bookings, until the session starts and has a lease;
+                # the Worker never enforces it on sessions.
                 time_limit_s=self.settings.session_lease_s,
                 priority=self.settings.default_priority,
                 max_retries=0,
