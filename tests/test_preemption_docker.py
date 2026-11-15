@@ -35,8 +35,9 @@ HIGH = (
 
 
 @contextmanager
-def lab(tmp_path):
-    """A priority-policy Scheduler and one Worker whose whole capacity is one CPU."""
+def lab(tmp_path, **worker_settings):
+    """A priority-policy Scheduler and one Worker whose whole capacity is one CPU, unless
+    worker_settings say otherwise."""
     settings = Settings(
         data_dir=tmp_path / "scheduler",
         scheduler_interval_s=0.05,
@@ -49,15 +50,15 @@ def lab(tmp_path):
     worker_id = f"preempt-e2e-{uuid.uuid4().hex[:8]}"
     scheduler = SchedulerProcess(settings)
     scheduler.start()
+    worker_settings = {"allocatable_cpu": 1, "allocatable_memory_mib": 256, **worker_settings}
     worker = Worker(
         Settings(
             data_dir=tmp_path / "worker",
             scheduler_url=scheduler.address,
             worker_id=worker_id,
-            allocatable_cpu=1,
-            allocatable_memory_mib=256,
             heartbeat_interval_s=0.2,
             poll_interval_s=0.05,
+            **worker_settings,
         )
     )
     worker_thread = threading.Thread(target=worker.run, daemon=True)

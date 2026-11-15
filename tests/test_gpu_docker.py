@@ -10,6 +10,8 @@ import httpx
 import pytest
 import uvicorn
 from test_end_to_end_docker import wait_for
+from test_preemption_docker import lab
+from test_reconnect_docker import log_text, settled
 
 from labflux.api import create_app
 from labflux.config import Settings
@@ -195,3 +197,74 @@ def test_scheduler_and_worker_place_concurrent_jobs_on_different_cards(tmp_path,
         sock.close()
         assert not worker_thread.is_alive()
         assert not thread.is_alive()
+
+
+def test_higher_priority_gpu_job_preempts_the_card_and_the_victim_reruns_on_it(
+    tmp_path, idle_cards
+):
+    """M11 on a real card. The Worker pools exactly one idle card; a preemptible GPU job holds
+    it, a higher-priority GPU job preempts it and gets the same card, then the preempted job
+    runs again on that card and succeeds. The containers only list the card and sleep."""
+    if not idle_cards:
+        pytest.skip("no idle GPU")
+    card = idle_cards[0]
+    # Two CPUs for two half-CPU jobs: only the card keeps them from running together.
+    worker = {"allocatable_cpu": 2, "allocatable_memory_mib": 1024, "gpus": [card.index]}
+    with lab(tmp_path, stop_grace_s=1, **worker) as (client, containers):
+        node = wait_for(
+            lambda: next(
+                (n for n in client.get("/api/nodes").json() if n["observed"].get("gpus")), None
+            )
+        )
+        assert [g["uuid"] for g in node["capacity"]["gpus"]] == [card.uuid]
+
+        def submit(script, **fields):
+            response = client.post(
+                "/api/jobs",
+                json={
+                    "image": IMAGE,
+                    "argv": ["sh", "-c", script],
+                    "resources": {"cpu": 0.5, "memory_mib": 256, "gpu": 1},
+                    "time_limit_s": 60,
+                    **fields,
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+
+        def attempt_log(value, attempt_id):
+            params = {"after": -1, "attempt_id": attempt_id}
+            chunks = client.get(f"/api/jobs/{value['id']}/logs", params=params).json()["chunks"]
+            return b"".join(base64.b64decode(c["data_base64"]) for c in chunks).decode()
+
+        # Long enough to still be running when the higher job arrives; the rerun repeats it.
+        low = submit(
+            "nvidia-smi -L; echo ready; sleep 8; echo done",
+            priority=1,
+            preemptible=True,
+            safe_to_rerun=True,
+        )
+        wait_for(lambda: "ready" in log_text(client, low), timeout=60)
+        first = client.get(f"/api/jobs/{low['id']}").json()["current_attempt_id"]
+        high = submit("nvidia-smi -L; sleep 1", priority=8)
+
+        done_high = wait_for(lambda: settled(client, high), timeout=90)
+        assert done_high["state"] == "SUCCEEDED", done_high
+        [high_attempt] = done_high["attempts"]
+        assert high_attempt["gpu_uuids"] == [card.uuid]
+        assert visible(attempt_log(high, high_attempt["id"])) == [card.uuid]
+
+        done_low = wait_for(lambda: settled(client, low), timeout=90)
+        assert done_low["state"] == "SUCCEEDED", done_low
+        preempted, rerun = done_low["attempts"]
+        assert preempted["id"] == first and preempted["state"] == "PREEMPTED"
+        assert preempted["preempted_by"] == high["id"]
+        assert preempted["gpu_uuids"] == rerun["gpu_uuids"] == [card.uuid]
+        # The card changed hands only after each container's termination was confirmed.
+        assert high_attempt["created_at"] >= preempted["finished_at"]
+        assert rerun["created_at"] >= high_attempt["finished_at"]
+        assert "done" not in attempt_log(low, first)
+        rerun_log = attempt_log(low, rerun["id"])
+        assert visible(rerun_log) == [card.uuid] and rerun_log.endswith("done\n")
+        assert client.get("/api/nodes").json()[0]["allocated"]["gpu"] == 0
+        wait_for(lambda: not containers())
