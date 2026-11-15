@@ -787,6 +787,28 @@ Claude 依提示讀了 `.labflux/remote-files.txt`，再用一個送到遠端的
 
 **限制。**只測了 Claude Code 一種 AI 工具與 bash；zsh 與其他 AI 工具沒有實測。觀察只有一次，屬於定性結果。
 
+## 以 Claude Code 在快速測試上開發一個 uv 專案（kayle，2026-11-16）
+
+目的：確認 AI coding 工具可以直接在這套系統上開發專案，而不只是執行單一指令。
+環境：本機 loopback 上的臨時 Scheduler 與 Worker，使用正式的預設值（寫回 100 MB、單一指令 60 秒、閒置 10 分鐘），只用 CPU，
+session 映像 `localhost/labflux/python-uv:3.12-uv0.11.8`。測試專案只有一個空的 `pyproject.toml`、README 與 `.labflux.toml`。
+
+從 `labflux shell` 啟動 Claude Code（headless，允許 Bash、Edit、Write、Read），交代的工作是：用 uv 加入 numpy 與 pytest、
+以 numpy 實作 `moving_average`、寫 pytest 測試、執行 `uv run pytest -q` 直到通過，並執行一個印出主機名稱的 `python -c`。
+
+結果：
+
+- `uv add numpy`、`uv add --dev pytest` 與 `uv lock` 在本機執行（改的是 `pyproject.toml` 與 `uv.lock`，依 T7 不送遠端）。
+- `uv run pytest -q` 送到遠端 session：`uv.lock` 改變，所以先在容器內執行 `uv sync`，再執行測試。
+- 第一次執行時，遠端的 `uv sync --locked` 因為 lockfile 過期而拒絕（Claude 在 `uv add` 之後才補上 `[build-system]`）。
+  Claude 讀了錯誤訊息，在本機執行 `uv lock` 後重跑，結果 `7 passed in 0.18s`。
+- `python -c` 印出 `a91ce25972c0 3.12.15`：在 session 容器內執行，和本機的 CPython 3.12.13 不同。
+- Claude 自己說明了 `uv` 與 `python` 是 LabFlux 的替身，並提醒專案缺少 `.gitignore`。
+
+判讀：編輯、依賴管理、遠端測試與依錯誤修正的迴圈都能完成。遠端用 `--locked` 同步，確保跑的是 `uv.lock` 鎖定的版本（D4a）；
+lockfile 過期時錯誤訊息足以讓 AI 自行修正。測試後關閉 session、確認沒有殘留容器並刪除暫存檔。
+未涵蓋：GPU session、跨機器（Scheduler 與 Worker 在同一台），以及 zsh。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。
