@@ -937,7 +937,11 @@ gemma 的設定沿用原本 compose 的參數（`vllm/vllm-openai:v0.30.0`、ten
 
 ## M11：終止後重跑的搶占（kayle，2026-11-16）
 
-在 `feat/m11` 分支、kayle 上執行。規則見 `docs/architecture.md` 4.4（PE1～PE9）；與模型服務有關的部分等 M10 合併後再做。
+在 `feat/m11` 分支、kayle 上執行，只用單元測試與本機 Docker 容器；分支尚未部署到實驗室節點。規則見 `docs/architecture.md` 4.4（PE1～PE9）；
+與模型服務有關的部分等 M10 合併後再做。
+
+**欄位改名。** M11 起 `max_retries` 改名為 `retries_on_node_failure`，大於 0 時必須同時設定 `safe_to_rerun: true`。
+本文件較早的章節（M6.5～M6.7 的 6.5 重跑）保留當時的名稱 `max_retries`，指的是同一個設定；舊名稱仍然接受（見下表 11.1）。
 
 **實作。** `JobSpec` 加入 `safe_to_rerun`、`preemptible`，`max_retries` 改名為 `retries_on_node_failure`（舊名稱由
 `model_validator(mode="before")` 轉換）。設定 `preemption_enabled`（`true`）與 `max_preemptions_per_job`（3）。
@@ -949,24 +953,66 @@ migration 6 加入 `attempts.preempted_by`，attempt 狀態多一個 `PREEMPTED`
 backfill 的 `_bookings` 把停止中的被搶占 attempt 當作現在結束。Dashboard 的 attempt 表格顯示 `PREEMPTED`；
 被搶占而停止中的工作仍可以取消。
 
-| 行為（contract 編號） | 驗證 |
-|---|---|
-| 1 欄位驗證、舊名稱、兩個名稱都給 | `tests/test_models.py`；`tests/test_preemption.py` 的 `test_preemptible_or_node_failure_retries_require_safe_to_rerun` 等 5 個 |
-| 2 確認停止後才交出資源，被搶占的工作以新 attempt 重跑 | `test_higher_priority_job_gets_the_node_only_after_the_victim_is_confirmed_stopped` |
-| 3 不搶占：不可搶占、優先權相同或較高、`fcfs` 的批次工作、`preemption_enabled=false`、互搶規則、達到次數上限 | `test_job_not_marked_preemptible_is_not_stopped` 等 6 個（互搶規則同時測可搶占與不可搶占的對照） |
-| 4 session 在三種策略下都可搶占；批次工作不搶占 session | `test_session_preempts_a_preemptible_batch_job_of_any_priority`、`test_batch_job_never_preempts_a_running_session` |
-| 5 損失少的先停；損失總和少的節點；GPU 只停持有符合卡片的工作 | 3 個 API 測試；`tests/test_preemption_policy.py` 的 10 個純函式測試 |
-| 6 同時只進行一輪 | `test_no_second_preemption_starts_while_one_is_in_progress` |
-| 7 停止期間自己結束（`SUCCEEDED`、`FAILED`）保留結果；使用者取消變成 `CANCELLED` | 2 個 |
-| 8 搶占與節點失聯的重跑分開計數 | `test_preemptions_do_not_consume_node_failure_retries`、`test_node_failure_retries_do_not_count_as_preemptions` |
-| 9 backfill 不把即將空出的資源交給後面的工作 | `test_backfill_does_not_hand_resources_being_freed_to_a_later_job` |
-| 10 停止期間心跳中斷又恢復、遲到的 STARTED、Worker 重啟後容器已不在 | 3 個 |
+API 測試在 `tests/test_preemption.py`（以 HTTP API 操作，Worker 的命令與事件由測試送出，時間由測試控制），
+純函式測試在 `tests/test_preemption_policy.py`，欄位驗證另有 `tests/test_models.py`，Docker 端到端測試在 `tests/test_preemption_docker.py`。
+未註明檔案的測試名稱都在 `tests/test_preemption.py`。
 
-- `uv run pytest -q -m "not docker and not vm and not gpu"`：348 passed、1 skipped、28 deselected，約 45 秒（main 為 301 passed）。
-- `tests/test_fault_docker.py`（改用新欄位名稱）：3 passed，約 21 秒，沒有殘留容器。
+| Checklist | 行為 | 驗證 |
+|---|---|---|
+| 11.1 | 三個欄位預設為否／0；`preemptible` 或大於 0 的 `retries_on_node_failure` 沒有 `safe_to_rerun` 時回傳 422，訊息指出是哪個欄位需要它；重跑上限 10 | `test_rerun_fields_default_off`、`test_preemptible_or_node_failure_retries_require_safe_to_rerun`（4 組）、`test_rerun_fields_are_accepted_with_safe_to_rerun`；`tests/test_models.py` 的 `test_rerun_flags_require_safe_to_rerun` |
+| 11.1 | 舊名稱 `max_retries` 轉成 `retries_on_node_failure`（大於 0 時 `safe_to_rerun` 設為真，明確給 `false` 則 422），輸出只有新名稱；兩個名稱都給回傳 422 | `test_legacy_max_retries_is_mapped_to_retries_on_node_failure`、`test_giving_both_retry_field_names_is_rejected`；`tests/test_models.py` 的 `test_legacy_max_retries_still_validates`（`JobSpec.model_validate`：資料庫的 `jobs.spec` 與 Worker `state.json` 裡的 `ExecutionSpec.job` 都經過它；沒有以實際的舊資料庫或舊 `state.json` 測試） |
+| 11.3 | `priority` 與 `backfill` 下高優先權批次工作搶占；`fcfs` 的批次工作不搶占 | `test_higher_priority_job_gets_the_node_only_after_the_victim_is_confirmed_stopped`（`priority`）、`test_backfill_does_not_hand_resources_being_freed_to_a_later_job`（`backfill`）、`test_batch_job_does_not_preempt_under_fcfs`；`tests/test_preemption_policy.py` 的 `test_policy_order_check_used_against_ping_pong`（`batch_preemption` 旗標） |
+| 11.3 | 不可搶占的工作不停；優先權相同或較高不停（5、7 對 5） | `test_job_not_marked_preemptible_is_not_stopped`、`test_job_with_equal_or_higher_priority_is_not_stopped`（2 組） |
+| 11.3 | 互搶規則：優先權 4 的工作執行 10 分鐘時被優先權 5 搶占（400 + 10 − 10 = 400 < 500）；執行 200 分鐘時重新排隊會排在前面（400 + 200 − 60 = 540 > 500），不搶占 | `test_victim_that_would_rank_first_again_once_queued_is_not_stopped`（2 組）、`test_policy_order_check_used_against_ping_pong` |
+| 11.3 | 整個叢集同時只進行一輪：停止中時，能在另一節點搶占的新隊首等待，`schedule_note` 列出停止中的工作；該輪結束後才開始下一輪 | `test_no_second_preemption_starts_while_one_is_in_progress` |
+| 11.3 | 每一輪只有隊首可以搶占 | 沒有專門的測試（見下方「尚未驗證」） |
+| 設定 | `preemption_enabled=false` 時批次工作與 session 都不搶占 | `test_nothing_is_preempted_when_preemption_is_disabled`（2 組） |
+| 11.4 | session 在 `fcfs`、`priority`、`backfill` 下都搶占優先權 9 的可搶占批次工作，確認停止後 session 的 START 送到該節點；批次工作不搶占執行中的 session | `test_session_preempts_a_preemptible_batch_job_of_any_priority`（3 組）、`test_batch_job_never_preempts_a_running_session` |
+| 11.5 | 損失 = 現在減 STARTED 時間（還沒 STARTED 為 0，時鐘偏差不會變負）；順序為損失、優先權、job id | `tests/test_preemption_policy.py` 的 `test_lost_work_counts_from_the_reported_start`、`test_order_is_lost_work_then_priority_then_job_id` |
+| 11.5 | 依序加入直到放得下，再移除用不到的；CPU、RAM 與同時執行數都計入；已經放得下時不停任何工作；全部停掉也放不下時不搶占 | `tests/test_preemption_policy.py` 的 `test_one_victim_with_less_lost_work_is_enough`、`test_victims_are_added_until_it_fits`、`test_victims_that_are_no_longer_needed_are_dropped`、`test_memory_and_the_job_slot_limit_count`、`test_it_already_fits_without_stopping_anything` |
+| 11.5 | 一個就夠時停損失少（較晚開始）的；多個節點選損失總和最少，相同時選工作數少的，再依節點 ID | `test_of_two_candidates_the_one_with_less_lost_work_is_stopped`、`test_node_with_less_total_lost_work_is_chosen`；`tests/test_preemption_policy.py` 的 `test_across_nodes_the_least_total_lost_work_wins` |
+| 11.5 | GPU：只停持有符合卡片的工作（假的 3090／A5000 資料），新工作拿到那張卡 | `test_gpu_request_stops_the_job_holding_a_matching_card`；`tests/test_preemption_policy.py` 的 `test_a_gpu_request_frees_a_matching_card_only`。符合的卡片沿用 `_eligible_gpus`（型號、最低 VRAM、外部使用），VRAM 與外部使用的篩選由 M7 的測試涵蓋 |
+| 11.6 | STOP 命令為 `stop-<attempt_id>`；被搶占的工作 `STOPPING`、不設 `cancel_requested`，原因為 `preempted by job <id>; waiting for confirmed container termination`；確認終止前再排程一次也不派送，確認後才派送到該節點 | `test_higher_priority_job_gets_the_node_only_after_the_victim_is_confirmed_stopped`；Docker：`test_higher_priority_job_preempts_a_real_container_which_then_reruns` |
+| 11.6 | backfill：停止期間，之後提交、會延遲搶占工作的小工作與重新排隊的被搶占工作都拿不到先釋放的 CPU | `test_backfill_does_not_hand_resources_being_freed_to_a_later_job` |
+| 11.6 | 停止期間心跳中斷又恢復維持 `STOPPING`，STOP 照樣送達；遲到的 STARTED 不讓它回到執行中；Worker 重啟後容器已不在，記為 `PREEMPTED` 並派送搶占的工作 | `test_heartbeat_lapse_during_the_stop_keeps_the_attempt_stopping`、`test_start_reported_after_a_lapse_during_the_stop_does_not_resume_the_victim`、`test_worker_restart_with_the_victims_container_gone_counts_as_preempted` |
+| 11.7 | attempt `PREEMPTED`（`preempted_by` 為搶占的工作），工作以原本的 `submission_seq` 回到 `QUEUED`，原因含 `1 of 3`；之後以新的 attempt 執行 | `test_higher_priority_job_gets_the_node_only_after_the_victim_is_confirmed_stopped` |
+| 11.7 | 實際容器：被搶占那次的 `/outputs` 可以下載，重跑以新 attempt 成功 | Docker：`test_higher_priority_job_preempts_a_real_container_which_then_reruns` |
+| 11.7 | 停止期間自己結束保留 `SUCCEEDED`／`FAILED`；擁有者在停止期間取消變成 `CANCELLED`，不重新排隊 | `test_victim_that_ends_on_its_own_during_the_stop_keeps_its_outcome`（2 組）、`test_victim_cancelled_by_its_owner_during_the_stop_is_cancelled` |
+| 11.7 | 達到 `max_preemptions_per_job`（測試設為 1）後不再被選中，照常執行到 `SUCCEEDED`，等待的工作接著派送 | `test_job_preempted_the_maximum_number_of_times_is_not_chosen_again` |
+| 11.7 | 搶占不消耗 `retries_on_node_failure`（attempt 為 [PREEMPTED, FAILED, STARTING]）；節點失聯的重跑不算搶占（[FAILED, PREEMPTED]，原因 `1 of 3`） | `test_preemptions_do_not_consume_node_failure_retries`、`test_node_failure_retries_do_not_count_as_preemptions` |
+| 11.8 | 高優先權批次工作與 session 透過搶占取得資源，不可搶占的工作不受影響 | 上列 11.3、11.4 的測試與 Docker 測試；模型服務啟動的部分未驗證 |
+
+**Docker 端到端。** `test_higher_priority_job_preempts_a_real_container_which_then_reruns`：`priority` 策略的 Scheduler（uvicorn，loopback）
+與同一程序內的一個 Worker 執行緒，Worker 只配置 1 CPU、256 MiB；兩個工作都用 `python:3.12-slim`、各需要 1 CPU，不能同時執行。
+優先權 1 的可搶占工作先寫 `/outputs/progress.txt`，印出 `ready` 後 sleep 4 秒；看到 `ready` 後提交優先權 8 的工作。結果：
+
+- 第一個 attempt `PREEMPTED`、`preempted_by` 為優先權 8 的工作、已釋放、exit code 不為 0（被 STOP 停止，不是自己結束）；
+  工作 `QUEUED`，原因為 `preempted by job <id>; queued to run again (preemption 1 of 3)`。
+- 被搶占那次的輸出可以下載，`progress.txt` 內容為 `partial result`。
+- 優先權 8 的 attempt 在被搶占的 attempt 結束之後才建立，`SUCCEEDED`，輸出 `high.txt` 可以下載。
+- 被搶占的工作以新 attempt 重跑：attempt 為 [PREEMPTED, SUCCEEDED]、新 attempt exit 0、`preempted_by` 為空，
+  在優先權 8 的工作結束後才建立；日誌有 `done`。最後節點的工作數為 0，沒有殘留容器。
+
+**命令與結果。**
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：348 passed、1 skipped（沒有 zsh）、29 deselected，約 46 秒（main 為 301 passed、1 skipped）。
+- `uv run pytest -q -m docker tests/test_preemption_docker.py`：1 passed，約 8 秒。
+- `uv run pytest -q -m "docker and not gpu and not vm"`（全部不用 GPU 的 Docker 測試，包括改用新欄位名稱的 `tests/test_fault_docker.py`）：
+  26 passed、0 skipped，約 93 秒；測試後沒有帶 `labflux.worker_id` 標籤的容器。
 - `uv run ruff check src tests`、`uv run ruff format --check src tests`：通過。
-- **未執行：** 行為 11 的 Docker 端到端測試（實際容器被搶占、取回被搶占那次的 `/outputs`、重跑成功）。
-  被搶占 attempt 的輸出上傳只依程式碼確認（上傳不檢查 attempt 狀態，`get_job` 列出所有 attempt 的輸出），沒有實際執行。
+
+**尚未驗證。**
+
+- 與模型服務有關的部分：11.2（模型服務停止中時不搶占批次工作）、11.4 的模型服務啟動與「模型服務不作為搶占對象」、11.8 的模型服務啟動。
+  模型服務由 M10 實作，這些項目等 M10 合併後實作與驗證。
+- 實驗室的實體節點與 GPU：本分支尚未部署，沒有在 kayle／karma 的 Worker 上執行搶占；GPU 的搶占只以假的 GPU 資料測試，沒有停止過使用實體 GPU 的容器。
+  Docker 測試的 Scheduler 與 Worker 在同一台機器；多節點的選擇、`backfill` 與 session 的搶占只有單元測試。
+- 11.3「每一輪只有隊首可以搶占」沒有專門的測試：程式只在隊首被擋住時呼叫 `_preempt`，但現有測試裡其他被擋住的工作同時也受「同時只進行一輪」限制，
+  無法分開確認這條規則。
+- 11.9 的 checkpoint：損失目前以這次執行已經跑了多久計算（`lost_seconds`）。
+
+**Checklist。** 勾選 11.1、11.5、11.6、11.7。11.3 只缺「只有隊首可以搶占」的測試，保留未勾選；11.4、11.8 的批次工作與 session 部分已驗證，
+模型服務部分等 M10，保留未勾選；11.2 等 M10；11.9 等 checkpoint 的儲存方式。
 
 **M11 已知限制**
 
