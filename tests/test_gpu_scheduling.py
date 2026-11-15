@@ -221,12 +221,14 @@ def test_v1_database_upgrades_to_current_and_keeps_jobs(settings):
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN kind")  # Added by version 4.
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN lease_expires_at")
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN service")  # Added by version 5.
+        connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN preempted_by")  # Version 6.
         connection.execute(update(schema_version).values(version=1))
     first.db.close()
     database = Database(settings.data_dir)
     assert database.version == SCHEMA_VERSION
     with database.transaction() as connection:
         assert connection.execute(select(func.count()).select_from(attempt_gpus)).scalar_one() == 0
+        connection.exec_driver_sql("SELECT preempted_by FROM attempts")
     database.close()
     reopened = Scheduler(settings)
     assert reopened.get_job(job["id"], "alice")["state"] == "QUEUED"

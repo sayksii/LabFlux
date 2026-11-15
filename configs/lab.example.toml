@@ -13,6 +13,7 @@ node = "node-a"             # inventory name of the node that runs the Scheduler
 bind_host = "192.0.2.10"    # that node's address the Workers connect to
 port = 8770
 users = ["alice"]           # one user token is generated per name
+# policy = "backfill"       # scheduling_policy: fcfs (default when omitted), priority or backfill
 
 [[nodes]]
 name = "node-a"             # must equal the node's hostname; also the Worker ID

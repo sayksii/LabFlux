@@ -180,7 +180,7 @@ def test_machine_down_with_its_containers_retries_on_the_returning_worker(tmp_pa
         first = start_worker()
         wait_for(lambda: node(client))
         code = "import time\nprint('up')\ntime.sleep(2)\nprint('done')\n"
-        work = submit(client, code, max_retries=1)
+        work = submit(client, code, retries_on_node_failure=1, safe_to_rerun=True)
         wait_for(lambda: "up" in log_text(client, work))
         lost = job(client, work)["current_attempt_id"]
         # The machine goes down: the Worker process and its containers end together. Docker

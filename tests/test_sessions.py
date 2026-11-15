@@ -81,7 +81,7 @@ def test_open_creates_a_session_job_with_a_keepalive_start(client, service):
     assert payload["job"]["env"] == SESSION_ENV
     assert "PATH" not in SESSION_ENV  # The Worker sets it from the image.
     assert payload["job"]["time_limit_s"] == service.settings.session_lease_s
-    assert payload["job"]["max_retries"] == 0
+    assert payload["job"]["retries_on_node_failure"] == 0
     listed = client.get("/api/jobs", headers=user_headers()).json()
     assert [(item["id"], item["kind"]) for item in listed] == [(session["id"], "SESSION")]
     assert submit(client)["kind"] == "BATCH"
@@ -344,6 +344,7 @@ def test_a_version_3_database_migrates_and_existing_jobs_are_batch(settings):
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN kind")
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN lease_expires_at")
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN service")  # Version 5 (M10).
+        connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN preempted_by")  # Version 6.
         connection.execute(update(schema_version).values(version=3))
     first.db.close()
     database = Database(settings.data_dir)

@@ -37,6 +37,7 @@ UV = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
 UV_VERSION = "0.11.8"
 BASE_IMAGE = "localhost/labflux/python-uv:3.12-uv0.11.8"
 GPU_UUID = r"GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+POLICIES = ("fcfs", "priority", "backfill")  # Settings.scheduling_policy
 FIREWALL_UNIT = "labflux-firewall.service"
 FIREWALL_CHAIN = "LABFLUX-SCHEDULER"
 WORKER_UNIT = "labflux-worker.service"
@@ -74,6 +75,7 @@ class Inventory:
     users: tuple
     nodes: tuple
     models: dict  # Passed through to scheduler.toml; Settings validates them.
+    policy: str | None = None  # scheduling_policy; None keeps the Scheduler's default (fcfs)
 
     @property
     def scheduler(self) -> Node:
@@ -135,6 +137,9 @@ def parse_inventory(values: dict, root: Path = ROOT) -> Inventory:
     users = tuple(scheduler.get("users", []))
     if not users or len(set(users)) != len(users):
         raise ValueError("scheduler.users needs distinct user names")
+    policy = scheduler.get("policy")
+    if policy is not None and policy not in POLICIES:
+        raise ValueError(f"scheduler.policy must be one of {', '.join(POLICIES)}")
     models = values.get("models", {})
     provided = {dataset for node in nodes for dataset in node.datasets}
     for name, model in models.items():
@@ -151,6 +156,7 @@ def parse_inventory(values: dict, root: Path = ROOT) -> Inventory:
         users=users,
         nodes=tuple(nodes),
         models=models,
+        policy=policy,
     )
     return inventory
 
@@ -274,8 +280,10 @@ def scheduler_toml(inventory: Inventory, tokens: dict) -> str:
         f"bind_port = {inventory.port}",
         f"scheduler_url = {toml_value(inventory.scheduler_url)}",
         f"worker_token = {toml_value(tokens['worker'])}",
-        "[users]",
     ]
+    if inventory.policy is not None:
+        lines.append(f"scheduling_policy = {toml_value(inventory.policy)}")
+    lines.append("[users]")
     lines += [
         f"{toml_value(user)} = {toml_value(token)}" for user, token in tokens["users"].items()
     ]

@@ -195,16 +195,33 @@ def logs(
     ctx: typer.Context, job_id: str, follow: bool = False, attempt_id: str | None = None
 ) -> None:
     """Print stdout/stderr; --follow also retrieves output while the job is running."""
-    after = -1
-    decoders = {
-        name: codecs.getincrementaldecoder("utf-8")("replace") for name in ("stdout", "stderr")
-    }
+
+    def new_decoders() -> dict:
+        return {
+            name: codecs.getincrementaldecoder("utf-8")("replace") for name in ("stdout", "stderr")
+        }
+
+    def flush() -> None:
+        for name, decoder in decoders.items():
+            typer.echo(decoder.decode(b"", final=True), nl=False, err=name == "stderr")
+
+    after, seen, decoders = -1, None, new_decoders()
     with api_client(ctx.obj) as client:
         while True:
             params = {"after": after}
             if attempt_id:
                 params["attempt_id"] = attempt_id
             value = checked(client.get(f"/api/jobs/{job_id}/logs", params=params)).json()
+            current = value["attempt_id"]
+            if seen and current and current != seen:
+                # The job was queued again (preemption, node-failure retry) and runs in a new
+                # attempt whose seq starts at 0 again. This page was read from the old
+                # position, so drop it and read the new attempt from its start.
+                flush()
+                typer.echo(f"--- attempt {current[:8]} (rerun) ---", err=True)
+                after, seen, decoders = -1, current, new_decoders()
+                continue
+            seen = current or seen
             for chunk in value["chunks"]:
                 text = decoders[chunk["stream"]].decode(base64.b64decode(chunk["data_base64"]))
                 typer.echo(text, nl=False, err=chunk["stream"] == "stderr")
@@ -214,8 +231,7 @@ def logs(
             if not follow or value["terminal"]:
                 break
             time.sleep(0.25)
-        for name, decoder in decoders.items():
-            typer.echo(decoder.decode(b"", final=True), nl=False, err=name == "stderr")
+        flush()
 
 
 @app.command()

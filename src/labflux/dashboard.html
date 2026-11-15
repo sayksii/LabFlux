@@ -124,6 +124,7 @@
   .s-FAILED { background: var(--fail); border-color: var(--fail); color: #fff; }
   .s-UNKNOWN { color: var(--unknown); border-style: dotted; border-width: 2px; }
   .s-CANCELLED { color: var(--off); text-decoration: line-through; }
+  .s-PREEMPTED { color: var(--queued); border-style: dashed; }
   .s-ONLINE { color: var(--ok); }
   .s-OFFLINE { background: var(--fail); border-color: var(--fail); color: #fff; }
   .s-RECONCILING { color: var(--unknown); border-style: dashed; }
@@ -801,14 +802,17 @@ function renderDetail(d) {
   $("dFacts").replaceChildren(...facts.flatMap(([k, v]) => [el("dt", { textContent: k }), el("dd", {}, v ?? "—")]));
 
   const acts = $("dActions");
-  const cancellable = !TERMINAL.has(d.state) && d.state !== "STOPPING";
+  // A job stopping for a preemption is not cancelled: it queues again once the stop is confirmed.
+  const preempting = d.state === "STOPPING" && !d.cancel_requested;
+  const cancellable = !TERMINAL.has(d.state) && (d.state !== "STOPPING" || preempting);
   if (!cancellable) {
     acts.replaceChildren(el("p", { className: "note", textContent: d.state === "STOPPING"
       ? "已要求取消,等待確認容器停止。" : "這個工作已結束。" }));
   } else if (!S.confirm) {
     const b = el("button", { className: "btn danger", type: "button", textContent: "取消工作" });
     b.addEventListener("click", () => { S.confirm = true; renderDetail(d); });
-    acts.replaceChildren(b);
+    acts.replaceChildren(...(preempting ? [el("p", { className: "note",
+      textContent: "被搶占:確認容器停止後會重新排隊,從頭再跑一次。" })] : []), b);
     if (S.cancelError) acts.append(el("p", { className: "note error", role: "alert", textContent: S.cancelError }));
   } else {
     const yes = el("button", { className: "btn danger solid", type: "button", textContent: "確定取消" });

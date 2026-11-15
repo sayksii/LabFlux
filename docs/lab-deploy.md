@@ -148,6 +148,10 @@ ssh -L 8770:192.0.2.10:8770 kayle
 新增使用者：把名稱加進 `configs/local-lab.toml` 的 `scheduler.users`，重新 `deploy --node kayle`，
 再從 `.labflux/lab/scheduler.toml` 把該使用者的 Token 私下交給他。從清單移除的使用者，Token 會在下次部署時失效。
 
+排程策略：在 `configs/local-lab.toml` 的 `[scheduler]` 加上 `policy = "backfill"`（可用 `fcfs`、`priority`、`backfill`，
+其他值在解析清單時就被拒絕），重新 `deploy --node kayle`，就會寫進 `scheduler.toml` 的 `scheduling_policy`。
+沒有設定時不寫這一行，Scheduler 維持預設的 `fcfs`。各模式的行為見 README 的「排程與通訊」。
+
 ## 模型服務（M10）
 
 在 `configs/local-lab.toml` 加一個 `[models.<名稱>]` 表格（欄位見 `src/labflux/config.py` 的 `ModelConfig`，

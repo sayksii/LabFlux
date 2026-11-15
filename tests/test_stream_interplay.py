@@ -37,7 +37,7 @@ def make_client(tmp_path, clock):
 def test_retry_is_dispatched_by_every_policy_and_rings_the_doorbell(make_client, policy):
     client, service = make_client(policy)
     old = register(client, cpu=1)
-    job = submit(client, max_retries=1, time_limit_s=600)
+    job = submit(client, retries_on_node_failure=1, safe_to_rerun=True, time_limit_s=600)
     first = deliver(client, service, old)["attempt_id"]
     client.rings.clear()
     new, response = restart(client, {})
@@ -54,7 +54,7 @@ def test_retry_is_dispatched_by_every_policy_and_rings_the_doorbell(make_client,
 def test_requeued_job_competes_under_the_active_policy(make_client, policy, winner):
     client, service = make_client(policy)
     old = register(client, cpu=1)
-    jobs = {"retried": submit(client, max_retries=1, priority=1)}
+    jobs = {"retried": submit(client, retries_on_node_failure=1, safe_to_rerun=True, priority=1)}
     jobs["urgent"] = submit(client, priority=9)
     deliver(client, service, old)
     restart(client, {})

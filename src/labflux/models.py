@@ -43,9 +43,40 @@ class JobSpec(BaseModel):
     estimated_runtime_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     source_id: str | None = None
     datasets: list[str] = Field(default_factory=list)
+    # Running the program again from the start is harmless (plan: "restartable"). Required by
+    # preemptible and by retries_on_node_failure > 0.
+    safe_to_rerun: bool = False
+    # The Scheduler may stop it for more important work and queue it to run again (M11).
+    preemptible: bool = False
     # New attempts allowed after an infrastructure loss (the node or its container was lost);
-    # cancellation, time limits and program exits are never retried.
-    max_retries: int = Field(default=0, ge=0, le=10)
+    # cancellation, time limits and program exits are never retried. Formerly max_retries.
+    retries_on_node_failure: int = Field(default=0, ge=0, le=10)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_max_retries(cls, data):
+        """Accept specs stored before M11 (SQLite rows, Worker state.json) that use max_retries.
+        Before M11 any retry implied that rerunning was safe, so a value > 0 also sets
+        safe_to_rerun unless the spec gives it."""
+        if isinstance(data, dict) and "max_retries" in data:
+            if "retries_on_node_failure" in data:
+                raise ValueError(
+                    "give only retries_on_node_failure; max_retries is its former name"
+                )
+            data = dict(data)
+            value = data.pop("max_retries")
+            data["retries_on_node_failure"] = value
+            if "safe_to_rerun" not in data and isinstance(value, int) and value > 0:
+                data["safe_to_rerun"] = True
+        return data
+
+    @model_validator(mode="after")
+    def rerun_flags_need_safe_to_rerun(self) -> JobSpec:
+        if self.preemptible and not self.safe_to_rerun:
+            raise ValueError("preemptible requires safe_to_rerun: true")
+        if self.retries_on_node_failure and not self.safe_to_rerun:
+            raise ValueError("retries_on_node_failure > 0 requires safe_to_rerun: true")
+        return self
 
     @field_validator("argv")
     @classmethod

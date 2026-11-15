@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 from conftest import finish, register, submit, user_headers, worker_headers
+from test_reconnect import deliver, get_job, restart
 from typer.testing import CliRunner
 
 import labflux.cli as cli
@@ -61,6 +62,49 @@ def test_cli_logs_handles_utf8_boundaries_and_pagination(client, monkeypatch):
     result = runner.invoke(cli.app, ["logs", job["id"]])
     assert result.exit_code == 0, result.output
     assert result.stdout == "中" + "x" * 68
+
+
+def write_log(client, attempt_id, instance, lines):
+    for seq, line in enumerate(lines):
+        response = client.post(
+            f"/internal/workers/vm-a/attempts/{attempt_id}/logs",
+            headers=worker_headers(),
+            json={
+                "instance_id": instance,
+                "seq": seq,
+                "stream": "stdout",
+                "data_base64": base64.b64encode(line.encode()).decode(),
+            },
+        )
+        assert response.status_code == 200, response.text
+
+
+def test_cli_logs_follow_prints_a_rerun_from_its_start(client, service, monkeypatch):
+    """A job queued again (a node-failure retry here; a preemption works the same way) runs in
+    a new attempt whose seq starts at 0 again; --follow must not skip its first lines."""
+    old = register(client, cpu=1)
+    job = submit(client, retries_on_node_failure=1, safe_to_rerun=True)
+    first = deliver(client, service, old)["attempt_id"]
+    write_log(client, first, old, ["first 0\n", "first 1\n"])
+    runner = configure(monkeypatch, client)
+    reruns = []
+
+    def rerun(_):
+        # While the CLI waits, the Worker restarts without the container: the job runs again.
+        if reruns:
+            return
+        new, response = restart(client, {})
+        assert response.json()["closed"] == [first]
+        second = deliver(client, service, new)["attempt_id"]
+        write_log(client, second, new, ["second 0\n", "second 1\n", "second 2\n"])
+        assert finish(client, get_job(client, job), new).status_code == 200
+        reruns.append(second)
+
+    monkeypatch.setattr(cli, "time", SimpleNamespace(monotonic=time.monotonic, sleep=rerun))
+    result = runner.invoke(cli.app, ["logs", job["id"], "--follow"])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "first 0\nfirst 1\nsecond 0\nsecond 1\nsecond 2\n"
+    assert result.stderr == f"--- attempt {reruns[0][:8]} (rerun) ---\n"
 
 
 def test_cli_fetch_verifies_and_extracts_attempt_output(client, tmp_path, monkeypatch):
