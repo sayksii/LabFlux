@@ -327,9 +327,13 @@ def test_network_partition_keeps_the_outbox_and_settles_once_reconnected(
 
 
 def test_node_lost_with_its_containers_retries_on_the_returning_worker(
-    client, service, clock, tmp_path
+    client, service, clock, tmp_path, monkeypatch
 ):
-    """A VM shutdown: the Worker and its containers die together, later the Worker returns."""
+    """A VM shutdown: the Worker and its containers die together, later the Worker returns.
+
+    Docker keeps the stopped container across the reboot; it started before the current boot.
+    """
+    monkeypatch.setattr("labflux.worker.psutil.boot_time", lambda: 5000.0)
     executor = ControlledExecutor()
     instance = register(client, cpu=1)
     old = worker_for(client, tmp_path, executor, instance)
@@ -341,7 +345,8 @@ def test_node_lost_with_its_containers_retries_on_the_returning_worker(
         old.flush()
         old.stop_event.set()
         old.handles[first]["future"].result(timeout=5)
-        executor.containers.clear()  # The containers went down with the machine.
+        # The container went down with the machine; Docker keeps it as exited.
+        executor.containers[first].update(status="exited", exit_code=143, started_at=1000.0)
         clock[0] += service.settings.offline_timeout_s + 1
         service.tick()
         assert get_job(client, job)["state"] == "UNKNOWN"
@@ -363,6 +368,42 @@ def test_node_lost_with_its_containers_retries_on_the_returning_worker(
         assert [a["state"] for a in value["attempts"]] == ["FAILED", "SUCCEEDED"]
         assert node(client)["allocated"]["cpu"] == 0
         assert new.inventory()["attempts"] == []
+        assert first in executor.removed
+    finally:
+        executor.release.set()
+        old.pool.shutdown(wait=True)
+
+
+def test_only_containers_stopped_by_a_host_restart_are_dropped_from_the_inventory(
+    client, service, tmp_path, monkeypatch
+):
+    """A stop after the current boot, a clean exit or an OOM kill is a real outcome to adopt."""
+    monkeypatch.setattr("labflux.worker.psutil.boot_time", lambda: 5000.0)
+    executor = ControlledExecutor()
+    instance = register(client, cpu=4)
+    old = worker_for(client, tmp_path, executor, instance)
+    jobs = [submit(client, max_retries=1) for _ in range(4)]
+    try:
+        old.process(service.poll_commands("vm-a", instance))
+        ids = [get_job(client, job)["current_attempt_id"] for job in jobs]
+        for attempt_id in ids:
+            wait(lambda attempt_id=attempt_id: old._read(attempt_id)["started"])
+        old.stop_event.set()
+        for attempt_id in ids:
+            old.handles[attempt_id]["future"].result(timeout=5)
+        interrupted, recent, clean, oom = ids
+        executor.containers[interrupted].update(status="exited", exit_code=255, started_at=10.0)
+        executor.containers[recent].update(status="exited", exit_code=143, started_at=6000.0)
+        executor.containers[clean].update(status="exited", exit_code=0, started_at=10.0)
+        executor.containers[oom].update(
+            status="exited", exit_code=137, oom_killed=True, started_at=10.0
+        )
+        executor.containers["f" * 32] = {"worker_id": "vm-a", "status": "exited", "started_at": 1.0}
+        new = worker_for(client, tmp_path, executor)
+        found = {item["attempt_id"] for item in new.inventory()["containers"]}
+        # Without a local record a container is never touched here.
+        assert found == {recent, clean, oom, "f" * 32}
+        assert executor.removed == [interrupted]
     finally:
         executor.release.set()
         old.pool.shutdown(wait=True)

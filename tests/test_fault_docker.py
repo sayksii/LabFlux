@@ -183,13 +183,19 @@ def test_machine_down_with_its_containers_retries_on_the_returning_worker(tmp_pa
         work = submit(client, code, max_retries=1)
         wait_for(lambda: "up" in log_text(client, work))
         lost = job(client, work)["current_attempt_id"]
-        # The machine goes down: the Worker process and its containers end together.
+        # The machine goes down: the Worker process and its containers end together. Docker
+        # keeps the killed container across the reboot, as it would for a real VM shutdown.
         stop(*first)
-        for container in containers():
-            container.remove(force=True)
+        [container] = containers()
+        container.kill()
+        container.reload()
+        assert container.status == "exited"
         wait_for(lambda: node(client)["status"] == "OFFLINE", timeout=10)
         assert job(client, work)["state"] == "UNKNOWN"
-        start_worker()  # The machine is back.
+        # The machine is back: the host booted after the container started.
+        booted = time.time()
+        monkeypatch.setattr("labflux.worker.psutil.boot_time", lambda: booted)
+        start_worker()
         done = wait_for(lambda: len(job(client, work)["attempts"]) == 2 and settled(client, work))
         assert done["state"] == "SUCCEEDED", done
         assert [a["state"] for a in done["attempts"]] == ["FAILED", "SUCCEEDED"]
