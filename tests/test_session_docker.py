@@ -187,6 +187,25 @@ def test_a_stop_ends_only_the_commands_process_group(runtime, tmp_path):
         assert thread.is_alive()
 
 
+def test_a_stop_that_cannot_end_the_command_asks_for_the_container_to_end(runtime, tmp_path):
+    spec = session_spec()
+    with session_container(runtime, tmp_path, spec) as (cancel, thread, outcome):
+        aborted = []
+        stop = threading.Event()
+
+        def abort(timed_out):
+            aborted.append(timed_out)
+            cancel.set()  # What the Worker's _end_session does.
+
+        # The command removes the record of its pid, so its process group cannot be signalled.
+        argv = ["sh", "-c", "rm /tmp/.labflux-command; echo started; sleep 311"]
+        result = runtime.exec(spec, argv, WORKSPACE, lambda *_: stop.set(), stop, 60, abort)
+        assert result == (None, False, True)
+        assert aborted == [False]
+        thread.join(timeout=30)
+        assert outcome["result"].termination_confirmed
+
+
 def test_a_command_timeout_terminates_the_whole_container(runtime, tmp_path):
     spec = session_spec()
     with session_container(runtime, tmp_path, spec) as (cancel, thread, outcome):

@@ -34,7 +34,8 @@ DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"  #
 COMMAND_FILE = "/tmp/.labflux-command"
 RUN_COMMAND = 'echo "$$ $2" > "$1"; shift 2; exec "$@"'
 # Exit 0: signalled; 1: no process is left in the group; 3: this command recorded no pid (yet).
-SIGNAL_COMMAND = 'read pid token < "$1" && [ "$token" = "$2" ] || exit 3; kill -s "$3" -- "-$pid"'
+# `kill -SIG -PID` is the one spelling that dash, bash and busybox sh all accept for a group.
+SIGNAL_COMMAND = 'read pid token < "$1" && [ "$token" = "$2" ] || exit 3; kill "-$3" "-$pid"'
 
 
 @dataclass
@@ -369,9 +370,10 @@ class DockerExecutor:
                 if give_up is None and (stop.is_set() or time.monotonic() >= deadline):
                     stopped, timed_out = stop.is_set(), not stop.is_set()
                     if stopped and self._stop_group(api, name, token, reader):
-                        # A process that left the group may hold the output open: do not wait.
                         reader.join(timeout=5)
-                        return None, False, True
+                        if not reader.is_alive():
+                            return None, False, True
+                        # Its output is still open, so the command itself did not end.
                     if on_abort:
                         on_abort(timed_out)
                     give_up = time.monotonic() + self.settings.stop_grace_s + 30
