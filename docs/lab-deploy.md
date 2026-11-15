@@ -1,20 +1,21 @@
-# 實體機部署（kayle、karma）
+# 實體機部署（kayle、karma、kindred）
 
-本文件說明如何把 LabFlux 部署到實驗室的兩台實體機。兩台都是共用機器，
+本文件說明如何把 LabFlux 部署到實驗室的實體機。每台都是共用機器，
 LabFlux 只使用其中一部分資源，並以專屬帳號 `labflux` 執行，不使用任何人的個人帳號。
 
 | 節點 | 角色 | LabFlux 可預約的資源 | GPU |
 |---|---|---|---|
 | kayle（192.0.2.10） | Scheduler + Worker | 16 核、48 GiB | RTX 3090、RTX A5000（驅動 535） |
 | karma（192.0.2.20） | Worker | 16 核、24 GiB | RTX 4090（驅動 580） |
+| kindred（192.0.2.30） | Worker | 32 核、64 GiB | A40 × 2（共 5 張，只登記其中兩張；驅動 550） |
 
 本文件的 IP 都是範例（`192.0.2.0/24` 是文件專用位址）。實際的 IP、資源上限與 GPU 清單只放在
 被 Git 忽略的 `configs/local-lab.toml`（格式見 `configs/lab.example.toml`）；`firewall-instructions`
 與 `deploy` 都依這個檔案的實際值產生指令與設定。
 
-- Scheduler 綁在 `192.0.2.10:8770`，只讓 karma 與 kayle 本機連入（見「防火牆」）。
+- Scheduler 綁在 `192.0.2.10:8770`，只讓清單上的 Worker 節點與 kayle 本機連入（見「防火牆」）。
 - Worker 與 Scheduler 都是 `labflux` 帳號的 systemd **user** service，不需要 sudo 就能部署與重啟。
-- 所有工作容器都以 `labflux`（UID 2001，兩台相同）執行。
+- 所有工作容器都以 `labflux`（UID 2001，每台相同）執行。
 
 ## 事前準備（已完成）
 
@@ -77,11 +78,11 @@ Token 只在第一次部署時以 `secrets.token_urlsafe(32)` 產生，之後重
 
 - kayle 的 `labflux-firewall.service` 不是 `active`（Scheduler 不能在沒有防火牆時綁公開 IP）。
   Scheduler 的 service 本身也有同樣的檢查，開機時防火牆還沒好就不會啟動，之後自動重試。
-- 要重啟 Scheduler（部署 kayle）時，任何節點還有未釋放的配置。Scheduler 重啟恢復（M6.6）
-  還沒完成，有工作在執行時重啟 Scheduler 可能讓狀態對不上。
-  重啟 Worker 不受這個限制：M6.4 之後，Worker 停止時工作容器會繼續執行，新的 Worker
-  啟動後會接手。只部署 karma 時，正在執行的工作不受影響。
 - 只部署 karma 但 Scheduler 沒有在執行。
+
+有工作在執行時也可以部署：M6.4 之後 Worker 停止時工作容器會繼續執行，新的 Worker 啟動後接手；
+M6.6 之後 Scheduler 重啟時從資料庫還原，等每台 Worker 核對完才恢復派送。重啟 Scheduler 時，
+進行中的快速測試指令與推論請求會失敗，需要重送；常駐的模型服務不受影響。
 
 ### `status`：查看狀態
 
@@ -97,16 +98,33 @@ uv run python scripts/lab_deploy.py status
 只在 kayle 做一次。個人帳號沒有 sudo，請以管理員帳號執行（例如 `su - mvladmin`），
 指令由 `firewall-instructions` 產生，內容如下：
 
-1. 安裝 `/etc/systemd/system/labflux-firewall.service`。它是 oneshot unit，啟動時加入、停止時刪除這一條規則：
+1. 安裝 `/etc/systemd/system/labflux-firewall.service`。它是 oneshot unit，啟動時建立、停止時刪除一條專用的 chain：
    ```
-   iptables -I INPUT -d 192.0.2.10 -p tcp --dport 8770 ! -i lo ! -s 192.0.2.20 -j DROP
+   iptables -N LABFLUX-SCHEDULER
+   iptables -A LABFLUX-SCHEDULER -i lo -j RETURN
+   iptables -A LABFLUX-SCHEDULER -s 192.0.2.20 -j RETURN      # 每台遠端 Worker 一條
+   iptables -A LABFLUX-SCHEDULER -j DROP
+   iptables -I INPUT -d 192.0.2.10 -p tcp --dport 8770 -j LABFLUX-SCHEDULER
    ```
-   只丟棄「不是 karma、也不是本機」連到 8770 的封包，不 ACCEPT 任何東西，也不影響其他 port。
-   kayle 自己的 Worker 與 SSH 轉送連到本機 IP 時走 `lo`，不受影響。**不要執行 `ufw enable`**：
-   預設拒絕所有連入，會擋到其他人的 SSH 與服務。
-2. `sudo systemctl daemon-reload` 後 `sudo systemctl enable --now labflux-firewall.service`，開機時會自動套用。
+   連到 8770 的封包進入這條 chain：本機與清單上的 Worker 回到原本的 INPUT 規則，其餘丟棄。
+   不 ACCEPT 任何東西，也不影響其他 port。kayle 自己的 Worker 與 SSH 轉送連到本機 IP 時走 `lo`，不受影響。
+   **不要執行 `ufw enable`**：預設拒絕所有連入，會擋到其他人的 SSH 與服務。
+2. `sudo systemctl daemon-reload`、`sudo systemctl enable labflux-firewall.service` 後
+   `sudo systemctl restart labflux-firewall.service`，開機時會自動套用。
 3. 確認：`systemctl is-active labflux-firewall.service` 是 `active`，
-   `sudo iptables -S INPUT | grep -- '--dport 8770'` 有一條 `-j DROP` 規則。
+   `sudo iptables -S INPUT | grep -- '--dport 8770'` 有一條跳到 `LABFLUX-SCHEDULER` 的規則，
+   `sudo iptables -S LABFLUX-SCHEDULER` 的最後一條是 `-j DROP`。
+
+新增或移除節點後，重新執行 `firewall-instructions` 並照做一次；新節點在這之前連不到 Scheduler。
+
+從舊版（單一條 `! -s <karma> -j DROP` 規則）升級時，照上面的步驟換成新的 unit 並 restart 之後，
+舊規則還留在 INPUT，要手動刪除一次，否則新節點仍會被它擋住：
+
+```bash
+sudo iptables -D INPUT -d 192.0.2.10 -p tcp --dport 8770 ! -i lo ! -s 192.0.2.20 -j DROP
+```
+
+先換新 unit 再刪舊規則，過程中 8770 不會有沒被擋住的時間。
 
 移除：`sudo systemctl disable --now labflux-firewall.service`，刪除 unit 檔後 `sudo systemctl daemon-reload`。
 Scheduler 只綁 IPv4，不會從 IPv6 被連到。
@@ -141,8 +159,8 @@ $SSH labflux@192.0.2.10 systemctl --user status labflux-worker
 
 ## 停止、更新與移除
 
-- **更新：** 合併新版程式後重新執行 `deploy`。有工作在執行時，`deploy karma` 可以照常進行，工作由新的
-  Worker 接手；部署 kayle 會重啟 Scheduler，腳本會拒絕，等工作結束或取消後再部署。
+- **更新：** 合併新版程式後重新執行 `deploy`。有工作在執行時也可以照常部署：工作由新的 Worker 接手，
+  Scheduler 重啟後從資料庫還原；只有進行中的快速測試指令與推論請求需要重送。
 - **停止：** `$SSH labflux@<host> systemctl --user stop labflux-worker.service`；
   kayle 的 Scheduler 是 `labflux-scheduler.service`。`disable` 可避免開機時自動啟動。
   停止 Worker **不會**停止它的工作容器：工作繼續執行並佔用 GPU，但 Worker 停止期間不檢查執行時限、
@@ -156,11 +174,9 @@ $SSH labflux@192.0.2.10 systemctl --user status labflux-worker
 
 ## 目前限制
 
-- M6.5、M6.6 尚未完成：有工作在執行時不能重啟或更新 Scheduler（kayle）；Worker 可以。
-- 防火牆規則只支援一台遠端 Worker；之後要加節點時需改成專用 chain。
 - 同一台 Worker 上的工作共用可寫的 uv 快取，彼此需要互相信任。
 - 操作上要避免（PR #2 審查中判定為少見、暫不處理的情況，詳見 `docs/verification.md`）：
   - 不要用同一個 `worker_id` 再啟動第二個 Worker；新註冊的 instance 會接手並關閉它找不到容器的工作。
   - 有 GPU 工作執行時不要修改 Worker 的 `gpus` 清單再重啟；接手時卡片不在清單內會失敗。
   - 不要替已註冊的 Worker 改名；舊名稱仍佔著同一批 GPU，新名稱會註冊失敗，需手動清理資料庫。
-  - 部署者必須是 `scheduler.users` 之一，否則重新部署 kayle 時的重啟檢查無法查詢 Scheduler。
+  - 部署者必須是 `scheduler.users` 之一，否則部署結束時無法向 Scheduler 確認 Worker 已上線。

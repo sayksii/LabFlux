@@ -38,15 +38,19 @@ UV_VERSION = "0.11.8"
 BASE_IMAGE = "localhost/labflux/python-uv:3.12-uv0.11.8"
 GPU_UUID = r"GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 FIREWALL_UNIT = "labflux-firewall.service"
+FIREWALL_CHAIN = "LABFLUX-SCHEDULER"
 WORKER_UNIT = "labflux-worker.service"
 SCHEDULER_UNIT = "labflux-scheduler.service"
 # A busy card must not even get the nvidia-smi probe container; matches gpu_external_memory_mib.
 IDLE_MEMORY_MIB = 1024
 LOW_DISK_GIB = 50
 # Since M6.4 a stopped Worker leaves its containers running and the next instance adopts them,
-# so Worker restarts no longer need idle nodes. Scheduler restart recovery (M6.6) is still
-# missing, so restarting the Scheduler always requires that no attempt is outstanding.
+# so Worker restarts no longer need idle nodes. Since M6.6 a restarted Scheduler restores its
+# state from the database and reconciles every Worker before dispatching, so it does not need
+# them either; only relayed fast-lane commands and inference requests fail and are sent again.
+# Requiring idle nodes would also block every Scheduler update while a persistent model serves.
 WORKER_RESTART_REQUIRES_IDLE = False
+SCHEDULER_RESTART_REQUIRES_IDLE = False
 
 
 @dataclass(frozen=True)
@@ -140,8 +144,6 @@ def parse_inventory(values: dict, root: Path = ROOT) -> Inventory:
         users=users,
         nodes=tuple(nodes),
     )
-    if inventory.public_bind:
-        firewall_rule(inventory)  # Validates that the rule can express the inventory.
     return inventory
 
 
@@ -154,20 +156,36 @@ def load_inventory(path: Path = INVENTORY) -> Inventory:
 # ---- Generated files ---------------------------------------------------------------------
 
 
-def firewall_rule(inventory: Inventory) -> str:
-    """Drop Scheduler traffic except loopback and the remote Workers, without ACCEPTing anything."""
+def firewall_rules(inventory: Inventory) -> tuple[list[str], list[str]]:
+    """iptables arguments that install and remove the Scheduler filter.
+
+    Scheduler traffic jumps to a dedicated chain that returns loopback and every remote Worker
+    to the normal INPUT rules and drops the rest; nothing is ACCEPTed. The jump is added last,
+    so the chain is complete before any packet reaches it.
+    """
     remote = [n.host for n in inventory.nodes if n.name != inventory.scheduler_node]
-    if len(remote) > 1:
-        raise ValueError("the firewall rule supports one remote Worker; add a chain for more")
-    allowed = f" ! -s {remote[0]}" if remote else ""
-    return (
-        f"INPUT -d {inventory.bind_host} -p tcp --dport {inventory.port} ! -i lo{allowed} -j DROP"
-    )
+    chain = FIREWALL_CHAIN
+    jump = f"INPUT -d {inventory.bind_host} -p tcp --dport {inventory.port} -j {chain}"
+    install = [
+        f"-N {chain}",
+        f"-A {chain} -i lo -j RETURN",
+        *(f"-A {chain} -s {host} -j RETURN" for host in remote),
+        f"-A {chain} -j DROP",
+        f"-I {jump}",
+    ]
+    return install, [f"-D {jump}", f"-F {chain}", f"-X {chain}"]
 
 
 def firewall_unit(inventory: Inventory) -> str:
-    rule = firewall_rule(inventory)
+    install, remove = firewall_rules(inventory)
     remote = [n.host for n in inventory.nodes if n.name != inventory.scheduler_node]
+    iptables = "/usr/sbin/iptables -w"
+    # "-" lets a step fail: ExecStartPre clears what an interrupted start left behind.
+    lines = (
+        [f"ExecStartPre=-{iptables} {rule}" for rule in remove]
+        + [f"ExecStart={iptables} {rule}" for rule in install]
+        + [f"ExecStop=-{iptables} {rule}" for rule in remove]
+    )
     return (
         "[Unit]\n"
         f"Description=LabFlux Scheduler firewall: only lo and {', '.join(remote) or 'nobody'}"
@@ -175,9 +193,7 @@ def firewall_unit(inventory: Inventory) -> str:
         "DefaultDependencies=no\nWants=network-pre.target\n"
         "Before=network-pre.target shutdown.target\nAfter=local-fs.target\n"
         "Conflicts=shutdown.target\n\n"
-        "[Service]\nType=oneshot\nRemainAfterExit=yes\n"
-        f"ExecStart=/usr/sbin/iptables -w -I {rule}\n"
-        f"ExecStop=/usr/sbin/iptables -w -D {rule}\n\n"
+        "[Service]\nType=oneshot\nRemainAfterExit=yes\n" + "\n".join(lines) + "\n\n"
         "[Install]\nWantedBy=multi-user.target\n"
     )
 
@@ -186,20 +202,23 @@ def firewall_instructions(inventory: Inventory) -> str:
     scheduler = inventory.scheduler
     return f"""\
 Run these on {scheduler.name} as the administrator account (the personal account has no sudo),
-for example after `su - mvladmin`. They only add one DROP rule for {inventory.bind_host}:{inventory.port};
-nothing else on the machine is filtered, and ufw stays disabled.
+for example after `su - mvladmin`. They only filter {inventory.bind_host}:{inventory.port}: loopback and the
+remote Workers pass, everything else is dropped. Nothing else on the machine is filtered, and
+ufw stays disabled. Run them again after adding or removing a node.
 
 1. Install the unit:
 sudo tee /etc/systemd/system/{FIREWALL_UNIT} > /dev/null <<'EOF'
 {firewall_unit(inventory)}EOF
 
-2. Load it, start it now and at every boot:
+2. Load it, (re)start it now and at every boot:
 sudo systemctl daemon-reload
-sudo systemctl enable --now {FIREWALL_UNIT}
+sudo systemctl enable {FIREWALL_UNIT}
+sudo systemctl restart {FIREWALL_UNIT}
 
-3. Verify (expect "active", then one rule with "--dport {inventory.port}" and "-j DROP"):
+3. Verify (expect "active", one jump to {FIREWALL_CHAIN}, then the chain ending in "-j DROP"):
 systemctl is-active {FIREWALL_UNIT}
 sudo iptables -S INPUT | grep -- '--dport {inventory.port}'
+sudo iptables -S {FIREWALL_CHAIN}
 
 To remove it later:
 sudo systemctl disable --now {FIREWALL_UNIT}
@@ -330,7 +349,8 @@ def restart_blockers(
 def scheduler_restart_blockers(
     *, scheduler_active: bool, scheduler_nodes: list[dict] | None
 ) -> list[str]:
-    """Scheduler restart recovery (M6.6) is missing, so no attempt may be outstanding."""
+    """Reasons why restarting the Scheduler would strand work (when
+    SCHEDULER_RESTART_REQUIRES_IDLE)."""
     if scheduler_nodes is None:
         return ["the Scheduler is running but cannot be queried"] if scheduler_active else []
     busy = [
@@ -489,7 +509,10 @@ def remote_services(run: Runner, node: Node, units: list[str]) -> tuple[dict, li
 
 def ensure_restart_is_safe(run: Runner, inventory: Inventory, nodes: list[Node], tokens) -> None:
     checked = [
-        n for n in nodes if WORKER_RESTART_REQUIRES_IDLE or n.name == inventory.scheduler_node
+        n
+        for n in nodes
+        if WORKER_RESTART_REQUIRES_IDLE
+        or (SCHEDULER_RESTART_REQUIRES_IDLE and n.name == inventory.scheduler_node)
     ]
     if not checked:
         return
@@ -506,14 +529,14 @@ def ensure_restart_is_safe(run: Runner, inventory: Inventory, nodes: list[Node],
                 containers=containers,
                 scheduler_nodes=view,
             )
-        if is_scheduler:
+        if is_scheduler and SCHEDULER_RESTART_REQUIRES_IDLE:
             reasons += scheduler_restart_blockers(
                 scheduler_active=states.get(SCHEDULER_UNIT) == "active", scheduler_nodes=view
             )
     if reasons:
         raise RuntimeError(
-            "refusing to restart LabFlux services while work is outstanding "
-            "(Scheduler restart recovery, M6.6, is not implemented yet):\n  " + "\n  ".join(reasons)
+            "refusing to restart LabFlux services while work is outstanding:\n  "
+            + "\n  ".join(reasons)
         )
 
 

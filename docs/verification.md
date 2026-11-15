@@ -147,7 +147,7 @@ VM 的實測可分配 RAM：A 1455 MiB、B 2395 MiB、C 3403 MiB，均已扣除 
 尚未處理：對帳後關閉的工作不會自動重排（M6.5）；Scheduler 重啟後的核對（M6.6）仍未交付。
 （兩者已在 `feat/m6-m8-m9` 交付，見下方「M6.5～M6.7」。）
 
-## M7（進行中）：實體 GPU 節點
+## M7：實體 GPU 節點
 
 本節的 IP 與 GPU UUID 以範例值記錄（IP 使用文件專用的 `192.0.2.0/24`）；
 實際值只放在被 Git 忽略的 `configs/local-lab.toml` 與 `.labflux/lab/`。
@@ -352,7 +352,41 @@ kayle 的兩個工作同時寫入同一個快取。
   `waiting for matching CPU/RAM/GPU capacity or datasets`，隨後取消。LabFlux 沒有碰觸該程式。
 - **7.5 最低 VRAM：** `min_vram_mib = 24570` 只有 3090（24576 MiB）符合，但它正被外部使用，工作保持 QUEUED 後取消；
   `min_vram_mib = 24000` 分到 karma 的 4090 並完成。張數與型號匹配由上表的三個工作驗證。
-- 7.8 未勾選：checklist 要求至少三個異質節點，目前實體節點只有 kayle 與 karma 兩台。
+- 7.8 當時未勾選：checklist 要求至少三個異質節點，當時只有 kayle 與 karma 兩台；第三台見下一節。
+
+### 7.8 第三個節點 kindred 與三節點 GPU 工作（2026-11-16）
+
+kindred（`192.0.2.30`）是實驗室另一台共用機器：Ubuntu 22.04、128 執行緒、251 GiB RAM、5 張 NVIDIA A40（46068 MiB，驅動 550.144.03）、
+Docker 28.0.4、NVIDIA Container Toolkit 1.13.5、預設 runtime `runc`（沒有註冊 `nvidia` runtime；LabFlux 的 device request 不需要）。
+其中 3 張卡屬於其他人，LabFlux 只登記使用者自己的兩張（`gpus = [3, 4]`），上限 CPU 32、RAM 64 GiB。
+
+部署步驟：
+
+- 管理員建立 `labflux` 帳號（UID／GID 2001、docker 群組、部署鑰匙、linger），host key 先在機器內核對指紋再固定到 `.labflux/lab/known_hosts`。
+- `scripts/lab_deploy.py` 的防火牆改成專用 chain `LABFLUX-SCHEDULER`（原本只能放行一台遠端 Worker）：連到 8770 的封包跳進這條 chain，
+  本機與每台遠端 Worker `RETURN`，其餘 `DROP`；跳轉規則最後加入，chain 建好前沒有封包會進去。管理員在 kayle 換上新 unit 後手動刪除舊的單一 DROP 規則，
+  `iptables -S` 確認 INPUT 只剩一條跳轉、chain 依序為 `lo`、karma、kindred 的 `RETURN` 與 `DROP`。換完後 karma 與 kindred 都能連到 8770。
+- `tests/test_lab_deploy.py`：18 passed（三台節點產生兩條 `RETURN`、沒有遠端 Worker 時只放行 `lo`、unit 的停止與重新啟動步驟可重複執行）。
+- `lab_deploy.py check`：kindred 除了換防火牆前連不到 Scheduler 之外沒有 `FAIL`；`deploy --node kindred` 只部署這一台（當時 main 的 commit `7308162`，與另外兩台相同），kayle 與 karma 沒有重啟。
+  kindred 以 `ONLINE` 註冊，回報兩張 A40。
+
+部署時兩張 A40 正由使用者自己的 vLLM 容器使用（各約 41 GB），Worker 心跳把兩張都回報為 `external_use = true`，沒有工作被排上去。
+使用者同意後以 `docker compose stop` 停止該容器，兩張卡回報為可用，再同時提交以下工作（CLI `submit`、`status`、`logs`）：
+
+| 工作 | 需求 | 節點與卡 | 結果 |
+|---|---|---|---|
+| MNIST | `gpu_model = "A40"` | kindred、A40（卡 3） | 99.01%，每輪 10～14 秒 |
+| MNIST | `gpu_model = "A40"` | kindred、A40（卡 4） | 99.02%，每輪 12～14 秒 |
+| MNIST | `gpu_model = "3090"` | kayle、RTX 3090 | 98.92%，每輪約 4.5 秒 |
+| MNIST | `gpu_model = "4090"` | karma、RTX 4090 | 98.98%，每輪約 4.7 秒 |
+| 隔離探測 | 1 張 A40、2 CPU | kindred、A40（卡 4） | `torch.cuda.device_count() = 1`，容器內只有 `/dev/nvidia4` |
+| CPU 工作 | 20 CPU、1 GiB（只有 kindred 放得下） | kindred | `cpu.max = 2000000 100000`、`memory.max = 1073741824`、沒有 `/dev/nvidia*` |
+
+- 四個 MNIST 工作提交後 1 秒內各自分到符合型號的卡；kindred 的兩個工作同時執行、分到不同的卡。日誌的 `Device:` 與分到的卡相符。
+- 隔離探測排在 CPU 工作之前，而 A40 都被佔用，所以兩者依嚴格 FCFS 一起等待，直到第一個 A40 工作結束（683 秒）才同時開始；探測拿到剛釋放的卡 4。
+- kindred 的 uv 快取一開始是空的，兩個 A40 工作同時下載 torch 等套件（約 3 GB），容器執行時間分別為 683 與 1243 秒，其中訓練程式本身 115 與 770 秒，
+  差距來自各自從網路下載 MNIST。kindred 的網卡回報 100 Mb/s（kayle、karma 為 1GbE），之後的資料集複製與映像下載都會較慢。
+- 結束後三台的 CPU／RAM／GPU 預約都歸零，kindred 沒有 LabFlux 容器，uv 快取 11 GB；kindred 的根分割區剩約 290 GB，是之後快取的主要限制。
 
 ## PR #2 審查（2026-10-27）
 
