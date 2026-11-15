@@ -285,6 +285,10 @@ class CommandResult(Message):
     writeback_size: int = Field(default=0, ge=0)
     writeback_sha256: Sha256 | None = None
     writeback_files: int = Field(default=0, ge=0)
+    # Every file that currently exists only in the remote session workspace because it was
+    # over the write-back limit (cumulative across the session's commands, not just this one):
+    # a file leaves the list when it is deleted remotely or later written back. The client
+    # mirrors this list in .labflux/remote-files.txt. At most MAX_SKIPPED_LISTED are listed.
     skipped: list[SkippedFile] = Field(default_factory=list, max_length=MAX_SKIPPED_LISTED)
     skipped_count: int = Field(default=0, ge=0)
 
