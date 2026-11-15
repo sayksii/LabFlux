@@ -327,11 +327,33 @@ def test_client_cancel_and_disconnect_forward_a_cancel(make_client):
         assert next_message(worker) == {"type": "cancel", "id": command["id"]}
         time.sleep(0.2)
         assert service.session_busy == {session["id"]}  # Busy until the Worker's result.
-        worker.send_json(
-            CommandResult(id=command["id"], outcome="cancelled", session_ended=True).model_dump()
-        )
+        worker.send_json(CommandResult(id=command["id"], outcome="cancelled").model_dump())
         wait_for(lambda: not service.session_busy)
         context.__exit__(None, None, None)
+        assert current(client).json()["state"] == "RUNNING"  # Only the command was stopped.
+
+
+def test_one_shot_mode_tells_the_client_that_the_session_ended(make_client):
+    client = make_client(fast_lane_mode="oneshot")
+    service = client.app.state.scheduler
+    with ready_session(client) as (worker, session):
+        context, ws, command = begin(client, worker, session)
+        while not next_message(worker)["final"]:
+            pass
+        result = CommandResult(
+            id=command["id"],
+            outcome="exited",
+            exit_code=0,
+            skipped=[{"path": "model.pt", "size": 5}],
+            skipped_count=1,
+        )
+        worker.send_json(result.model_dump())
+        relayed = ws.receive_json()
+        context.__exit__(None, None, None)
+        wait_for(lambda: not service.session_busy)
+        assert relayed == {**result.model_dump(), "session_ended": True}
+        view = job(client, session["id"])
+        assert view["state"] == "STOPPING" and view["reason"].startswith("one-shot mode")
 
 
 def test_malformed_worker_messages_are_dropped(make_client):

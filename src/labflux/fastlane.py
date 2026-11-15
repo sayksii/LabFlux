@@ -826,7 +826,8 @@ class _Run:
                     return message
 
     def finish(self, result: CommandResult, writeback: Path, t0: int) -> int:
-        if result.reason:
+        stopped = result.outcome == "cancelled" and not result.session_ended
+        if result.reason and not stopped:  # A stopped command gets its one line below.
             say(result.reason)
         self.note_remote_files(result)
         if result.writeback_files:
@@ -849,7 +850,7 @@ class _Run:
                 return EXIT_ERROR
             for notice in notices:
                 say(notice)
-        if result.outcome == "cancelled" and not result.session_ended:
+        if stopped:
             say("the command was stopped; the session is still running")
         if result.session_ended and result.outcome != "exited":
             say("the session was closed; the next command starts a new one")
@@ -865,6 +866,10 @@ class _Run:
                     f"{_total(files, count)} over the write-back limit ended with the session "
                     f"without being written back: {_names(files, count)}"
                 )
+            return
+        if result.outcome == "error":
+            # The Worker answers some errors (busy, an invalid command, a handler failure)
+            # without the session's list; an empty list here does not mean the files are gone.
             return
         try:
             hint = update_remote_files(self.root, files, count)

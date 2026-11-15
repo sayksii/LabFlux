@@ -75,7 +75,10 @@ class Settings(BaseModel):
     # Fast lane (M9). session: commands reuse the user's session; oneshot: the Scheduler closes
     # the session after each command, so every command gets a fresh container.
     fast_lane_mode: FastLaneMode = "session"
+    # Idle time without commands after which a session is closed; every command renews it.
     session_lease_s: float = Field(default=DEFAULT_LEASE_S, gt=0)
+    # A queued session is cancelled when its client has not asked about it for this long.
+    session_queue_timeout_s: float = Field(default=30, gt=0)
     session_command_timeout_s: float = Field(default=DEFAULT_COMMAND_TIMEOUT_S, gt=0)
     # `uv sync` before a command when pyproject.toml or uv.lock changed.
     session_sync_timeout_s: float = Field(default=DEFAULT_SYNC_TIMEOUT_S, gt=0)

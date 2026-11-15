@@ -12,7 +12,7 @@ from labflux.config import Settings
 from labflux.database import Database, commands, jobs, schema_version
 from labflux.models import JobSpec
 from labflux.policy import clock_text
-from labflux.scheduler import QUEUED_SESSION_TIMEOUT_S, Scheduler, ServiceError
+from labflux.scheduler import Scheduler, ServiceError
 from labflux.session_protocol import KEEPALIVE_ARGV, SESSION_ENV
 
 
@@ -79,6 +79,7 @@ def test_open_creates_a_session_job_with_a_keepalive_start(client, service):
     assert payload["session"] is True
     assert payload["job"]["argv"] == list(KEEPALIVE_ARGV)
     assert payload["job"]["env"] == SESSION_ENV
+    assert "PATH" not in SESSION_ENV  # The Worker sets it from the image.
     assert payload["job"]["time_limit_s"] == service.settings.session_lease_s
     assert payload["job"]["max_retries"] == 0
     listed = client.get("/api/jobs", headers=user_headers()).json()
@@ -156,13 +157,14 @@ def test_a_queued_session_is_cancelled_once_its_client_stops_polling(client, ser
     session = open_session(client, resources={"cpu": 1})
     batch = submit(client, cpu=1, user="bob")
     assert "waiting behind job" in job(client, batch["id"], "bob")["schedule_note"]
+    timeout = service.settings.session_queue_timeout_s
     for _ in range(3):  # A waiting client keeps it queued for as long as it polls.
-        clock[0] += QUEUED_SESSION_TIMEOUT_S - 1
+        clock[0] += timeout - 1
         heartbeat(client, "vm-a", instance)
         assert current(client).json()["state"] == "QUEUED"
         service.tick()
     assert job(client, session["id"])["state"] == "QUEUED"
-    clock[0] += QUEUED_SESSION_TIMEOUT_S + 1
+    clock[0] += timeout + 1
     heartbeat(client, "vm-a", instance)
     service.tick()
     abandoned = job(client, session["id"])
@@ -180,11 +182,12 @@ def test_a_queued_session_is_cancelled_once_its_client_stops_polling(client, ser
 def test_a_queued_session_gets_a_full_window_after_a_scheduler_restart(make_client, clock):
     session = open_session(make_client())  # No worker: it stays queued.
     clock[0] += 3600
-    client = make_client()  # A second Scheduler over the same data directory.
+    # A second Scheduler over the same data directory.
+    client = make_client(session_queue_timeout_s=5)
     service = client.app.state.scheduler
     service.tick()
     assert job(client, session["id"])["state"] == "QUEUED"
-    clock[0] += QUEUED_SESSION_TIMEOUT_S + 1
+    clock[0] += 6
     service.tick()
     assert job(client, session["id"])["state"] == "CANCELLED"
 

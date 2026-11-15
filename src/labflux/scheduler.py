@@ -50,9 +50,6 @@ EXPIRED_ATTEMPT = "worker heartbeat expired; termination unconfirmed"
 # its instance (heartbeat) or registers a new one with an inventory.
 RECONCILING = "RECONCILING"
 STOP_WAIT = "waiting for confirmed container termination"
-# A queued session is cancelled when its client has not asked about it for this long. The CLI
-# polls four times a second while it waits, so only a client that is gone stays silent.
-QUEUED_SESSION_TIMEOUT_S = 30.0
 
 
 class ServiceError(Exception):
@@ -905,14 +902,15 @@ class Scheduler:
 
     def _cancel_abandoned_sessions(self, connection) -> None:
         """Cancel queued sessions whose client stopped asking about them (a CLI killed while
-        it waited), so that they do not hold their place in the queue forever."""
+        it waited), so that they do not hold their place in the queue forever. The CLI polls
+        four times a second while it waits, so only a client that is gone stays silent."""
         now = self.clock()
         waiting = {}
         for session_id in connection.execute(
             select(jobs.c.id).where(jobs.c.kind == SESSION_KIND, jobs.c.state == "QUEUED")
         ).scalars():
             polled = self.session_polled.get(session_id, now)
-            if polled < now - QUEUED_SESSION_TIMEOUT_S:
+            if polled < now - self.settings.session_queue_timeout_s:
                 connection.execute(
                     jobs.update()
                     .where(jobs.c.id == session_id)

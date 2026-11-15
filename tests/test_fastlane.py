@@ -661,7 +661,12 @@ def test_ctrl_c_sends_cancel_and_keeps_the_result(fake, tmp_path, capsysbinary, 
         os.kill(os.getpid(), signal.SIGINT)
         seen.append(await websocket.receive_json())
         await websocket.send_text(Notice(id=CID, text="still here").model_dump_json())
-        result = CommandResult(id=CID, outcome="cancelled", session_ended=session_ended)
+        result = CommandResult(
+            id=CID,
+            outcome="cancelled",
+            reason="command cancelled by the client",
+            session_ended=session_ended,
+        )
         await websocket.send_text(result.model_dump_json())
 
     fake.script = script
@@ -672,6 +677,8 @@ def test_ctrl_c_sends_cancel_and_keeps_the_result(fake, tmp_path, capsysbinary, 
     # Ctrl-C stops the command only; "closed" is said only when the session really ended.
     assert (b"the session was closed" in out.err) == session_ended
     assert (b"the session is still running" in out.err) != session_ended
+    # One line for a stopped command, not the Worker's reason as well.
+    assert (b"cancelled by the client" in out.err) == session_ended
 
 
 @pytest.mark.parametrize(
@@ -764,6 +771,11 @@ def test_run_mirrors_the_remote_only_list_and_hints_once_per_change(fake, tmp_pa
     assert b"remote session" not in capsysbinary.readouterr().err
     assert manifest.read_text() == text
     assert snapshot_names(fake.received[-1]) == {".labflux.toml", "main.py"}
+
+    # A LabFlux error result carries no list; that does not mean the files are gone.
+    fake.script = finish_with(CommandResult(id=CID, outcome="error", reason="worker error: x"))
+    assert run(fake, tmp_path, ["python", "eval.py"]) == 125
+    assert manifest.read_text() == text
 
     # Changed list: one hint again. More files than listed are noted.
     fake.script = finish_with(result_with(model, count=7))

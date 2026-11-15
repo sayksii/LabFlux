@@ -43,10 +43,8 @@ CHUNK_TEXT_LIMIT = 4 * -(-CHUNK_BYTES // 3)  # base64 length of one full chunk.
 # Session container (the session attempt's START payload and its docker exec calls).
 KEEPALIVE_ARGV = ("sleep", "infinity")
 WORKSPACE = "/workspace"
-SESSION_ENV = {
-    "VIRTUAL_ENV": "/workspace/.venv",
-    "PATH": "/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-}
+# PATH is set by the Worker: /workspace/.venv/bin in front of the image's own PATH.
+SESSION_ENV = {"VIRTUAL_ENV": "/workspace/.venv"}
 DEPENDENCY_FILES = ("pyproject.toml", "uv.lock")  # A change triggers `uv sync` first.
 
 # Session states are the states of its job row (jobs.kind = "SESSION").
@@ -99,7 +97,7 @@ ErrorCode = Literal[
     "invalid",  # Malformed or out-of-order message.
     "not_found",  # No such session for this user.
     "not_ready",  # The session is not RUNNING (queued, starting, ending or ended).
-    "busy",  # Another command is running in this session.
+    "busy",  # Another command is running in this session; the CLI waits and tries again.
     "too_large",  # Snapshot above max_source_bytes, or write-back above its cap.
     "worker_unavailable",  # The session's Worker has no relay connection right now.
     "worker_disconnected",  # The relay dropped during the command; the session is closed.
@@ -215,7 +213,8 @@ class SnapshotChunk(Message):
 
 
 class CancelRequest(Message):
-    """Ctrl-C: ends the command by terminating the session container (output is kept)."""
+    """Ctrl-C, or a dropped client connection: stops only the command's processes; the session
+    container stays, and the output and files written so far are kept."""
 
     type: Literal["cancel"] = "cancel"
     id: OptionalCommandId = ""
@@ -276,11 +275,14 @@ class CommandResult(Message):
 
     type: Literal["result"] = "result"
     id: CommandId
-    # exited: the process ended on its own; timeout / cancelled: the session container was
-    # terminated; error: LabFlux could not run it (bad snapshot, failed uv sync start, ...).
+    # exited: the process ended on its own; timeout: the session container was terminated;
+    # cancelled: only the command was stopped (session_ended is false) unless its processes
+    # could not be stopped; error: LabFlux could not run it (bad snapshot, uv sync start, ...).
     outcome: Literal["exited", "timeout", "cancelled", "error"]
     exit_code: int | None = None
     reason: str = Field(default="", max_length=2048)
+    # The session is gone with its workspace; in one-shot mode the Scheduler sets this on
+    # every result it relays.
     session_ended: bool = False
     writeback_size: int = Field(default=0, ge=0)
     writeback_sha256: Sha256 | None = None

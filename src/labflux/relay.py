@@ -194,6 +194,10 @@ async def serve(
                     hub.send(node_id, cancel)
                     await send(error("too_large", f"write-back exceeds {writeback_cap} bytes"))
                     break
+            if isinstance(message, CommandResult) and settings.fast_lane_mode == "oneshot":
+                # end_command closes the session below, so the client must not expect to find
+                # the session's files in it afterwards.
+                item = message.model_copy(update={"session_ended": True}).model_dump()
             await send(item)
             if isinstance(message, CommandResult):
                 if message.session_ended:
