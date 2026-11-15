@@ -506,6 +506,9 @@ Scheduler 重啟時的重連與不重複執行，由 M6.7 的 Docker 測試 `tes
 
 ## M9：快速測試與可重用 session（kayle，2026-11-15）
 
+本節是 2026-11-15 的紀錄。2026-11-16 的審查修正改變了其中幾項行為（取消只停止指令、跳過檔案的回報方式、忙碌時等待、
+session 的 PATH），以「程式審查修正」一節為準。
+
 **實作。** session 是 `jobs.kind = SESSION` 的工作列（migration 4），與批次工作共用資源帳本與排程，排在批次工作之前；
 START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` 執行。指令經 CLI 的 WebSocket
 （`/api/sessions/{id}/ws`，Token 只放在 Authorization header）送到 Scheduler，Scheduler 只在記憶體中經 Worker 的門鈴長連線轉送；
@@ -572,6 +575,71 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
   另外單獨連續執行 3 次都通過（每次約 15 秒）。測試後沒有殘留的測試容器。
 - `uv run ruff check src tests`、`ruff format --check`：通過；`uv lock --check`：通過。沒有執行 GPU 或 VM 測試。
 
+## feat/m6-m8-m9 程式審查修正（kayle，2026-11-16）
+
+對 `feat/m6-m8-m9` 做了一輪程式審查，與使用者逐項確認後只修實際會遇到、而且修起來便宜的問題；其餘記為已知限制（見下一節）。
+修正分三個分支（`wip/fix-sched`、`wip/fix-worker`、`wip/fix-client`）完成後合併，再對齊兩端的行為。
+每個修正都有一個「還原修正就會失敗」的測試；括號內註明例外。設計決定見 `docs/architecture.md` 的 T9～T13。
+
+**Scheduler 與轉送**
+
+| 問題 | 修正 | 驗證 |
+|---|---|---|
+| backfill 以「開始時間 + 一個 lease」估計 session，延長過的 session 被當成已經釋放 | 已啟動的 session 以目前的 `lease_expires_at` 計入；尚未啟動的維持原估計 | `test_sessions.py::test_backfill_books_a_session_until_its_renewed_lease` |
+| 隊首有保留時段時，後續工作只試小卡優先挑出的卡，和隊首重疊就被拒絕 | 有保留時段時，候選卡改成「隊首用不到的卡」優先 | `test_policy.py::test_backfill_prefers_a_card_the_reserved_job_cannot_use`（假的 GPU 資料） |
+| CLI 在等待 session 時被強制結束，排隊中的 session 永遠佔著隊首 | 排隊中的 session 超過 `session_queue_timeout_s`（新設定，預設 30 秒）沒有被擁有者查詢就取消；時間記在記憶體 | `test_sessions.py::test_a_queued_session_is_cancelled_once_its_client_stops_polling`、`::test_a_queued_session_gets_a_full_window_after_a_scheduler_restart` |
+| 轉送先標記忙碌才檢查擁有者，其他使用者能短暫把別人的 session 標成忙碌 | 擁有者與狀態檢查（`begin_command`）移到忙碌檢查之前；不是自己的 session 一律回 `not_found` | `test_session_relay.py::test_another_user_cannot_mark_a_session_busy`；`::test_a_command_rejected_as_busy_does_not_end_the_running_one` 是防止退化的測試，修正前後都通過 |
+| `oneshot` 模式下 Worker 的結果寫 `session_ended = false`，CLI 會把即將刪除的檔案列進清單 | `oneshot` 模式下轉送把每個結果標成 `session_ended` | `test_session_relay.py::test_one_shot_mode_tells_the_client_that_the_session_ended` |
+| `test_fault.py` 的 RECONCILING 斷言永遠成立；8.3 的 GPU 正規化沒有測試 | 只改測試：tick 之後檢查工作仍是 `QUEUED`、沒有 attempt、節點帳本不變；新增 GPU 占比的用量測試 | 暫時改壞程式（讓 `RECONCILING` 節點也派送、從 `dominant_share` 拿掉 GPU）確認新測試會失敗，再還原 |
+
+**Worker 與執行器**
+
+| 問題 | 修正 | 驗證 |
+|---|---|---|
+| session 容器的 PATH 寫死，自訂映像的直譯器（例如 `/opt/conda/bin`）找不到 | PATH = `/workspace/.venv/bin` + 映像自己的 PATH（映像沒設時用 Docker 的預設值） | `test_session_worker.py::test_session_path_puts_the_workspace_venv_before_the_images_own_path`；Docker：`test_session_docker.py::test_a_session_keeps_the_image_path_behind_the_workspace_venv` |
+| Ctrl-C 或客戶端斷線會結束整個 session 容器 | 指令透過 `sh -c ... exec "$@"` 啟動並記下 PID；取消時由另一個 exec 對 process group 送 TERM，`stop_grace_s` 後送 KILL，容器保留；停不掉（約 2 × `stop_grace_s` + 5 秒後）才終止容器 | `test_session_worker.py::test_a_cancel_stops_only_the_command_and_the_session_stays_usable`、`::test_a_cancel_during_uv_sync_keeps_the_session_and_syncs_again`、`::test_a_command_that_does_not_finish_ends_the_session_and_keeps_its_output[unstoppable]`；Docker：`test_session_docker.py::test_a_stop_ends_only_the_commands_process_group`（忽略 TERM 的父子程序在寬限後被 KILL、沒有殘留程序、容器仍在執行）、`::test_a_stop_that_cannot_end_the_command_asks_for_the_container_to_end` |
+| 門鈴 handler 拋出例外時，指令要等到轉送的保護期限才失敗 | 立刻回覆 `worker error: ...`；指令的執行緒已啟動時由它自己回覆，不會送兩次 | `test_session_worker.py::test_a_failing_message_handler_answers_the_command_at_once` |
+| 寫回只看位元組上限，檔案數可能超過封存檔的成員上限而整個寫回被拒絕 | 寫回最多 `max_archive_members` 個檔案，其餘和超過大小的檔案一樣留在遠端並列出 | `test_session_worker.py::test_the_archive_member_limit_also_caps_the_write_back` |
+| 跳過的檔案只在當次指令回報一次，而且 Worker 與 CLI 各印一行 | `session.json` 記錄累計的「只在遠端」清單，每個由指令執行緒送出的結果都帶著它；Worker 不再送這個 Notice | `test_session_worker.py::test_remote_only_files_stay_listed_until_written_back_or_deleted`、`::test_the_write_back_cap_skips_and_lists_files` |
+| 測試缺口 | 批次 attempt 被拒絕的原因確實是缺少 session 旗標；門鈴測試先證明沒有補輪詢再放行通知；session 結束後工作目錄刪除；HTTP 與門鈴同時中斷後只靠備援輪詢送達 | `test_session_worker.py::test_commands_only_for_this_workers_running_sessions`、`::test_the_session_workspace_is_deleted_when_the_session_ends`；`test_doorbell.py::test_a_ring_makes_the_worker_poll_long_before_its_fallback`、`::test_fallback_poll_delivers_after_a_partition_that_also_cut_the_socket` |
+
+**CLI**
+
+| 問題 | 修正 | 驗證 |
+|---|---|---|
+| `~/.bashrc` 的 conda／pyenv／venv 把自己的目錄放到 PATH 最前面，替身被蓋掉 | bash 以產生的 `--rcfile` 啟動：先讀使用者的 `~/.bashrc`，再把替身目錄放回最前面，並掛在 `PROMPT_COMMAND` 最後（保留 `$?`）；zsh 以 `ZDOTDIR` 包一層加 `precmd`；啟動時對被 alias 或 function 蓋住的指令印警告 | `test_fastlane.py::test_labflux_shell_keeps_standins_first_after_startup_files[bash-.bashrc]`（在 pseudo-terminal 執行真正的 `labflux shell`）；`test_cli.py::test_cli_shell_puts_standins_first_and_cleans_up`。**zsh 的版本因為這台機器沒有 zsh 而跳過，尚未執行過** |
+| session 忙碌時第二個指令立刻以 125 失敗（AI 工具會平行送指令） | 每秒重試、每次重新打包快照，最多等 `[session] busy_wait_s`（預設 120 秒） | `test_fastlane.py::test_run_waits_for_a_busy_session_with_a_fresh_snapshot`、`::test_run_gives_up_on_a_busy_session_after_busy_wait_s` |
+| 專案裡有 symbolic link 時每個送到遠端的指令都失敗 | 原始碼快照略過連結（不跟隨）並回報；輸出封存與解壓仍然拒絕連結 | `test_archives.py::test_source_snapshot_skips_symlinks_without_following_them`、`test_fastlane.py::test_run_skips_symlinks_with_one_notice_per_command`、`test_cli.py::test_cli_submit_upload_status_nodes_and_queued_cancel` |
+| 留在遠端的檔案只有一行會離開上下文的提示 | `.labflux/remote-files.txt`、清單變動時一行提示、`labflux session files`；新 session、`session_ended` 的結果與 `labflux session close` 會移除清單 | `test_fastlane.py::test_run_mirrors_the_remote_only_list_and_hints_once_per_change`、`::test_remote_only_list_ends_with_the_session`；`test_cli.py::test_cli_session_files_prints_the_list_and_close_removes_it` |
+| 訊息仍說 Ctrl-C 會關閉 session | 取消且 session 還在時只印一行 `the command was stopped; the session is still running`（不重複 Worker 的原因）；`the session was closed` 只在結果帶 `session_ended` 時出現 | `test_fastlane.py::test_ctrl_c_sends_cancel_and_keeps_the_result[False]`、`[True]` |
+| 不經指令執行緒的錯誤結果不帶清單，CLI 會誤刪 `.labflux/remote-files.txt` | outcome 為 `error` 的結果不更新清單 | `test_run_mirrors_the_remote_only_list_and_hints_once_per_change` 中的錯誤結果段落 |
+
+其他對齊：`SESSION_ENV` 不再帶 PATH；`session_protocol.py` 的註解改成新的取消語意。
+
+**實際 Docker（CPU 容器，沒有 GPU）。** `tests/test_fast_lane_e2e_docker.py`（真實 Scheduler、Worker 與 `labflux` CLI，
+`session_command_timeout_s = 3`、`session_writeback_bytes = 1 MiB`）新增與修改的段落：
+
+- 指令先寫出 `partial.txt` 再睡 30 秒，印出第一行後送 SIGINT：exit 130，訊息是 `the command was stopped; the session is still running`，
+  `partial.txt` 已寫回本機；下一個指令在同一個 session、attempt 與容器執行，讀得到第一個指令留下的 `/tmp/marker`、`gen.txt` 與 `partial.txt`。
+- 3 秒時限仍以 124 結束並終止容器、釋放資源，之後的指令租用新的 session（沒有改變）。
+- 新測試 `test_fast_lane_remote_only_files_and_concurrent_commands`：指令寫出 2 MiB 的 `checkpoints/model.bin`、小檔 `small.txt`
+  與 `/outputs/keep.txt`。小檔寫回；`checkpoints/` 沒有出現在本機；stderr 只有一行提到這個檔案
+  （`1 file (2.0 MB) exists only in the remote session`，並指向 `.labflux/remote-files.txt` 與 `/outputs`）；清單只有這一個檔案。
+  下一個替身指令在同一路徑讀到 2097152 位元組，清單沒變所以沒有提示；`labflux session files` 印出同一份清單。
+- 同一個測試：同時啟動兩個各睡 1.5 秒的指令，兩個都以 0 結束並印出結果，其中恰好一個印出等待訊息；session、attempt 與容器不變。
+- 同一個測試：`labflux session close` 之後本機清單被移除、資源釋放、容器刪除；`labflux fetch <session 的工作 ID>` 取回的輸出裡有 `keep.txt`
+  （session 的 `/outputs` 沿用批次工作的上傳流程，這是第一次對 session 驗證）。
+
+**執行結果。**
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：301 passed、1 skipped（zsh 版本的 shell 測試，沒有 zsh）、約 45 秒（修正前 276）。
+- `uv run pytest -q -m "docker and not gpu and not vm"`：25 passed、沒有跳過，約 85 秒（修正前 21）；
+  完整執行之後只再改過 `tests/test_fast_lane_e2e_docker.py`（加上 `/outputs` 的檢查）與文件，
+  這個檔案另外單獨執行 6 次都通過（每次約 23 秒）。測試後沒有殘留的測試容器。
+- `uv run ruff check src tests`、`ruff format --check`：通過。沒有執行 GPU 或 VM 測試，也沒有在實驗室部署上執行。
+- 手動檢查（Worker 分支）：指令與送訊號的 `sh` 包裝在 dash（`python:3.12-slim`、ubuntu）、bash 與 busybox sh 都可用；
+  `kill -TERM -PID` 是三者都接受的寫法。
+
 ## feat/m6-m8-m9 已知限制
 
 判定原則與 PR #2 相同：少見情況記錄為限制，不為它擴大設計。
@@ -592,6 +660,7 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
   被另一個 instance 接手 `worker_id` 而得到 409 的舊 Worker 也會繼續空轉。
 - Scheduler 重啟後，存活的 Worker instance 只以 instance_id 檢查核對，不做完整盤點；這依賴 SQLite 保存所有已 commit 的變更，以及 Worker outbox 保存所有尚未 ack 的資料。
 - Docker 測試中的「機器停機」是正常停止 Worker 加上強制刪除容器，「網路中斷」是在 httpx transport 層立即拒絕請求，見 M6.7 的未驗證項目。
+  Docker 的網路中斷測試只切斷 HTTP；HTTP 與門鈴長連線同時中斷的情況只在單元層級驗證（`tests/test_doorbell.py`，假的容器）。
 
 **排程策略（M8）**
 
@@ -603,7 +672,7 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
   `OFFLINE` 或心跳過期節點上的 attempt 不列入保留計算，節點回來後下一輪重新計算。
 - 與一般 EASY 相同，保留時段每輪重新計算、不保存，只有第一個被擋住的工作有保留；之後到達的高分工作可以合法地先跑並把保留時段往後推。
 - 沒有任何線上節點放得下隊首時（例如需要的 GPU 比單一節點多，或符合的卡正被外部使用或尚未回報）就沒有保留，後續工作自由啟動；外部使用結束後隊首才再受保護。外部使用中的 GPU 完全不列入保留，因為釋放時間未知。
-- `_keeps_reservation` 只檢查依小卡優先挑出的前幾張卡；後續工作原本可以用隊首不需要的另一張卡，卻因重疊而被拒絕。不會不安全，只是不夠理想。
+- 隊首有保留時段時，後續工作先拿隊首用不到的卡，即使它比另一張空卡大；只在這種情況下不照小卡優先（2026-11-16 修正後的行為）。
 - 近期用量以目前線上節點的容量正規化；離線節點上的 attempt 仍計入，比例上限為 1。用量計算的是從派送開始的預約時間，不是實際使用率。
 - `priority`／`backfill` 模式下，每輪有排隊工作的排程都會掃描時間窗內的 attempt（約每 0.25 秒及每次心跳），`finished_at` 沒有索引；
   `fcfs` 模式每輪仍驗證所有排隊工作的 JobSpec 並比較說明文字，佇列很長時都會持有資料庫鎖較久。在課程專案的規模下可接受。
@@ -630,17 +699,48 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
 
 **快速測試 session（M9.5～9.15）**
 
-- Ctrl-C、客戶端斷線、指令超時、`uv sync` 超時與指令中途的轉送中斷，都會結束整個 session 容器（Docker 沒有 exec-kill）；下一個指令租用新的 session。
+- 指令超時、`uv sync` 超時與指令中途 Worker 的轉送連線中斷，都會結束整個 session 容器；下一個指令租用新的 session。
+  Ctrl-C 與客戶端斷線只停止指令（T10）。
+- 取消的限制：session 映像需要 PATH 上有 POSIX `sh` 與可寫的 `/tmp`（PID 記在 `/tmp/.labflux-command`）。`/tmp` 不可寫時指令仍會執行
+  （`sh` 在 stderr 多印一行重導向錯誤），但取消會退回結束整個 session；指令自己改動這個檔案也一樣。
+  自行脫離 process group 的程序（`setsid`、daemon）不會被取消，留到 session 結束。找不到程式時由 `sh` 回報，exit code 127。
+- `uv sync` 執行中被取消時 session 保留，`.venv` 可能只裝到一半；依賴的 hash 沒有記下，所以下一個指令會重新同步。
+- `oneshot` 模式下，Worker 沒有轉送連線（`worker_unavailable`）時 session 也會被關閉：指令還沒送到 Worker，結束指令的流程照樣執行。
+  CLI 會重試並租用新的 session。
+- Worker 關閉時，每個執行中的快速測試指令最多等 30 秒（`COMMAND_JOIN_S`）讓它送出結果。
+- Worker 無聲消失（主機斷電、網路中斷但沒有收到連線關閉）時，轉送要等 WebSocket keepalive 逾時（uvicorn 預設 20 秒 ping 加 20 秒逾時）
+  才發現連線已斷，這段時間指令沒有輸出也沒有錯誤；使用者可以按兩次 Ctrl-C 離開。
+- lease 不看指令的結果：失敗的指令、被拒絕為忙碌的指令都會延長 lease。不斷失敗重試的迴圈可以一直佔著 session。
+- 排隊中的 session 以記憶體中的時間戳判斷客戶端是否還在：Scheduler 重啟後每個排隊中的 session 重新得到完整的 30 秒；
+  直接呼叫 API、查詢間隔超過 `session_queue_timeout_s` 的客戶端會失去排隊位置。`labflux session status` 也算一次查詢。
+- 不是自己的 session 一律回 `not_found`；忙碌中而且已經不是 `RUNNING` 的 session 回 `not_ready` 而不是 `busy`。
 - 指令剛好在 STOP 到達時正常結束，會回報為 `cancelled`（`session closed`）。
 - CLI 連上但一直沒送完快照時，轉送等到保護期限（同步 + 指令 + 60 秒，預設約 16 分鐘）才回報 `lost` 並關閉 session。
-- 忙碌檢查在擁有者檢查之前，其他使用者的請求可能在 `begin_command` 期間短暫把別人的 session 標成忙碌，也能探測某個 session ID 是否忙碌；session ID 是隨機 32 位十六進位，因此不處理。
 - `apply_snapshot` 解開後若中途發生 OSError（例如磁碟滿），`session.json` 保留舊的清單，已套用的檔案會被當成產生的檔案，之後的快照不會刪除它們。
 - 背景程序在 `pack_files` 讀取時縮小檔案會讓打包失敗，指令得到錯誤結果、沒有寫回；檔案在掃描與打包之間變大可能讓封存略超過 `session_writeback_bytes`，但仍在轉送的上限（再加 16 MiB）內。
-- 跳過檔案的 Notice 最多列 10 個名稱、截在 2048 字元；結果最多列 `MAX_SKIPPED_LISTED` 個並附 `skipped_count`。客戶端另外依結果印一行摘要，所以使用者可能看到兩次；由哪一端回報尚待決定。
+- 只在遠端的檔案清單（T11）：結果最多列 `MAX_SKIPPED_LISTED`（100）個並附 `skipped_count`，總大小只算列出的檔案；大小來自最後一次掃描。
+  清單上沒被指令改過的檔案不會重試寫回，即使這次放得進上限；背景程序在兩個指令之間的修改偵測不到（與寫回相同）。
+  不經指令執行緒的結果（`invalid command`、session 不在這台 Worker、Worker 端的 `busy`、handler 例外）不帶清單，CLI 對 `error` 結果因此不更新清單，
+  清單可能晚一個指令才反映變動。
+- `.labflux/remote-files.txt` 只和這個專案最後一次執行的指令一樣新：session 因 lease 到期而結束時，清單留到下一個指令才移除；
+  同一路徑、同樣大小的檔案再次被跳過時不會再提示；指令本身讓 session 結束時（超時、`oneshot` 模式），超過上限的檔案只回報一次
+  `ended with the session without being written back`。在專案目錄外執行 `labflux session close` 不會移除清單。
+- 寫回除了位元組上限，每個指令最多 `max_archive_members`（預設 10000）個檔案，其餘留在遠端並列入清單。
+- session 的 `/outputs` 在 session 結束時才上傳（上限 `max_output_bytes`），以 session 的工作 ID 用 `labflux fetch` 取回；session 還在時拿不到。
+- 忙碌等待：等待中的指令每次重試都重新打包專案，大專案會多花 CPU；多個等待中的指令沒有先後保證；
+  上限只能在 `.labflux.toml` 的 `[session] busy_wait_s` 設定，Scheduler 設定沒有對應的全站預設值。
+- 原始碼快照略過 symbolic link（`labflux run`、替身、`labflux submit --source`），連結指向的內容在 session 裡不存在；
+  FIFO、socket 等特殊檔案仍會讓快照失敗。
+- `labflux shell`：只包裝 bash 與 zsh，其他 shell 只在啟動前設定一次 PATH 並印出提示；zsh 的包裝尚未實際執行過（這台機器沒有 zsh），
+  並且會替原本沒設 `ZDOTDIR` 的使用者把它設成 `$HOME`。只處理最外層的 shell，巢狀的 bash／zsh 重新讀啟動檔後不會再放回替身；
+  bash 的 login 專用檔（`~/.bash_profile`）和以前一樣不讀。PATH 在下一次提示字元才修正，所以同一行的
+  `conda activate x && python ...` 仍可能用到本機的 python。alias 與 function 只警告、不移除。
 - session 自己結束（超時、取消、轉送中斷）時，工作的最終原因是 Worker 的原因；被 lease 到期或關閉停止時，最終原因是 runtime 的一般 `cancelled`，`STOPPING` 期間顯示 `session lease expired`。關閉已在 `STOPPING` 的 session 會把原因改成一般的「等待確認容器終止」。
 - 指令執行中 Worker 重啟，依時間點可能停止 session，也可能留下等待接手；兩種情況該指令都失敗。
 - `run.thread` 指派之前的極短時間內，`_execute` 可能把剛啟動的指令當成尚未開始而回覆 `cancelled`，執行緒也可能再送一個錯誤結果；轉送只保留第一個結果，不影響資源。
-- backfill 以一個 lease 長度預估 session，延長過的 session 可能超過這個估計，與超過時限的 attempt 相同。
+- backfill 以 session 目前的 lease 到期時間估計它的釋放時間；每個指令都會延長 lease，所以 session 後面的隊首保留時段會跟著往後移。
+  尚未啟動的 session 以派送時間加一個 lease 估計。lease 已過但仍佔著資源的 session（指令比 lease 長、`STOPPING`、`UNKNOWN`）視為「現在」釋放，
+  與超過時限的 attempt 相同。
 - 沒有 stdin、TTY，不轉送客戶端環境變數；session 映像需要接受 `sleep infinity`。
 - 單元測試中客戶端斷線要以 `ws.close()` 模擬；離開 TestClient 的 websocket context 會取消 handler，真實 uvicorn 不會。
 - 寫回依 D12 只送回新增或修改的檔案；指令執行期間遠端刪除的檔案不會刪除本機檔案。寫回衝突產生的 `<檔名>.remote` 是一般檔案，下一份快照會送到 session。
@@ -658,7 +758,7 @@ START 啟動執行 `sleep infinity` 的容器，每個指令以 `docker exec` �
 - `plan.md` 第 4 節（最終驗收）還沒有門鈴、快速測試的路由與寫回，以及 M15 資料集快取的條目，短測試那一行仍是舊寫法。
 - M15 的項目假設 S2～S4 的版本識別方式，仍是提議；版本格式與正本位置（NAS，或依 S10 經 kayle 以 HTTP 提供）定案後，15.1、15.2 可能要改寫。
 - 9.5 維持資源不足時互動工作等待；是否保留容量給互動工作（Q1）原定與 M8 一起決定，目前仍未決定，沒有列成項目。
-- 尚未決定的提議刻意沒有寫進 plan：D1、D2、D6（Ctrl-C 取消）、D8（在送出指令的機器上開 session）、D9、D11、F2、F5、1 秒延遲目標與保留容量（R17）。
+- 尚未決定的提議刻意沒有寫進 plan：D1、D2、D6（Ctrl-C 取消的範圍已於 2026-11-16 決定，見 T10 與 9.13）、D8（在送出指令的機器上開 session）、D9、D11、F2、F5、1 秒延遲目標與保留容量（R17）。
 
 ## 最後驗證與交付
 

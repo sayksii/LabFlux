@@ -200,6 +200,7 @@ gpu = 1
 gpu_model = "3090"
 image = "localhost/labflux/python-uv:3.12-uv0.11.8"   # 省略時使用 default_image
 datasets = ["mnist"]
+busy_wait_s = 120  # session 正在執行另一個指令時最多等幾秒；0 表示不等
 
 [route]            # 增減預設送到遠端的指令
 add = ["mypy"]
@@ -211,20 +212,32 @@ uv run labflux run -- pytest -q        # 在自己的 session 執行，沒有就
 uv run labflux shell                   # 開一個 PATH 前面放了指令替身的 shell，再從裡面啟動 AI 工具
 uv run labflux local -- python -V      # 跳過替身，執行本機的真正指令
 uv run labflux session status          # 目前的 session 與剩餘 lease 秒數
+uv run labflux session files           # 只存在遠端 session 的檔案清單
 uv run labflux session close           # 關閉 session，停止容器並釋放資源
 ```
 
 - 預設送到遠端的指令：`python`、`python3`、`pytest`、`torchrun`、`accelerate`、`deepspeed`、`nvidia-smi`；
   `uv` 只有 `uv run` 送到遠端。其他指令與專案外的指令都在本機執行。`bash run.sh` 在本機執行，
   腳本裡的每個 `python` 各自送到遠端；整個腳本要在遠端執行請用 `labflux run -- bash run.sh`。
+- `labflux shell` 在 bash 與 zsh 的啟動檔執行完之後、以及每次顯示提示字元之前，把替身目錄放回 PATH 最前面，
+  所以 conda、pyenv 或之後的 `conda activate` 不會蓋掉替身；alias 或 shell function 蓋住清單上的指令時，啟動時會印出警告。
+  其他 shell 只在啟動前設定一次 PATH；可用 `command -v python` 確認。
 - 每個指令執行前送出一份完整快照（打包規則與 `--source` 相同）：遠端覆蓋快照中的檔案、刪除上一份快照有而這份沒有的檔案，
   保留指令自己產生的檔案與 `.venv`；`pyproject.toml` 或 `uv.lock` 改變時先執行 `uv sync`。
-- 指令新增或修改的檔案寫回本機同一位置（不含 `.venv`、`__pycache__` 等快取，每個指令上限 100 MB）；
+  專案裡的 symbolic link 不會送出（不跟隨連結），每個指令提示一次。
+- 指令新增或修改的檔案寫回本機同一位置（不含 `.venv`、`__pycache__` 等快取，每個指令上限 100 MB、10000 個檔案）；
   本機同一檔案在指令執行期間也被改過時不覆蓋，改存成 `<檔名>.remote`。遠端刪除的檔案不會刪除本機檔案。
+- 超過寫回上限的檔案（例如 checkpoint）只留在遠端 session：累計列在專案的 `.labflux/remote-files.txt`
+  （`labflux session files` 可印出），清單變動時終端機印一行提示。之後送到遠端的指令以同一個路徑讀得到這些檔案；
+  session 結束時它們跟著刪除，要保留請寫到 `/outputs`（session 結束時上傳，之後以 session 的工作 ID 用 `labflux fetch` 取回）。
+- 同一個 session 一次執行一個指令；同時送出的第二個指令會等前一個結束再執行（`busy_wait_s`，預設最多 120 秒）。
 - exit code：遠端程式的 exit code；124 為指令超時，130 為 Ctrl-C 取消，125 為 LabFlux 錯誤，
-  127 為替身找不到本機指令。Ctrl-C、指令超時或連線中斷都會結束整個 session 容器，下一個指令自動租用新的 session。
-- session 與批次工作共用同一個資源帳本，每位使用者同時最多一個；session 映像需要支援 `sleep infinity`。
-  沒有 stdin／TTY，也不轉送開發機的環境變數。
+  127 為替身找不到本機指令。
+- Ctrl-C（或 CLI 的連線中斷）只停止這個指令：容器、工作目錄與 `.venv` 都保留，已寫出的檔案照常寫回，下一個指令沿用同一個 session。
+  指令超過時限時則結束整個 session 容器，下一個指令自動租用新的 session。
+- session 的 lease 是閒置時間：連續 10 分鐘沒有指令才回收，每個指令都會重新起算。
+- session 與批次工作共用同一個資源帳本，每位使用者同時最多一個；session 映像需要支援 `sleep infinity`，
+  並且有 `sh` 與可寫的 `/tmp`（取消指令時使用）。沒有 stdin／TTY，也不轉送開發機的環境變數。
 
 Scheduler TOML 的相關設定：
 
@@ -232,6 +245,7 @@ Scheduler TOML 的相關設定：
 |---|---|---|
 | `fast_lane_mode` | `session` | `session` 重用同一個容器；`oneshot` 每個指令結束就關閉 session，下一個指令使用新容器 |
 | `session_lease_s` | 600 | 閒置 lease；指令開始與結束時延長，到期且沒有指令在執行時停止容器 |
+| `session_queue_timeout_s` | 30 | 排隊中的 session 超過這段時間沒有被客戶端查詢（CLI 已結束）就取消 |
 | `session_command_timeout_s` | 60 | 單一指令的時限 |
 | `session_sync_timeout_s` | 900 | 指令前 `uv sync` 的時限 |
 | `session_writeback_bytes` | 104857600 | 每個指令寫回的檔案總量上限 |
