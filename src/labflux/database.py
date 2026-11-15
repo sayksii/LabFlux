@@ -47,6 +47,8 @@ jobs = Table(
     Column("cancel_requested", Boolean, nullable=False, default=False),
     Column("created_at", Float, nullable=False),
     Column("updated_at", Float, nullable=False),
+    # The latest scheduling decision for this job: why it waits, or why it was placed.
+    Column("schedule_note", Text, nullable=False, default=""),
 )
 attempts = Table(
     "attempts",
@@ -119,8 +121,13 @@ Index(
     sqlite_where=attempt_gpus.c.released.is_(False),
 )
 
+
+def add_schedule_note(connection) -> None:
+    connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN schedule_note TEXT NOT NULL DEFAULT ''")
+
+
 # Migration N upgrades a database at version N - 1; version 1 is the original bootstrap.
-MIGRATIONS = {2: lambda connection: attempt_gpus.create(connection)}
+MIGRATIONS = {2: lambda connection: attempt_gpus.create(connection), 3: add_schedule_note}
 SCHEMA_VERSION = max(MIGRATIONS)
 
 

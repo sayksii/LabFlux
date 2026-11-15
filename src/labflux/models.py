@@ -32,6 +32,10 @@ class JobSpec(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     resources: ResourceRequest = Field(default_factory=ResourceRequest)
     time_limit_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    # Batch priority 0-9; None means the Scheduler's default_priority. Ignored by fcfs.
+    priority: int | None = Field(default=None, ge=0, le=9)
+    # Advisory only: shown in explanations; reservations and backfilling use time_limit_s.
+    estimated_runtime_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     source_id: str | None = None
     datasets: list[str] = Field(default_factory=list)
     # New attempts allowed after an infrastructure loss (the node or its container was lost);

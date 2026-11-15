@@ -7,6 +7,7 @@ import re
 import socket
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
@@ -30,6 +31,16 @@ class Settings(BaseModel):
     poll_interval_s: float = Field(default=0.25, gt=0)
     request_timeout_s: float = Field(default=3, gt=0)
     job_time_limit_s: float = Field(default=3600, gt=0)
+    # fcfs: strict submission order. priority: score order (priority, waiting bonus, recent
+    # usage penalty). backfill: priority plus EASY backfilling behind a head-job reservation.
+    scheduling_policy: Literal["fcfs", "priority", "backfill"] = "fcfs"
+    default_priority: int = Field(default=5, ge=0, le=9)
+    # score = priority * w_priority + queued minutes * w_wait - recent usage minutes * w_usage
+    score_priority_weight: float = Field(default=100, ge=0)
+    score_wait_weight: float = Field(default=1, ge=0)
+    score_usage_weight: float = Field(default=1, ge=0)
+    # Recent usage: reserved minutes in this window, scaled by the dominant share of the cluster.
+    usage_window_s: float = Field(default=3600, gt=0)
     stop_grace_s: int = Field(default=2, ge=0)
     memory_reserve_mib: int = Field(default=512, ge=0)
     allocatable_cpu: float | None = Field(default=None, gt=0)

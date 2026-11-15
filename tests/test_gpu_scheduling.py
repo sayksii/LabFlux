@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from labflux.database import Database, attempt_gpus, schema_version
+from labflux.database import SCHEMA_VERSION, Database, attempt_gpus, schema_version
 from labflux.models import Capacity, GpuDevice, JobSpec, ResourceRequest
 from labflux.scheduler import Scheduler
 
@@ -212,15 +212,16 @@ def test_card_pooled_by_another_worker_is_rejected(client):
     assert response.status_code == 409
 
 
-def test_v1_database_upgrades_to_v2_and_keeps_jobs(settings):
+def test_v1_database_upgrades_to_current_and_keeps_jobs(settings):
     first = Scheduler(settings)
     job = first.submit("alice", JobSpec(image="python:3.12-slim", argv=["true"]))
     with first.db.transaction() as connection:
-        attempt_gpus.drop(connection)  # Version 1 had every table except attempt_gpus.
+        attempt_gpus.drop(connection)  # Version 1 had neither attempt_gpus nor schedule_note.
+        connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN schedule_note")
         connection.execute(update(schema_version).values(version=1))
     first.db.close()
     database = Database(settings.data_dir)
-    assert database.version == 2
+    assert database.version == SCHEMA_VERSION
     with database.transaction() as connection:
         assert connection.execute(select(func.count()).select_from(attempt_gpus)).scalar_one() == 0
     database.close()
