@@ -105,12 +105,110 @@ def earliest_start(
     return None
 
 
+@dataclass(frozen=True)
+class Victim:
+    """A running preemptible attempt that could be stopped to make room on its node (M11)."""
+
+    attempt_id: str
+    job_id: str
+    priority: int
+    lost_s: float
+    cpu: float
+    memory_mib: int
+    cards: frozenset[str] = frozenset()
+
+
+def lost_seconds(started_at: float | None, now: float) -> float:
+    """Work a stop now throws away. Without checkpoints that is everything since the attempt
+    reported STARTED; a later step can measure from its last checkpoint instead."""
+    return 0.0 if started_at is None else max(0.0, now - started_at)
+
+
+def victim_key(victim: Victim) -> tuple:
+    """Least lost work first, then lower priority, then job id."""
+    return (victim.lost_s, victim.priority, victim.job_id)
+
+
+def fits_after_stopping(
+    node: dict,
+    used: dict,
+    held: frozenset[str],
+    matching: frozenset[str],
+    request: dict,
+    stopped: list[Victim],
+    max_jobs: int,
+) -> bool:
+    """Whether request fits on node once the stopped attempts have released their resources.
+
+    used: the CPU, RAM and job count allocated on node now, the stopped attempts included.
+    held: allocated cards. matching: the node's cards that suit the request and are not used
+    outside LabFlux, allocated or not.
+    """
+    capacity = node["capacity"]
+    freed = frozenset().union(*(victim.cards for victim in stopped))
+    cpu = capacity["cpu"] - used["cpu"] + sum(victim.cpu for victim in stopped)
+    memory = capacity["memory_mib"] - used["memory_mib"] + sum(v.memory_mib for v in stopped)
+    return (
+        request["cpu"] <= cpu + 1e-9
+        and request["memory_mib"] <= memory
+        and used["jobs"] - len(stopped) < max_jobs
+        and len(matching - (held - freed)) >= request["gpu"]
+    )
+
+
+def choose_victims(
+    node: dict,
+    used: dict,
+    held: frozenset[str],
+    matching: frozenset[str],
+    request: dict,
+    candidates: list[Victim],
+    max_jobs: int,
+) -> list[Victim] | None:
+    """The victims to stop on one node so that request fits there.
+
+    Candidates are added in victim_key order until the request fits; then every victim that is
+    no longer needed is dropped, trying the last added first. None when the request does not
+    fit even with every candidate stopped; empty when it already fits.
+    """
+
+    def fits(stopped: list[Victim]) -> bool:
+        return fits_after_stopping(node, used, held, matching, request, stopped, max_jobs)
+
+    chosen: list[Victim] = []
+    for victim in sorted(candidates, key=victim_key):
+        if fits(chosen):
+            break
+        chosen.append(victim)
+    if not fits(chosen):
+        return None
+    for victim in reversed(chosen.copy()):
+        rest = [other for other in chosen if other is not victim]
+        if fits(rest):
+            chosen = rest
+    return chosen
+
+
+def cheapest_preemption(options: dict[str, list[Victim]]) -> tuple[str, list[Victim]] | None:
+    """Among nodes where stopping victims makes room: the smallest total lost work, then the
+    fewest victims, then the node id."""
+    choices = [(node_id, victims) for node_id, victims in options.items() if victims]
+    if not choices:
+        return None
+    return min(
+        choices,
+        key=lambda choice: (sum(v.lost_s for v in choice[1]), len(choice[1]), choice[0]),
+    )
+
+
 class FcfsPolicy:
     """Strict first come, first served: submission order, never bypass a blocked head job."""
 
     name = "fcfs"
     uses_usage = False
     backfill = False
+    # Whether a blocked batch job may preempt (M11); a blocked session may under every policy.
+    batch_preemption = False
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -131,12 +229,19 @@ class FcfsPolicy:
             ranked.append(Ranked(job, spec, key, why))
         return sorted(ranked, key=lambda entry: entry.key)
 
+    def before(
+        self, first: tuple[dict, JobSpec], second: tuple[dict, JobSpec], now: float, usage: dict
+    ) -> bool:
+        """Whether this policy, ordering both as queued jobs now, considers first before second."""
+        return self.order([first, second], now, usage)[0].job is first[0]
+
 
 class PriorityPolicy(FcfsPolicy):
     """Score order (priority, waiting-time bonus, recent-usage penalty); strict at the head."""
 
     name = "priority"
     uses_usage = True
+    batch_preemption = True
 
     def rank(self, job: dict, spec: JobSpec, now: float, usage: dict) -> tuple[float, str]:
         s = self.settings

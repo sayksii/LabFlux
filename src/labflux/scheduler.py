@@ -37,10 +37,14 @@ from labflux.policy import (
     Booking,
     Ranked,
     Reservation,
+    Victim,
+    cheapest_preemption,
+    choose_victims,
     clock_text,
     dominant_share,
     earliest_start,
     fits_at,
+    lost_seconds,
     make_policy,
     short,
 )
@@ -77,6 +81,15 @@ MODEL_STATES = {
 }
 # A persistent model's lease, so backfill bookings treat it as never ending.
 PERSISTENT_LEASE_S = 365 * 24 * 3600.0
+# The state of an attempt whose termination was confirmed after a preemption stop (M11).
+PREEMPTED = "PREEMPTED"
+
+
+def stop_reason(attempt: dict) -> str:
+    """Job reason while an attempt is STOPPING: a cancel or session end, or a preemption."""
+    if attempt.get("preempted_by"):
+        return f"preempted by job {short(attempt['preempted_by'])}; {STOP_WAIT}"
+    return STOP_WAIT
 
 
 class ServiceError(Exception):
@@ -294,6 +307,8 @@ class Scheduler:
             start = connection.execute(
                 select(commands).where(commands.c.id == f"start-{attempt['id']}")
             ).first()
+            # A cancel or a pending preemption: the attempt must stop, never run again.
+            stopping = bool(job["cancel_requested"] or attempt["preempted_by"])
             if container or (record and record.unsent_result):
                 # A model serves only once its STARTED event, sent after the health check
                 # passes, arrives: a running container may still be loading the weights.
@@ -301,7 +316,7 @@ class Scheduler:
                 started_at = attempt["started_at"]
                 if started_at is None and container and container.status != "created" and not model:
                     started_at = container.started_at or self.clock()
-                if job["cancel_requested"]:
+                if stopping:
                     state = "STOPPING"
                 elif started_at or (record and record.unsent_result and not model):
                     state = "RUNNING"
@@ -318,11 +333,7 @@ class Scheduler:
                         .where(jobs.c.id == job["id"])
                         .values(
                             state=state,
-                            reason=(
-                                "waiting for confirmed container termination"
-                                if state == "STOPPING"
-                                else "executing"
-                            ),
+                            reason=stop_reason(attempt) if state == "STOPPING" else "executing",
                             updated_at=self.clock(),
                         )
                     )
@@ -339,14 +350,15 @@ class Scheduler:
                     {
                         "attempt_id": attempt["id"],
                         "payload": start.payload,
-                        "cancel": job["cancel_requested"],
+                        "cancel": stopping,
                         # Used only when the worker lost its local record of the attempt.
                         "log_bytes": logged,
                         "next_seq": next_seq,
                     }
                 )
             elif record and not record.launched:
-                if job["cancel_requested"]:
+                if stopping:
+                    # A preempted attempt ends PREEMPTED here and its job queues again.
                     self._finish(connection, attempt, job, "CANCELLED", "cancelled before start")
                     result["closed"].append(attempt["id"])
                     continue
@@ -405,9 +417,16 @@ class Scheduler:
     ) -> None:
         """Record confirmed termination; CPU, RAM and GPUs are released together.
 
-        `lost` marks an infrastructure loss; a job with retries left is queued again.
+        `lost` marks an infrastructure loss; a job with retries left is queued again. An attempt
+        stopped for a preemption whose stop took effect, or whose execution was lost, becomes
+        PREEMPTED and its job is queued again; an outcome it reached on its own is kept.
         """
-        outcome = "CANCELLED" if job["cancel_requested"] else outcome
+        preempted_by = attempt.get("preempted_by")
+        if job["cancel_requested"]:
+            outcome = "CANCELLED"
+        elif preempted_by and (outcome == "CANCELLED" or lost):
+            outcome = PREEMPTED
+            reason = f"preempted by job {short(preempted_by)} ({reason})"
         connection.execute(
             attempts.update()
             .where(attempts.c.id == attempt["id"])
@@ -427,11 +446,26 @@ class Scheduler:
         )
         if job["current_attempt_id"] == attempt["id"]:
             state = outcome
-            if lost and outcome != "CANCELLED":
-                limit = JobSpec.model_validate(job["spec"]).max_retries
+            if outcome == PREEMPTED:
+                # Same submission_seq, like a retry; dispatch adds a new attempt.
+                count = connection.execute(
+                    select(func.count()).where(
+                        attempts.c.job_id == job["id"], attempts.c.state == PREEMPTED
+                    )
+                ).scalar_one()
+                state = "QUEUED"
+                reason = (
+                    f"preempted by job {short(preempted_by)}; queued to run again "
+                    f"(preemption {count} of {self.settings.max_preemptions_per_job})"
+                )
+            elif lost and outcome != "CANCELLED":
+                limit = JobSpec.model_validate(job["spec"]).retries_on_node_failure
+                # Earlier attempts lost to the infrastructure; preemptions do not count.
                 used = (
                     connection.execute(
-                        select(func.count()).where(attempts.c.job_id == job["id"])
+                        select(func.count()).where(
+                            attempts.c.job_id == job["id"], attempts.c.state != PREEMPTED
+                        )
                     ).scalar_one()
                     - 1
                 )
@@ -489,8 +523,8 @@ class Scheduler:
             if row.id not in active:
                 continue
             job = self._job(connection, row.job_id)
-            if job["cancel_requested"]:
-                state, reason = "STOPPING", "waiting for confirmed container termination"
+            if job["cancel_requested"] or row.preempted_by:
+                state, reason = "STOPPING", stop_reason(row_dict(row))
             elif row.started_at:
                 state, reason = "RUNNING", "executing"
             else:
@@ -583,12 +617,13 @@ class Scheduler:
                 candidates.append((node, cards))
         return candidates
 
-    def _bookings(self, connection, available: list) -> dict[str, list[Booking]]:
+    def _bookings(self, connection, available: list, now: float) -> dict[str, list[Booking]]:
         """Unreleased attempts per node, each held until its start plus its hard time limit.
 
         An attempt that has not reported STARTED counts from dispatch, so image pulls and source
         downloads are not part of the estimate. A session has no hard limit: it is held until
-        its current lease expiry, which every command moves forward.
+        its current lease expiry, which every command moves forward. An attempt being stopped
+        for a preemption ends now, so the head job's reservation covers what it frees.
         """
         result: dict[str, list[Booking]] = {node["id"]: [] for node in available}
         cards: dict[str, set[str]] = {}
@@ -605,6 +640,7 @@ class Scheduler:
                 attempts.c.resources,
                 attempts.c.created_at,
                 attempts.c.started_at,
+                attempts.c.preempted_by,
                 jobs.c.spec,
                 jobs.c.lease_expires_at,
             )
@@ -612,10 +648,11 @@ class Scheduler:
             .where(attempts.c.released.is_(False), attempts.c.node_id.in_(list(result)))
         ):
             limit = row.spec.get("time_limit_s") or self.settings.job_time_limit_s
+            # Only a session that has started has a lease.
+            end = row.lease_expires_at or (row.started_at or row.created_at) + limit
             result[row.node_id].append(
                 Booking(
-                    # Only a session that has started has a lease.
-                    end=row.lease_expires_at or (row.started_at or row.created_at) + limit,
+                    end=now if row.preempted_by else end,
                     cpu=row.resources["cpu"],
                     memory_mib=row.resources["memory_mib"],
                     gpus=frozenset(cards.get(row.id, ())),
@@ -689,6 +726,172 @@ class Scheduler:
             self.settings.max_parallel_jobs,
         )
 
+    def _preempt(
+        self,
+        connection,
+        entry: Ranked,
+        available: list,
+        allocated: dict,
+        held: set,
+        usage: dict,
+        now: float,
+    ) -> str | None:
+        """Let the blocked head job stop preemptible batch jobs to make room for it (M11).
+
+        Returns a note when the head waits for preempted jobs to stop, or None when nothing is
+        preempted for it. One round at a time: while any attempt is still stopping for a
+        preemption, no new one starts. The resources are released, and the head dispatched,
+        only by the victims' confirmed termination.
+        """
+        job, spec = entry.job, entry.spec
+        kind = job.get("kind")
+        if not self.settings.preemption_enabled or not (
+            kind == SESSION_KIND or (kind == "BATCH" and self.policy.batch_preemption)
+        ):
+            return None
+        waiting = self._preemption_in_progress(connection, job)
+        if waiting:
+            return waiting
+        victims = self._victims(connection, entry, available, usage, now)
+        request = spec.resources.model_dump()
+        options = {}
+        for node in available:
+            here = victims.get(node["id"])
+            if not here or not set(spec.datasets).issubset(node["capacity"]["datasets"]):
+                continue
+            matching = frozenset(gpu["uuid"] for gpu in self._eligible_gpus(node, request, set()))
+            chosen = choose_victims(
+                node,
+                allocated[node["id"]],
+                frozenset(held),
+                matching,
+                request,
+                here,
+                self.settings.max_parallel_jobs,
+            )
+            if chosen:
+                options[node["id"]] = chosen
+        best = cheapest_preemption(options)
+        if best is None:
+            return None
+        for victim in best[1]:
+            self._request_stop(
+                connection,
+                self._job(connection, victim.job_id),
+                f"preempted by job {short(job['id'])}; {STOP_WAIT}",
+                preempted_by=job["id"],
+            )
+        return self._preemption_in_progress(connection, job)
+
+    @staticmethod
+    def _preemption_in_progress(connection, job: dict) -> str | None:
+        """A note naming the attempts still stopping for a preemption, if any."""
+        rows = connection.execute(
+            select(attempts.c.job_id, attempts.c.node_id, attempts.c.preempted_by)
+            .where(attempts.c.released.is_(False), attempts.c.preempted_by.is_not(None))
+            .order_by(attempts.c.created_at, attempts.c.id)
+        ).all()
+        if not rows:
+            return None
+        stopping = ", ".join(f"{short(row.job_id)} on {row.node_id}" for row in rows)
+        note = f"waiting for preempted job{'s' if len(rows) > 1 else ''} {stopping} to stop"
+        others = sorted({short(row.preempted_by) for row in rows if row.preempted_by != job["id"]})
+        if others:
+            note += f" (preempted for job {', '.join(others)})"
+        return note
+
+    def _victims(
+        self, connection, entry: Ranked, available: list, usage: dict, now: float
+    ) -> dict[str, list[Victim]]:
+        """Running attempts the head job may preempt, per node.
+
+        A victim is the current attempt of a batch job marked preemptible and safe to rerun,
+        not cancelled, RUNNING or STARTING on an available node, not already stopping for a
+        preemption and preempted fewer than max_preemptions_per_job times. A batch head also
+        needs a strictly higher explicit priority than the victim, and must rank ahead of it
+        even if the victim were queued now: otherwise an old job's waiting bonus would put it
+        back in front as soon as it is requeued, and the two would preempt each other.
+        """
+        job, spec = entry.job, entry.spec
+        rows = connection.execute(
+            select(
+                attempts.c.id.label("attempt_id"),
+                attempts.c.node_id,
+                attempts.c.resources,
+                attempts.c.started_at,
+                jobs.c.id.label("job_id"),
+                jobs.c.owner,
+                jobs.c.spec,
+                jobs.c.kind,
+                jobs.c.submission_seq,
+                jobs.c.created_at,
+            )
+            .select_from(attempts.join(jobs, jobs.c.current_attempt_id == attempts.c.id))
+            .where(
+                attempts.c.released.is_(False),
+                attempts.c.state.in_(["RUNNING", "STARTING"]),
+                attempts.c.preempted_by.is_(None),
+                attempts.c.node_id.in_([node["id"] for node in available]),
+                jobs.c.kind == "BATCH",
+                jobs.c.cancel_requested.is_(False),
+            )
+        ).all()
+        if not rows:
+            return {}
+        preempted = dict(
+            connection.execute(
+                select(attempts.c.job_id, func.count())
+                .where(
+                    attempts.c.state == PREEMPTED,
+                    attempts.c.job_id.in_([row.job_id for row in rows]),
+                )
+                .group_by(attempts.c.job_id)
+            ).all()
+        )
+        cards: dict[str, set[str]] = {}
+        for row in connection.execute(
+            select(attempt_gpus.c.attempt_id, attempt_gpus.c.gpu_uuid).where(
+                attempt_gpus.c.released.is_(False),
+                attempt_gpus.c.attempt_id.in_([row.attempt_id for row in rows]),
+            )
+        ):
+            cards.setdefault(row.attempt_id, set()).add(row.gpu_uuid)
+        default = self.settings.default_priority
+        mine = default if spec.priority is None else spec.priority
+        session = job.get("kind") == SESSION_KIND
+        result: dict[str, list[Victim]] = {}
+        for row in rows:
+            victim_spec = JobSpec.model_validate(row.spec)
+            if not (victim_spec.preemptible and victim_spec.safe_to_rerun):
+                continue
+            if preempted.get(row.job_id, 0) >= self.settings.max_preemptions_per_job:
+                continue
+            priority = default if victim_spec.priority is None else victim_spec.priority
+            if not session:
+                queued = {
+                    "id": row.job_id,
+                    "owner": row.owner,
+                    "kind": row.kind,
+                    "submission_seq": row.submission_seq,
+                    "created_at": row.created_at,
+                }
+                if priority >= mine or not self.policy.before(
+                    (job, spec), (queued, victim_spec), now, usage
+                ):
+                    continue
+            result.setdefault(row.node_id, []).append(
+                Victim(
+                    attempt_id=row.attempt_id,
+                    job_id=row.job_id,
+                    priority=priority,
+                    lost_s=lost_seconds(row.started_at, now),
+                    cpu=row.resources["cpu"],
+                    memory_mib=row.resources["memory_mib"],
+                    cards=frozenset(cards.get(row.attempt_id, ())),
+                )
+            )
+        return result
+
     def _note(self, connection, job: dict, note: str) -> None:
         if job.get("schedule_note") != note:
             connection.execute(
@@ -719,7 +922,7 @@ class Scheduler:
         held = self._held_gpus(connection)
         policy = self.policy
         usage = self._recent_usage(connection, now, available) if policy.uses_usage else {}
-        bookings = self._bookings(connection, available) if policy.backfill else {}
+        bookings = self._bookings(connection, available, now) if policy.backfill else {}
         entries = [(row_dict(row), JobSpec.model_validate(row.spec)) for row in queued]
         head: dict | None = None
         reservation: Reservation | None = None
@@ -755,9 +958,12 @@ class Scheduler:
                         if not available
                         else "waiting for matching CPU/RAM/GPU capacity or datasets"
                     )
-                    connection.execute(
-                        jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
-                    )
+                    if job["current_attempt_id"] is None:
+                        # A job queued again (retry, preemption) keeps the reason it was
+                        # requeued; its schedule note says what it waits for.
+                        connection.execute(
+                            jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
+                        )
                     note = f"{policy.name}: first in line ({entry.why}); {reason}"
                     if job["kind"] == MODEL_KIND and not policy.backfill:
                         # A model service ranks ahead of every batch job, so as the head it
@@ -768,6 +974,14 @@ class Scheduler:
                         )
                         self._note(connection, job, note)
                         continue
+                    waiting = self._preempt(
+                        connection, entry, available, allocated, held, usage, now
+                    )
+                    if waiting:
+                        note += f"; {waiting}"
+                        if policy.backfill:
+                            # Attempts this pass asked to stop now end now.
+                            bookings = self._bookings(connection, available, now)
                     if policy.backfill:
                         reservation = self._reserve(entry, available, bookings, now)
                         if reservation is None:
@@ -779,7 +993,9 @@ class Scheduler:
                             )
                             self._note(connection, job, note)
                             continue
-                        if reservation.start <= now:
+                        if reservation.start <= now and waiting:
+                            note += f"; reserved on {reservation.node_id} as soon as they stop"
+                        elif reservation.start <= now:
                             note += (
                                 f"; reserved on {reservation.node_id} as soon as attempts past "
                                 "their time limit release resources"
@@ -1111,7 +1327,8 @@ class Scheduler:
                 # offline, or a restarted worker ran an undelivered START.
                 lapsed = job["state"] == "UNKNOWN" and attempt["reason"] == EXPIRED_ATTEMPT
                 if job["state"] == "STARTING" or lapsed:
-                    state = "STOPPING" if job["cancel_requested"] else "RUNNING"
+                    stopping = job["cancel_requested"] or attempt["preempted_by"]
+                    state = "STOPPING" if stopping else "RUNNING"
                     lease = {}
                     if job["kind"] == SESSION_KIND and state == "RUNNING":
                         lease = {"lease_expires_at": self.clock() + self.settings.session_lease_s}
@@ -1123,11 +1340,7 @@ class Scheduler:
                         .where(jobs.c.id == job["id"])
                         .values(
                             state=state,
-                            reason=(
-                                "waiting for confirmed container termination"
-                                if state == "STOPPING"
-                                else "executing"
-                            ),
+                            reason=stop_reason(attempt) if state == "STOPPING" else "executing",
                             updated_at=self.clock(),
                             **lease,
                         )
@@ -1188,10 +1401,14 @@ class Scheduler:
                     self._request_stop(connection, job, STOP_WAIT)
         return self.get_job(job_id, owner)
 
-    def _request_stop(self, connection, job: dict, reason: str) -> None:
+    def _request_stop(
+        self, connection, job: dict, reason: str, preempted_by: str | None = None
+    ) -> None:
         """Durably ask the Worker to stop the job's current attempt (cancel, session end).
 
-        Resources stay reserved until the attempt's FINISHED event confirms termination.
+        With preempted_by (M11) the job is not cancelled: the attempt records the job it stops
+        for, and its confirmed termination queues the job again. Resources stay reserved until
+        the attempt's FINISHED event confirms termination.
         """
         attempt = connection.execute(
             select(attempts).where(attempts.c.id == job["current_attempt_id"])
@@ -1201,13 +1418,15 @@ class Scheduler:
             .where(jobs.c.id == job["id"])
             .values(
                 state="STOPPING",
-                cancel_requested=True,
                 reason=reason,
                 updated_at=self.clock(),
+                **({} if preempted_by else {"cancel_requested": True}),
             )
         )
         connection.execute(
-            attempts.update().where(attempts.c.id == attempt.id).values(state="STOPPING")
+            attempts.update()
+            .where(attempts.c.id == attempt.id)
+            .values(state="STOPPING", **({"preempted_by": preempted_by} if preempted_by else {}))
         )
         connection.execute(
             commands.update()
@@ -1361,7 +1580,7 @@ class Scheduler:
                 # the Worker never enforces it on sessions.
                 time_limit_s=self.settings.session_lease_s,
                 priority=self.settings.default_priority,
-                max_retries=0,
+                retries_on_node_failure=0,
             )
         except ValidationError as exc:
             raise ServiceError(422, str(exc)) from exc
@@ -1469,7 +1688,7 @@ class Scheduler:
             # Used by backfill bookings until it serves; the Worker enforces startup_timeout_s.
             time_limit_s=config.startup_timeout_s,
             priority=self.settings.default_priority,
-            max_retries=0,
+            retries_on_node_failure=0,
         )
 
     def _service_spec(self, name: str) -> ServiceSpec:

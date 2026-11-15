@@ -27,7 +27,7 @@ def event(client, attempt_id, instance, event_id, name="vm-a", **fields):
 
 def test_lost_execution_gets_new_attempts_until_its_retries_run_out(client, service):
     old = register(client, cpu=1)
-    job = submit(client, max_retries=2)
+    job = submit(client, retries_on_node_failure=2, safe_to_rerun=True)
     first = deliver(client, service, old)["attempt_id"]
     middle, response = restart(client, {})
     assert response.json()["closed"] == [first]
@@ -63,7 +63,7 @@ def test_job_without_retries_fails_on_a_lost_execution(client, service):
 
 def test_retried_job_keeps_its_place_ahead_of_later_submissions(client, service):
     old = register(client, cpu=1)
-    job = submit(client, max_retries=1)
+    job = submit(client, retries_on_node_failure=1, safe_to_rerun=True)
     later = submit(client)
     deliver(client, service, old)
     restart(client, {})
@@ -84,7 +84,7 @@ def test_program_exits_and_time_limits_are_never_retried(
     client, service, outcome, exit_code, reason
 ):
     instance = register(client, cpu=1)
-    job = submit(client, max_retries=3)
+    job = submit(client, retries_on_node_failure=3, safe_to_rerun=True)
     attempt_id = deliver(client, service, instance)["attempt_id"]
     body = dict(outcome=outcome, exit_code=exit_code, reason=reason, termination_confirmed=True)
     assert event(client, attempt_id, instance, "done", **body).status_code == 200
@@ -95,7 +95,7 @@ def test_program_exits_and_time_limits_are_never_retried(
 
 def test_cancelled_job_whose_container_is_lost_is_not_retried(client, service):
     old = register(client, cpu=1)
-    job = submit(client, max_retries=3)
+    job = submit(client, retries_on_node_failure=3, safe_to_rerun=True)
     deliver(client, service, old)
     client.post(f"/api/jobs/{job['id']}/cancel", headers=user_headers())
     restart(client, {})
@@ -106,7 +106,7 @@ def test_cancelled_job_whose_container_is_lost_is_not_retried(client, service):
 
 def test_cancel_while_queued_for_retry_finishes_without_a_stop(client, service):
     old = register(client, cpu=2)
-    job = submit(client, cpu=2, max_retries=1)
+    job = submit(client, cpu=2, retries_on_node_failure=1, safe_to_rerun=True)
     deliver(client, service, old)
     new, _ = restart(client, {}, cpu=1)  # Came back smaller: the retry has to wait.
     value = get_job(client, job)
@@ -118,7 +118,7 @@ def test_cancel_while_queued_for_retry_finishes_without_a_stop(client, service):
 
 def test_stale_attempt_events_after_a_retry_are_ignored(client, service):
     old = register(client, cpu=1)
-    job = submit(client, max_retries=1)
+    job = submit(client, retries_on_node_failure=1, safe_to_rerun=True)
     stale = deliver(client, service, old)["attempt_id"]
     new, _ = restart(client, {})
     current = get_job(client, job)["current_attempt_id"]
@@ -341,7 +341,7 @@ def test_node_lost_with_its_containers_retries_on_the_returning_worker(
     executor = ControlledExecutor()
     instance = register(client, cpu=1)
     old = worker_for(client, tmp_path, executor, instance)
-    job = submit(client, max_retries=1)
+    job = submit(client, retries_on_node_failure=1, safe_to_rerun=True)
     try:
         old.process(service.poll_commands("vm-a", instance))
         first = get_job(client, job)["current_attempt_id"]
@@ -386,7 +386,7 @@ def test_only_containers_stopped_by_a_host_restart_are_dropped_from_the_inventor
     executor = ControlledExecutor()
     instance = register(client, cpu=4)
     old = worker_for(client, tmp_path, executor, instance)
-    jobs = [submit(client, max_retries=1) for _ in range(4)]
+    jobs = [submit(client, retries_on_node_failure=1, safe_to_rerun=True) for _ in range(4)]
     try:
         old.process(service.poll_commands("vm-a", instance))
         ids = [get_job(client, job)["current_attempt_id"] for job in jobs]

@@ -74,6 +74,8 @@ attempts = Table(
     Column("exit_code", Integer),
     Column("reason", Text, nullable=False),
     Column("oom_killed", Boolean, nullable=False, default=False),
+    # The job this attempt is being stopped for (M11 preemption); None otherwise.
+    Column("preempted_by", String),
 )
 commands = Table(
     "commands",
@@ -144,12 +146,17 @@ def add_services(connection) -> None:
     connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN service TEXT")
 
 
+def add_preempted_by(connection) -> None:
+    connection.exec_driver_sql("ALTER TABLE attempts ADD COLUMN preempted_by TEXT")
+
+
 # Migration N upgrades a database at version N - 1; version 1 is the original bootstrap.
 MIGRATIONS = {
     2: lambda connection: attempt_gpus.create(connection),
     3: add_schedule_note,
     4: add_sessions,
     5: add_services,
+    6: add_preempted_by,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

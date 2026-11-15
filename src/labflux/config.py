@@ -85,6 +85,13 @@ class Settings(BaseModel):
     score_usage_weight: float = Field(default=1, ge=0)
     # Recent usage: reserved minutes in this window, scaled by the dominant share of the cluster.
     usage_window_s: float = Field(default=3600, gt=0)
+    # Preemption (M11): the first job in line that cannot start may stop running batch jobs
+    # whose owners marked them preemptible. On by default because no job is preemptible unless
+    # its owner says so; turned off to compare runs without preemption (M13).
+    preemption_enabled: bool = True
+    # A job preempted this many times is never chosen as a victim again; it is never failed
+    # because of this.
+    max_preemptions_per_job: int = Field(default=3, ge=0)
     stop_grace_s: int = Field(default=2, ge=0)
     memory_reserve_mib: int = Field(default=512, ge=0)
     allocatable_cpu: float | None = Field(default=None, gt=0)
