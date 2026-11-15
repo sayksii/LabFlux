@@ -490,6 +490,38 @@ def test_no_second_preemption_starts_while_one_is_in_progress(make_client, clock
     assert job(client, older)["state"] == "STOPPING"
 
 
+def test_only_the_first_job_in_line_may_preempt(make_client, clock):
+    """No round is in progress here, so only the head-only rule keeps L running: H, first in
+    line, cannot fit even with every preemptible job stopped, because a job that is not
+    preemptible holds half of the node; M, behind H, would fit if L were stopped."""
+    client = make_client("priority")
+    instance = register(client, "kayle", cpu=2)
+    nodes = {"kayle": instance}
+    pinned = run(client, submit(client, cpu=1, priority=1, time_limit_s=86400), instance)
+    victim = run(client, low(client, cpu=1), instance)
+    advance(client, clock, 60, nodes)
+    head = high(client, cpu=2, priority=9)
+    later = high(client, cpu=1, priority=5)
+    advance(client, clock, 5, nodes)
+    assert stops(client, instance) == []
+    assert job(client, pinned)["state"] == "RUNNING"
+    value = job(client, victim)
+    assert value["state"] == "RUNNING" and value["attempts"][0]["preempted_by"] is None
+    for waiting in (head, later):
+        waiting = job(client, waiting)
+        assert waiting["state"] == "QUEUED" and waiting["attempts"] == []
+    assert short(head) in job(client, later)["schedule_note"]
+
+    # M itself may preempt L: once H is gone, M is first in line and L is stopped for it.
+    response = client.post(f"/api/jobs/{head['id']}/cancel", headers=user_headers("bob"))
+    assert response.status_code == 200, response.text
+    value = job(client, victim)
+    assert value["state"] == "STOPPING"
+    assert value["attempts"][0]["preempted_by"] == later["id"]
+    assert stops(client, instance) == [victim["current_attempt_id"]]
+    assert job(client, pinned)["state"] == "RUNNING"
+
+
 # 7. The victim ends some other way during the stop ---------------------------------------------
 
 
