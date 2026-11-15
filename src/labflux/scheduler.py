@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -22,7 +23,16 @@ from labflux.database import (
     logs,
     nodes,
 )
-from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
+from labflux.models import (
+    MODEL_KIND,
+    MODEL_OWNER,
+    Heartbeat,
+    JobSpec,
+    LogUpload,
+    ServiceSpec,
+    WorkerEvent,
+    WorkerRegistration,
+)
 from labflux.policy import (
     Booking,
     Ranked,
@@ -50,6 +60,23 @@ EXPIRED_ATTEMPT = "worker heartbeat expired; termination unconfirmed"
 # its instance (heartbeat) or registers a new one with an inventory.
 RECONCILING = "RECONCILING"
 STOP_WAIT = "waiting for confirmed container termination"
+# Model services (M10): states in which a service counts as the model's one live service. A
+# STOPPING one does not: a request then starts the next service, which waits for its resources.
+MODEL_LIVE_STATES = frozenset({"QUEUED", "STARTING", "RUNNING", "UNKNOWN"})
+# Ended without LabFlux stopping it: started again only after retry_after_failure_s.
+MODEL_ENDED = frozenset({"FAILED", "SUCCEEDED"})
+MODEL_STATES = {
+    "QUEUED": "waiting",
+    "STARTING": "starting",
+    "RUNNING": "serving",
+    "STOPPING": "stopping",
+    "UNKNOWN": "unknown",
+    "FAILED": "failed",
+    "SUCCEEDED": "failed",
+    "CANCELLED": "stopped",
+}
+# A persistent model's lease, so backfill bookings treat it as never ending.
+PERSISTENT_LEASE_S = 365 * 24 * 3600.0
 
 
 class ServiceError(Exception):
@@ -77,6 +104,13 @@ class Scheduler:
         # Queued sessions: when their client last asked about them. In memory only, so after a
         # restart every queued session gets a full window again.
         self.session_polled: dict[str, float] = {}
+        # Inference requests in flight per model service job (M10); in memory only, since a
+        # Scheduler restart ends every relayed request anyway.
+        self.service_inflight: dict[str, int] = {}
+        self.service_lock = threading.Lock()
+        # Queued model services: when a request last asked for them (ensure_model). Like
+        # session_polled, in memory only: after a restart each one gets a full window again.
+        self.model_polled: dict[str, float] = {}
         self.restore()
 
     def restore(self) -> None:
@@ -261,12 +295,15 @@ class Scheduler:
                 select(commands).where(commands.c.id == f"start-{attempt['id']}")
             ).first()
             if container or (record and record.unsent_result):
+                # A model serves only once its STARTED event, sent after the health check
+                # passes, arrives: a running container may still be loading the weights.
+                model = job["kind"] == MODEL_KIND
                 started_at = attempt["started_at"]
-                if started_at is None and container and container.status != "created":
+                if started_at is None and container and container.status != "created" and not model:
                     started_at = container.started_at or self.clock()
                 if job["cancel_requested"]:
                     state = "STOPPING"
-                elif started_at or (record and record.unsent_result):
+                elif started_at or (record and record.unsent_result and not model):
                     state = "RUNNING"
                 else:
                     state = "STARTING"
@@ -494,7 +531,14 @@ class Scheduler:
             self._schedule(connection)
         return self.get_job(job_id, owner)
 
-    def _insert_job(self, connection, owner: str, spec: JobSpec, kind: str = "BATCH") -> str:
+    def _insert_job(
+        self,
+        connection,
+        owner: str,
+        spec: JobSpec,
+        kind: str = "BATCH",
+        service: str | None = None,
+    ) -> str:
         job_id = uuid.uuid4().hex
         now = self.clock()
         sequence = (
@@ -516,6 +560,7 @@ class Scheduler:
                 created_at=now,
                 updated_at=now,
                 kind=kind,
+                service=service,
             )
         )
         return job_id
@@ -653,8 +698,9 @@ class Scheduler:
     def _schedule(self, connection) -> None:
         """Consider queued jobs in policy order and dispatch every job allowed to start now.
 
-        Without backfilling, the first job that cannot start blocks every later job. With it, that
-        head job gets a reservation and a later job starts only if it cannot delay it (EASY).
+        Without backfilling, the first job that cannot start blocks every later job, unless it is a
+        model service. With it, that head job gets a reservation and a later job starts only if it
+        cannot delay it (EASY).
         """
         now = self.clock()
         queued = connection.execute(select(jobs).where(jobs.c.state == "QUEUED")).all()
@@ -679,6 +725,8 @@ class Scheduler:
         reservation: Reservation | None = None
         for entry in policy.order(entries, now, usage):
             job, spec = entry.job, entry.spec
+            if job["kind"] == MODEL_KIND and job["service"] not in self.settings.models:
+                continue  # Removed from the configuration; the next tick cancels it.
             request = spec.resources.model_dump()
             limit = spec.time_limit_s or self.settings.job_time_limit_s
             if head is not None and not policy.backfill:
@@ -711,6 +759,15 @@ class Scheduler:
                         jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
                     )
                     note = f"{policy.name}: first in line ({entry.why}); {reason}"
+                    if job["kind"] == MODEL_KIND and not policy.backfill:
+                        # A model service ranks ahead of every batch job, so as the head it
+                        # would stop even jobs that fit on idle nodes, for as long as it waits.
+                        note = (
+                            f"{policy.name}: {entry.why}; {reason}; model services do not hold "
+                            "up later jobs"
+                        )
+                        self._note(connection, job, note)
+                        continue
                     if policy.backfill:
                         reservation = self._reserve(entry, available, bookings, now)
                         if reservation is None:
@@ -833,6 +890,8 @@ class Scheduler:
         }
         if job.get("kind") == SESSION_KIND:
             payload["session"] = True
+        if job.get("kind") == MODEL_KIND:
+            payload["service"] = self._service_spec(job["service"]).model_dump()
         connection.execute(
             commands.insert().values(
                 id=f"start-{attempt_id}",
@@ -898,6 +957,7 @@ class Scheduler:
                     )
             self._expire_leases(connection)
             self._cancel_abandoned_sessions(connection)
+            self._manage_models(connection)
             self._schedule(connection)
 
     def _cancel_abandoned_sessions(self, connection) -> None:
@@ -1055,6 +1115,9 @@ class Scheduler:
                     lease = {}
                     if job["kind"] == SESSION_KIND and state == "RUNNING":
                         lease = {"lease_expires_at": self.clock() + self.settings.session_lease_s}
+                    elif job["kind"] == MODEL_KIND and state == "RUNNING":
+                        # A model reports STARTED only once healthy: it serves from now on.
+                        lease = {"lease_expires_at": self._model_lease(job["service"])}
                     connection.execute(
                         jobs.update()
                         .where(jobs.c.id == job["id"])
@@ -1205,7 +1268,10 @@ class Scheduler:
         self, job_id: str, owner: str, after: int = -1, attempt_id: str | None = None
     ) -> dict:
         with self.db.transaction() as connection:
-            job = self._job(connection, job_id, owner)
+            job = self._job(connection, job_id)
+            # A model server belongs to no user, so every user may read its logs (read-only).
+            if job["kind"] != MODEL_KIND and job["owner"] != owner:
+                raise ServiceError(404, "job not found")
             selected = attempt_id or job["current_attempt_id"]
             if selected:
                 attempt = connection.execute(
@@ -1384,3 +1450,269 @@ class Scheduler:
                     .where(jobs.c.id == session_id)
                     .values(lease_expires_at=self.clock() + self.settings.session_lease_s)
                 )
+
+    # Model services (M10) ------------------------------------------------------------------
+    # A model service is a job row with kind MODEL, owned by MODEL_OWNER, whose container is the
+    # model server; like a session it reuses the ledger, dispatch, STOP, UNKNOWN handling,
+    # reconcile and _finish. Its states: QUEUED waits for resources, STARTING is loading (the
+    # Worker reports STARTED only once the health check passes), RUNNING serves requests.
+
+    def _model_spec(self, name: str) -> JobSpec:
+        config = self.settings.models[name]
+        return JobSpec(
+            image=config.image,
+            argv=config.argv,
+            # Model servers write caches under HOME; the workspace is the writable place.
+            env={"HOME": "/workspace", **config.env},
+            resources=config.resources,
+            datasets=config.datasets,
+            # Used by backfill bookings until it serves; the Worker enforces startup_timeout_s.
+            time_limit_s=config.startup_timeout_s,
+            priority=self.settings.default_priority,
+            max_retries=0,
+        )
+
+    def _service_spec(self, name: str) -> ServiceSpec:
+        config = self.settings.models[name]
+        return ServiceSpec(
+            name=name,
+            port=config.port,
+            health_path=config.health_path,
+            startup_timeout_s=config.startup_timeout_s,
+            shm_mib=config.shm_mib,
+            pids_limit=config.pids_limit,
+        )
+
+    def _model_changed(self, connection, job: dict) -> bool:
+        """Whether a live service no longer matches the configuration: its stored JobSpec or,
+        once dispatched, the ServiceSpec its START carried. Priority is left out: interactive
+        work ignores it, and a new default_priority must not restart every model."""
+        name = job["service"]
+        stored = JobSpec.model_validate(job["spec"]).model_dump(exclude={"priority"})
+        if stored != self._model_spec(name).model_dump(exclude={"priority"}):
+            return True
+        if job["state"] == "QUEUED":
+            return False
+        payload = connection.execute(
+            select(commands.c.payload).where(commands.c.id == f"start-{job['current_attempt_id']}")
+        ).scalar_one_or_none()
+        return (
+            payload is not None and payload.get("service") != self._service_spec(name).model_dump()
+        )
+
+    def _model_lease(self, name: str | None) -> float:
+        """When an idle model is stopped, counted from now; far ahead for a persistent one."""
+        config = self.settings.models.get(name or "")
+        if config is None or config.mode == "persistent":
+            return self.clock() + PERSISTENT_LEASE_S
+        return self.clock() + config.idle_stop_s
+
+    def _model_job(self, connection, name: str, live: bool) -> dict | None:
+        """The model's live service, or (live=False) its latest one in any state."""
+        statement = select(jobs).where(jobs.c.kind == MODEL_KIND, jobs.c.service == name)
+        if live:
+            statement = statement.where(
+                jobs.c.state.in_(MODEL_LIVE_STATES), jobs.c.cancel_requested.is_(False)
+            )
+        row = connection.execute(statement.order_by(jobs.c.submission_seq.desc())).first()
+        return row_dict(row) if row else None
+
+    def _retry_at(self, name: str, last: dict | None) -> float | None:
+        """When a model that ended on its own may start again; None if it may start now."""
+        if last is None or last["state"] not in MODEL_ENDED:
+            return None
+        at = last["updated_at"] + self.settings.models[name].retry_after_failure_s
+        return at if at > self.clock() else None
+
+    def _start_model(self, connection, name: str) -> dict:
+        job_id = self._insert_job(
+            connection, MODEL_OWNER, self._model_spec(name), kind=MODEL_KIND, service=name
+        )
+        return self._job(connection, job_id)
+
+    def _inflight(self, job_id: str) -> int:
+        with self.service_lock:
+            return self.service_inflight.get(job_id, 0)
+
+    def _model_view(self, connection, name: str, job: dict | None) -> dict:
+        config = self.settings.models[name]
+        view = {
+            "name": name,
+            "mode": config.mode,
+            "state": "stopped",
+            "reason": "",
+            "job_id": None,
+            "node_id": None,
+            "attempt_id": None,
+            "inflight": 0,
+            "idle_stop_at": None,
+            "retry_at": None,
+            "resources": config.resources.model_dump(),
+        }
+        if job is None:
+            return view
+        view.update(
+            state=MODEL_STATES.get(job["state"], "stopped"),
+            reason=job["reason"],
+            job_id=job["id"],
+            inflight=self._inflight(job["id"]),
+            retry_at=self._retry_at(name, job),
+        )
+        if job["state"] == "RUNNING" and config.mode == "on_demand":
+            view["idle_stop_at"] = job["lease_expires_at"]
+        if job["current_attempt_id"]:
+            view["attempt_id"] = job["current_attempt_id"]
+            view["node_id"] = connection.execute(
+                select(attempts.c.node_id).where(attempts.c.id == job["current_attempt_id"])
+            ).scalar_one_or_none()
+        return view
+
+    def ensure_model(self, name: str) -> dict:
+        """The model's live service; when there is none, start one, unless the last one ended on
+        its own less than retry_after_failure_s ago. One transaction, so concurrent requests
+        for a stopped model start a single service (plan 10.4)."""
+        if name not in self.settings.models:
+            raise ServiceError(404, f"model {name!r} is not configured")
+        with self.db.transaction() as connection:
+            job = self._model_job(connection, name, live=True)
+            if job is None:
+                last = self._model_job(connection, name, live=False)
+                if self._retry_at(name, last) is not None:
+                    return self._model_view(connection, name, last)
+                job = self._start_model(connection, name)
+                self._schedule(connection)
+                job = self._job(connection, job["id"])
+            if job["state"] == "QUEUED":
+                self.model_polled[job["id"]] = self.clock()
+            return self._model_view(connection, name, job)
+
+    def list_models(self) -> list[dict]:
+        with self.db.transaction() as connection:
+            return [
+                self._model_view(
+                    connection,
+                    name,
+                    self._model_job(connection, name, live=True)
+                    or self._model_job(connection, name, live=False),
+                )
+                for name in self.settings.models
+            ]
+
+    def begin_request(self, job_id: str) -> None:
+        with self.service_lock:
+            self.service_inflight[job_id] = self.service_inflight.get(job_id, 0) + 1
+
+    def end_request(self, job_id: str) -> None:
+        """A relayed request ended (completed, failed or abandoned): the idle time restarts."""
+        with self.service_lock:
+            count = self.service_inflight.get(job_id, 0) - 1
+            if count > 0:
+                self.service_inflight[job_id] = count
+            else:
+                self.service_inflight.pop(job_id, None)
+        with self.db.transaction() as connection:
+            row = connection.execute(
+                select(jobs.c.service).where(jobs.c.id == job_id, jobs.c.state == "RUNNING")
+            ).first()
+            if row is not None:
+                connection.execute(
+                    jobs.update()
+                    .where(jobs.c.id == job_id)
+                    .values(lease_expires_at=self._model_lease(row.service))
+                )
+
+    def _manage_models(self, connection) -> None:
+        """Stop idle on-demand models, models removed from the configuration and models whose
+        configuration changed; cancel queued on-demand models nobody asks for any more; start
+        persistent models that have no live service (plan 10.9)."""
+        now = self.clock()
+        models = self.settings.models
+        # Any queued job, another model's service included, can reclaim an idle model early.
+        waiting = (
+            connection.execute(select(func.count()).where(jobs.c.state == "QUEUED")).scalar_one()
+            > 0
+        )
+        asked = {}
+        for row in connection.execute(
+            select(jobs).where(
+                jobs.c.kind == MODEL_KIND,
+                jobs.c.state.in_(MODEL_LIVE_STATES),
+                jobs.c.cancel_requested.is_(False),
+            )
+        ).all():
+            job = row_dict(row)
+            config = models.get(job["service"])
+            if config is None:
+                reason = "model removed from the configuration"
+                if job["state"] == "QUEUED":
+                    connection.execute(
+                        jobs.update()
+                        .where(jobs.c.id == job["id"])
+                        .values(
+                            state="CANCELLED",
+                            cancel_requested=True,
+                            reason=reason,
+                            updated_at=now,
+                        )
+                    )
+                else:
+                    self._request_stop(connection, job, f"{reason}; {STOP_WAIT}")
+                continue
+            if job["state"] == "QUEUED":
+                # Requests poll ensure_model for up to cold_wait_s; when they stop, a queued
+                # on-demand model would only hold its place and later start for nobody.
+                last = self.model_polled.get(job["id"], now)
+                if config.mode == "on_demand" and last < now - (config.cold_wait_s + 30):
+                    connection.execute(
+                        jobs.update()
+                        .where(jobs.c.id == job["id"])
+                        .values(
+                            state="CANCELLED",
+                            cancel_requested=True,
+                            reason="cancelled while queued: no request is waiting for it",
+                            updated_at=now,
+                        )
+                    )
+                    continue
+                asked[job["id"]] = last
+            if self._model_changed(connection, job):
+                if job["state"] == "QUEUED":
+                    # Dispatch then sends the new JobSpec together with the new ServiceSpec.
+                    connection.execute(
+                        jobs.update()
+                        .where(jobs.c.id == job["id"])
+                        .values(spec=self._model_spec(job["service"]).model_dump())
+                    )
+                else:
+                    # A persistent model's next service is queued below without a backoff: a
+                    # stop ends in CANCELLED, which is not a failure.
+                    self._request_stop(connection, job, f"model configuration changed; {STOP_WAIT}")
+                continue
+            if job["state"] != "RUNNING":
+                continue
+            if job["lease_expires_at"] is None:  # Adopted after a restart without a lease.
+                connection.execute(
+                    jobs.update()
+                    .where(jobs.c.id == job["id"])
+                    .values(lease_expires_at=self._model_lease(job["service"]))
+                )
+                continue
+            if config.mode != "on_demand" or self._inflight(job["id"]):
+                continue
+            idle = now - (job["lease_expires_at"] - config.idle_stop_s)
+            if job["lease_expires_at"] <= now:
+                self._request_stop(connection, job, f"idle for {idle:.0f}s; {STOP_WAIT}")
+            elif waiting and idle >= config.reclaim_idle_s:
+                self._request_stop(
+                    connection,
+                    job,
+                    f"idle for {idle:.0f}s while other jobs wait for resources; {STOP_WAIT}",
+                )
+        self.model_polled = asked
+        for name, config in models.items():
+            if (
+                config.mode == "persistent"
+                and self._model_job(connection, name, live=True) is None
+                and self._retry_at(name, self._model_job(connection, name, live=False)) is None
+            ):
+                self._start_model(connection, name)

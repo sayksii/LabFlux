@@ -19,7 +19,10 @@ name = "node-a"             # must equal the node's hostname; also the Worker ID
 host = "192.0.2.10"
 allocatable_cpu = 8         # share of the machine LabFlux may reserve
 allocatable_memory_mib = 16384
-gpus = [0]                  # NVML indexes or "GPU-..." UUIDs; [] pools no GPU
+gpus = [0, 1]               # NVML indexes or "GPU-..." UUIDs; [] pools no GPU
+# Read-only datasets on this node, mounted at /datasets/<name>. Here: the Hugging Face cache
+# holding the weights of the example model below (must be readable by the labflux account).
+datasets = { hf-models = "/srv/models/hf" }
 
 [[nodes]]
 name = "node-b"
@@ -28,6 +31,24 @@ allocatable_cpu = 8
 allocatable_memory_mib = 16384
 gpus = []
 
-# Optional read-only datasets on a node:
+# Optional read-only datasets on a node, inline as on node-a or as a table:
 # [nodes.datasets]
 # mnist = "/srv/datasets/mnist"
+
+# Optional model services (M10). Example: a vLLM OpenAI server that clients reach through the
+# Gateway (<scheduler>/v1) as model "qwen2.5-14b". It runs only on nodes with its datasets.
+[models."qwen2.5-14b"]
+image = "vllm/vllm-openai"
+argv = [
+  "Qwen/Qwen2.5-14B-Instruct",
+  "--served-model-name=qwen2.5-14b",  # must equal the table name
+  "--tensor-parallel-size=2",
+  "--host=0.0.0.0",
+  "--port=8000",
+]
+env = { HF_HUB_OFFLINE = "1", HF_HOME = "/datasets/hf-models" }
+resources = { cpu = 4, memory_mib = 12288, gpu = 2, gpu_model = "A40" }
+datasets = ["hf-models"]
+mode = "persistent"         # default "on_demand": started by a request, stopped when idle
+startup_timeout_s = 600
+shm_mib = 8192

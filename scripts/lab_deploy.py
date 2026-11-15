@@ -73,6 +73,7 @@ class Inventory:
     port: int
     users: tuple
     nodes: tuple
+    models: dict  # Passed through to scheduler.toml; Settings validates them.
 
     @property
     def scheduler(self) -> Node:
@@ -134,6 +135,12 @@ def parse_inventory(values: dict, root: Path = ROOT) -> Inventory:
     users = tuple(scheduler.get("users", []))
     if not users or len(set(users)) != len(users):
         raise ValueError("scheduler.users needs distinct user names")
+    models = values.get("models", {})
+    provided = {dataset for node in nodes for dataset in node.datasets}
+    for name, model in models.items():
+        for dataset in model.get("datasets", []):
+            if dataset not in provided:
+                raise ValueError(f"model {name!r}: no inventory node provides dataset {dataset!r}")
     inventory = Inventory(
         account=values.get("account", "labflux"),
         ssh_key=path(values.get("ssh_key", "~/.ssh/labflux_deploy")),
@@ -143,6 +150,7 @@ def parse_inventory(values: dict, root: Path = ROOT) -> Inventory:
         port=port,
         users=users,
         nodes=tuple(nodes),
+        models=models,
     )
     return inventory
 
@@ -227,8 +235,16 @@ sudo systemctl daemon-reload
 """
 
 
+def toml_key(key: str) -> str:
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key)
+
+
 def toml_value(value) -> str:
-    # JSON strings, numbers and flat arrays are valid TOML values.
+    # JSON strings, numbers and booleans are valid TOML values; tables become inline tables.
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{toml_key(k)} = {toml_value(v)}" for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ", ".join(map(toml_value, value)) + "]"
     return json.dumps(value)
 
 
@@ -263,6 +279,9 @@ def scheduler_toml(inventory: Inventory, tokens: dict) -> str:
     lines += [
         f"{toml_value(user)} = {toml_value(token)}" for user, token in tokens["users"].items()
     ]
+    for name, model in inventory.models.items():
+        lines.append(f"[models.{toml_key(name)}]")
+        lines += [f"{toml_key(key)} = {toml_value(value)}" for key, value in model.items()]
     return "\n".join(lines) + "\n"
 
 

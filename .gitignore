@@ -12,7 +12,7 @@ build/
 .env.*
 data/
 outputs/
-.labflux/
+.labflux
 *.sqlite*
 *.qcow2
 *.img

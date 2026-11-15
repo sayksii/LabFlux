@@ -220,6 +220,7 @@ def test_v1_database_upgrades_to_current_and_keeps_jobs(settings):
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN schedule_note")
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN kind")  # Added by version 4.
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN lease_expires_at")
+        connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN service")  # Added by version 5.
         connection.execute(update(schema_version).values(version=1))
     first.db.close()
     database = Database(settings.data_dir)

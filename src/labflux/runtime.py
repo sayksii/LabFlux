@@ -164,6 +164,11 @@ class DockerExecutor:
                 else:
                     # Keeps CPU jobs GPU-less even if a GPU runtime were made the default.
                     environment["NVIDIA_VISIBLE_DEVICES"] = "void"
+                extra = {}
+                if spec.service:
+                    # Model servers need shared memory (tensor parallel uses NCCL over /dev/shm)
+                    # and many threads.
+                    extra["shm_size"] = f"{spec.service.shm_mib}m"
                 if on_launch:
                     on_launch()
                 container = client.containers.create(
@@ -179,7 +184,7 @@ class DockerExecutor:
                     nano_cpus=round(spec.job.resources.cpu * 1_000_000_000),
                     mem_limit=memory,
                     memswap_limit=memory,
-                    pids_limit=256,
+                    pids_limit=spec.service.pids_limit if spec.service else 256,
                     cap_drop=["ALL"],
                     security_opt=["no-new-privileges:true"],
                     init=True,
@@ -189,6 +194,7 @@ class DockerExecutor:
                         "labflux.attempt_id": spec.attempt_id,
                         "labflux.worker_id": spec.worker_id,
                     },
+                    **extra,
                 )
             labels = container.labels
             if (
@@ -254,8 +260,10 @@ class DockerExecutor:
             remaining = (spec.job.time_limit_s or self.settings.job_time_limit_s) - max(
                 0, time.time() - started_wall
             )
-            # A session container waits for commands; its lease, not a time limit, ends it.
-            deadline = float("inf") if spec.session else time.monotonic() + max(0, remaining)
+            # A session container waits for commands and a model server serves requests; a
+            # lease or idleness, not a time limit, ends them.
+            unlimited = spec.session or spec.service is not None
+            deadline = float("inf") if unlimited else time.monotonic() + max(0, remaining)
             while True:
                 container.reload()
                 if not container.attrs["State"]["Running"]:
@@ -393,6 +401,26 @@ class DockerExecutor:
             if reader is not None and reader.ident is not None:
                 reader.join(timeout=5)
             client.close()
+
+    def service_address(self, spec: ExecutionSpec) -> str:
+        """Base URL of a model server container (M10), reached from this host over its Docker
+        network; nothing is published on the host."""
+        with closing(docker.from_env(timeout=max(10, self.settings.request_timeout_s))) as client:
+            container = client.containers.get(container_name(spec))
+            if container.labels.get("labflux.attempt_id") != spec.attempt_id:
+                raise RuntimeError("container identity does not match the model service")
+            network = container.attrs["NetworkSettings"]
+            address = network.get("IPAddress") or next(
+                (
+                    item["IPAddress"]
+                    for item in (network.get("Networks") or {}).values()
+                    if item.get("IPAddress")
+                ),
+                "",
+            )
+        if not address:
+            raise RuntimeError("the model container has no network address")
+        return f"http://{address}:{spec.service.port}"
 
     def _stop_group(self, api, name: str, token: str, reader: threading.Thread) -> bool:
         """TERM a command's process group, KILL it after the stop grace; True once no process

@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
-from labflux.models import GPU_UUID
+from labflux.models import GPU_UUID, MODEL_NAME, JobSpec, ResourceRequest
 from labflux.session_protocol import (
     DEFAULT_COMMAND_TIMEOUT_S,
     DEFAULT_LEASE_S,
@@ -19,6 +19,42 @@ from labflux.session_protocol import (
     DEFAULT_WRITEBACK_BYTES,
     FastLaneMode,
 )
+
+
+class ModelConfig(BaseModel):
+    """One model the inference Gateway serves (M10), keyed by the name clients send as "model".
+    The server must answer that name, e.g. vLLM with --served-model-name set to it."""
+
+    model_config = ConfigDict(extra="forbid")
+    image: str = Field(min_length=1, max_length=512)
+    # Passed to the image's entrypoint (for vllm/vllm-openai: the model and its flags).
+    argv: list[str] = Field(min_length=1, max_length=256)
+    env: dict[str, str] = Field(default_factory=dict)
+    resources: ResourceRequest = Field(default_factory=ResourceRequest)
+    # Node-local datasets mounted read-only, e.g. the Hugging Face cache holding the weights.
+    datasets: list[str] = Field(default_factory=list)
+    port: int = Field(default=8000, ge=1, le=65535)
+    health_path: str = Field(default="/health", pattern=r"^/[!-~]*$", max_length=256)
+    # on_demand: started by the first request, stopped when idle. persistent: started as soon as
+    # resources allow, never stopped for idleness, started again after it fails or exits.
+    mode: Literal["on_demand", "persistent"] = "on_demand"
+    # Times are finite: TOML accepts inf and nan, and an infinite startup_timeout_s would fail
+    # the JobSpec that tick() builds from it, stopping all scheduling.
+    startup_timeout_s: float = Field(default=300, gt=0, allow_inf_nan=False)
+    # How long a request waits for a model that is not serving yet before a retryable 503.
+    cold_wait_s: float = Field(default=120, ge=0, allow_inf_nan=False)
+    idle_stop_s: float = Field(default=300, gt=0, allow_inf_nan=False)
+    # Earlier stop while other jobs wait for resources (on_demand only).
+    reclaim_idle_s: float = Field(default=60, gt=0, allow_inf_nan=False)
+    retry_after_failure_s: float = Field(default=300, ge=0, allow_inf_nan=False)
+    shm_mib: int = Field(default=1024, ge=64)
+    pids_limit: int = Field(default=4096, ge=64)
+
+    @model_validator(mode="after")
+    def valid_job(self) -> ModelConfig:
+        # The same checks as a submitted job (env names, datasets, GPU filters).
+        JobSpec(image=self.image, argv=self.argv, env=self.env, datasets=self.datasets)
+        return self
 
 
 class Settings(BaseModel):
@@ -85,9 +121,17 @@ class Settings(BaseModel):
     # Raw file bytes written back per command; command output reuses max_log_bytes and the
     # snapshot reuses max_source_bytes.
     session_writeback_bytes: int = Field(default=DEFAULT_WRITEBACK_BYTES, ge=0)
+    # Inference Gateway (M10).
+    models: dict[str, ModelConfig] = Field(default_factory=dict)
+    gateway_max_request_bytes: int = Field(default=16 * 1024**2, gt=0)
+    # Longest silence from the model server (no new response bytes) before a request fails.
+    gateway_read_timeout_s: float = Field(default=600, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def validate_settings(self) -> Settings:
+        for name in self.models:
+            if not re.fullmatch(MODEL_NAME, name):
+                raise ValueError(f"invalid model name: {name!r}")
         if self.offline_timeout_s <= self.heartbeat_interval_s:
             raise ValueError("offline_timeout_s must exceed heartbeat_interval_s")
         if not self.users or any(not user or not token for user, token in self.users.items()):

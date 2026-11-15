@@ -11,17 +11,19 @@ import time
 from dataclasses import dataclass
 
 from labflux.config import Settings
-from labflux.models import JobSpec
+from labflux.models import MODEL_KIND, JobSpec
 from labflux.session_protocol import SESSION_KIND
 
 # Jobs with a lower class rank are always considered first, under every policy: interactive
-# sessions (M9) go ahead of every batch job, and among themselves in submission order.
+# work, fast-lane sessions (M9) and model services (M10), goes ahead of every batch job, and
+# among itself in submission order.
 INTERACTIVE_CLASS = 0
 BATCH_CLASS = 1
+INTERACTIVE_KINDS = {SESSION_KIND: "session", MODEL_KIND: "model service"}
 
 
 def class_rank(job: dict) -> int:
-    return INTERACTIVE_CLASS if job.get("kind") == SESSION_KIND else BATCH_CLASS
+    return INTERACTIVE_CLASS if job.get("kind") in INTERACTIVE_KINDS else BATCH_CLASS
 
 
 @dataclass(frozen=True)
@@ -122,8 +124,9 @@ class FcfsPolicy:
             score, why = self.rank(job, spec, now, usage)
             rank = class_rank(job)
             if rank == INTERACTIVE_CLASS:
-                # Scores do not apply: sessions keep their submission order.
-                score, why = 0.0, f"interactive session, submission #{job['submission_seq']}"
+                # Scores do not apply: interactive work keeps its submission order.
+                kind = INTERACTIVE_KINDS[job["kind"]]
+                score, why = 0.0, f"interactive {kind}, submission #{job['submission_seq']}"
             key = (rank, -score, job["submission_seq"])
             ranked.append(Ranked(job, spec, key, why))
         return sorted(ranked, key=lambda entry: entry.key)

@@ -7,6 +7,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 GPU_UUID = r"^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+# Model services (M10): a job row of this kind whose container is the model server. They are
+# started by the Scheduler, not by a user, so they belong to this owner, which no token maps to.
+MODEL_KIND = "MODEL"
+MODEL_OWNER = "@models"
+MODEL_NAME = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"
 
 
 class ResourceRequest(BaseModel):
@@ -73,6 +78,19 @@ class JobSpec(BaseModel):
         return values
 
 
+class ServiceSpec(BaseModel):
+    """How the Worker runs and probes a model server container (M10)."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=MODEL_NAME)
+    port: int = Field(default=8000, ge=1, le=65535)
+    health_path: str = Field(default="/health", pattern=r"^/[!-~]*$", max_length=256)
+    # From container start until the health check first passes; the Worker then reports STARTED.
+    startup_timeout_s: float = Field(default=300, gt=0, allow_inf_nan=False)
+    shm_mib: int = Field(default=1024, ge=64)
+    pids_limit: int = Field(default=4096, ge=64)
+
+
 class ExecutionSpec(BaseModel):
     job_id: str
     attempt_id: str
@@ -81,6 +99,8 @@ class ExecutionSpec(BaseModel):
     gpu_uuids: list[Annotated[str, Field(pattern=GPU_UUID)]] = Field(default_factory=list)
     # A fast-lane session container (M9): kept alive for commands, no time limit enforced.
     session: bool = False
+    # A model server container (M10): no time limit; STARTED is reported once it is healthy.
+    service: ServiceSpec | None = None
 
 
 class GpuDevice(BaseModel):
