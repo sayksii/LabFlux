@@ -11,12 +11,14 @@ import uuid
 from pathlib import Path
 
 import pytest
+from conftest import register, user_headers
 from test_doorbell import wait_for
+from test_sessions import job, open_session
 
 from labflux.archives import extract_archive, pack_directory
 from labflux.config import Settings
 from labflux.models import JobSpec
-from labflux.runtime import ExecutionResult
+from labflux.runtime import DEFAULT_PATH, ExecutionResult, session_path
 from labflux.session_protocol import (
     KEEPALIVE_ARGV,
     SESSION_ENV,
@@ -40,8 +42,9 @@ class SessionExecutor:
     """A fake session container: run() stays up until cancelled; exec() calls a Python
     function on the host workspace, the way a command sees /workspace through the bind mount.
 
-    A script returns an exit code, or "hang" to block until a timeout, a stop or the end of
-    the container."""
+    A script (or sync_code) returns an exit code, or "hang" to block until a timeout, a stop
+    or the end of the container. A stop ends only the command, as the real process-group kill
+    does, unless `unstoppable` is set: then the caller has to end the container."""
 
     def __init__(self):
         self.alive: dict[str, bool] = {}
@@ -49,6 +52,7 @@ class SessionExecutor:
         self.calls: list[list[str]] = []
         self.script = lambda argv, cwd, output: 0
         self.sync_code = 0
+        self.unstoppable = False
 
     def check(self):
         return {}
@@ -57,8 +61,7 @@ class SessionExecutor:
         workspace.mkdir(parents=True, exist_ok=True)
         self.workspaces[spec.attempt_id] = workspace
         self.alive[spec.attempt_id] = True
-        if spec.session:
-            on_started()
+        on_started()
         cancel.wait()
         self.alive[spec.attempt_id] = False
         return ExecutionResult("CANCELLED", 137, "cancelled", True)
@@ -72,13 +75,15 @@ class SessionExecutor:
             if "--locked" not in argv:
                 (workspace / "uv.lock").write_bytes(b"generated")  # As a real `uv sync` does.
             on_output("stdout", b"Resolved 0 packages\n")
-            code = self.sync_code
-            return (code() if callable(code) else code), False, False
-        code = self.script(argv, cwd, on_output)
+            code = self.sync_code() if callable(self.sync_code) else self.sync_code
+        else:
+            code = self.script(argv, cwd, on_output)
         if code != "hang":
             return code, False, False
         deadline = time.monotonic() + timeout_s
         while self.alive[spec.attempt_id]:
+            if stop.is_set() and not self.unstoppable:
+                return None, False, True
             if stop.is_set() or time.monotonic() >= deadline:
                 timed_out = not stop.is_set()
                 on_abort(timed_out)
@@ -114,8 +119,7 @@ def start_session(worker, session=True):
     if session:
         payload["session"] = True
     worker.accept({"id": f"start-{attempt_id}", "kind": "START", "payload": payload})
-    if session:
-        wait_for(lambda: worker._read(attempt_id)["started"])
+    wait_for(lambda: worker._read(attempt_id)["started"])
     return attempt_id
 
 
@@ -256,6 +260,13 @@ def test_scan_and_pack_include_only_regular_files_outside_excluded_directories(t
     with tarfile.open(target) as packed:
         [member] = packed.getmembers()
         assert (member.name, member.mtime, member.uid) == ("src/a.py", 0, 0)
+
+
+def test_session_path_puts_the_workspace_venv_before_the_images_own_path():
+    custom = {"Env": ["LANG=C.UTF-8", "PATH=/opt/conda/bin:/usr/bin:/bin"]}
+    assert session_path(custom) == "/workspace/.venv/bin:/opt/conda/bin:/usr/bin:/bin"
+    for bare in (None, {}, {"Env": None}, {"Env": ["LANG=C.UTF-8"]}):
+        assert session_path(bare) == f"/workspace/.venv/bin:{DEFAULT_PATH}"
 
 
 # Commands ------------------------------------------------------------------------------------
@@ -413,10 +424,79 @@ def test_the_write_back_cap_skips_and_lists_files(lab):
     found, result = run(worker, attempt_id, snapshot(tmp_path, {}), writeback_limit_bytes=10)
     assert result["skipped"] == [{"path": "big.bin", "size": 100}]
     assert result["skipped_count"] == 1
-    [notice] = [m for m in found if m["type"] == "notice"]
-    assert notice["text"].startswith("1 files (0.0 MB) over the write-back limit stay in")
-    assert notice["text"].endswith(": big.bin")
+    assert not [m for m in found if m["type"] == "notice"]  # The client prints the only hint.
     assert writeback(found, tmp_path) == {"small.txt": b"12345"}
+
+
+def test_the_archive_member_limit_also_caps_the_write_back(lab):
+    worker, executor, tmp_path = lab
+    worker.settings = worker.settings.model_copy(update={"max_archive_members": 2})
+    attempt_id = start_session(worker)
+
+    def script(argv, cwd, output):
+        for name in ("a.txt", "b.txt", "c.txt"):
+            (cwd / name).write_text(name)
+        return 0
+
+    executor.script = script
+    found, result = run(worker, attempt_id, snapshot(tmp_path, {}))
+    assert writeback(found, tmp_path) == {"a.txt": b"a.txt", "b.txt": b"b.txt"}
+    assert result["writeback_files"] == 2
+    assert result["skipped"] == [{"path": "c.txt", "size": 5}]
+
+
+def test_remote_only_files_stay_listed_until_written_back_or_deleted(lab):
+    worker, executor, tmp_path = lab
+    attempt_id = start_session(worker)
+    empty = snapshot(tmp_path, {})
+    listed = [{"path": "big.bin", "size": 100}]
+
+    def script(argv, cwd, output):
+        if argv[0] == "write":
+            (cwd / "big.bin").write_bytes(argv[1].encode())
+        elif argv[0] == "delete":
+            (cwd / "big.bin").unlink()
+        return 0
+
+    executor.script = script
+    create = ("write", "x" * 100)
+    assert run(worker, attempt_id, empty, argv=create, writeback_limit_bytes=10)[1]["skipped"] == (
+        listed
+    )
+    # A later command that does not touch the file still lists it, and does not send it even
+    # though it would now fit.
+    found, result = run(worker, attempt_id, empty, argv=("noop",))
+    assert (result["skipped"], result["skipped_count"]) == (listed, 1)
+    assert result["writeback_files"] == 0
+    # So does a command that ends before it runs.
+    data = snapshot(tmp_path, {"a.py": b"1"})
+    pending = WorkerExec(
+        id=uuid.uuid4().hex,
+        attempt_id=attempt_id,
+        argv=["python"],
+        snapshot_size=len(data),
+        snapshot_sha256=hashlib.sha256(data).hexdigest(),
+        **LIMITS,
+    )
+    worker._on_message(json.dumps(pending.model_dump()))
+    worker._on_message(json.dumps({"type": "cancel", "id": pending.id}))
+    assert messages(worker, pending.id)[-1]["skipped"] == listed
+    # Changed again while it fits: written back, so it leaves the list.
+    found, result = run(worker, attempt_id, empty, argv=("write", "y" * 50))
+    assert writeback(found, tmp_path) == {"big.bin": b"y" * 50}
+    assert (result["skipped"], result["skipped_count"]) == ([], 0)
+    assert run(worker, attempt_id, empty, argv=("noop",))[1]["skipped"] == []
+    # Deleted in the session: it leaves the list too.
+    assert run(worker, attempt_id, empty, argv=create, writeback_limit_bytes=10)[1]["skipped"] == (
+        listed
+    )
+    assert run(worker, attempt_id, empty, argv=("delete",))[1]["skipped"] == []
+    # A snapshot that brings the file replaces the remote-only copy.
+    assert run(worker, attempt_id, empty, argv=create, writeback_limit_bytes=10)[1]["skipped"] == (
+        listed
+    )
+    local = snapshot(tmp_path, {"big.bin": b"local"})
+    assert run(worker, attempt_id, local, argv=("noop",))[1]["skipped"] == []
 
 
 def test_the_output_cap_truncates_with_one_notice(lab):
@@ -436,7 +516,56 @@ def test_the_output_cap_truncates_with_one_notice(lab):
     assert [m["text"] for m in found if m["type"] == "notice"] == ["output truncated at 20 bytes"]
 
 
-@pytest.mark.parametrize("ending", ["timeout", "cancel", "relay"])
+def test_a_cancel_stops_only_the_command_and_the_session_stays_usable(lab):
+    worker, executor, tmp_path = lab
+    attempt_id = start_session(worker)
+
+    def script(argv, cwd, output):
+        output("stdout", b"partial\n")
+        (cwd / "results.json").write_text("{}")
+        (cwd / ".venv").mkdir()
+        return "hang"
+
+    executor.script = script
+    command_id = send_command(worker, attempt_id, snapshot(tmp_path, {}), timeout_s=30)
+    wait_for(lambda: messages(worker, command_id))
+    # A Ctrl-C and a dropped client connection both arrive as this message.
+    worker._on_message(json.dumps({"type": "cancel", "id": command_id}))
+    found = result_of(worker, command_id)
+    result = found[-1]
+    assert (result["outcome"], result["reason"], result["session_ended"]) == (
+        "cancelled",
+        "command cancelled by the client",
+        False,
+    )
+    assert decode(found[0]["data"]) == b"partial\n"
+    assert writeback(found, tmp_path) == {"results.json": b"{}"}
+    # The container, its workspace and .venv are still there for the next command.
+    executor.script = lambda argv, cwd, output: (
+        0 if (cwd / ".venv").is_dir() and (cwd / "results.json").exists() else 1
+    )
+    result = run(worker, attempt_id, snapshot(tmp_path, {}))[1]
+    assert (result["outcome"], result["exit_code"], result["session_ended"]) == ("exited", 0, False)
+    assert executor.alive[attempt_id] and worker._read(attempt_id)["result"] is None
+
+
+def test_a_cancel_during_uv_sync_keeps_the_session_and_syncs_again(lab):
+    worker, executor, tmp_path = lab
+    attempt_id = start_session(worker)
+    data = snapshot(tmp_path, {"pyproject.toml": b"[project]\n"})
+    executor.sync_code = "hang"
+    command_id = send_command(worker, attempt_id, data, sync_timeout_s=30)
+    wait_for(lambda: executor.calls)
+    worker._on_message(json.dumps({"type": "cancel", "id": command_id}))
+    result = result_of(worker, command_id)[-1]
+    assert (result["outcome"], result["session_ended"]) == ("cancelled", False)
+    assert executor.calls == [["uv", "sync"]]  # The command itself never ran.
+    executor.sync_code = 0
+    assert run(worker, attempt_id, data)[1]["exit_code"] == 0
+    assert executor.calls[1:] == [["uv", "sync"], ["python", "main.py"]]
+
+
+@pytest.mark.parametrize("ending", ["timeout", "unstoppable", "relay"])
 def test_a_command_that_does_not_finish_ends_the_session_and_keeps_its_output(lab, ending):
     worker, executor, tmp_path = lab
     attempt_id = start_session(worker)
@@ -447,10 +576,11 @@ def test_a_command_that_does_not_finish_ends_the_session_and_keeps_its_output(la
         return "hang"
 
     executor.script = script
+    executor.unstoppable = True
     timeout = 0.2 if ending == "timeout" else 30
     command_id = send_command(worker, attempt_id, snapshot(tmp_path, {}), timeout_s=timeout)
     wait_for(lambda: messages(worker, command_id))
-    if ending == "cancel":
+    if ending == "unstoppable":  # A cancel whose processes cannot be stopped.
         worker._on_message(json.dumps({"type": "cancel", "id": command_id}))
     elif ending == "relay":
         worker._relay_lost()  # The doorbell connection dropped.
@@ -458,7 +588,7 @@ def test_a_command_that_does_not_finish_ends_the_session_and_keeps_its_output(la
     result = found[-1]
     outcome, reason = {
         "timeout": ("timeout", "command time limit exceeded"),
-        "cancel": ("cancelled", "command cancelled by the client"),
+        "unstoppable": ("cancelled", "the cancelled command could not be stopped"),
         "relay": ("cancelled", "relay connection lost during a command"),
     }[ending]
     assert (result["outcome"], result["reason"], result["session_ended"]) == (outcome, reason, True)
@@ -489,6 +619,8 @@ def test_commands_only_for_this_workers_running_sessions(lab):
     worker, executor, tmp_path = lab
     data = snapshot(tmp_path, {})
     batch = start_session(worker, session=False)
+    # The batch attempt is running here too, so only its kind can be what rejects the command.
+    assert worker._read(batch)["started"] and batch in worker.active
     executor.script = lambda argv, cwd, output: "hang"
     for attempt_id in (uuid.uuid4().hex, batch):
         command_id = send_command(worker, attempt_id, data)
@@ -502,7 +634,7 @@ def test_commands_only_for_this_workers_running_sessions(lab):
     wait_for(lambda: executor.calls)
     second = send_command(worker, attempt_id, data)
     assert [(m["outcome"], m["reason"]) for m in messages(worker, second)] == [("error", "busy")]
-    worker._on_message(json.dumps({"type": "cancel", "id": first}))
+    worker.handles[attempt_id]["cancel"].set()  # A STOP ends the session.
     assert result_of(worker, first)[-1]["outcome"] == "cancelled"
     wait_for(lambda: worker._read(attempt_id)["result"])
     later = send_command(worker, attempt_id, data)  # The session has ended.
@@ -556,3 +688,68 @@ def test_a_failed_send_ends_sessions_with_a_command_in_flight(lab):
     sending.set()
     wait_for(lambda: worker._read(attempt_id)["result"])
     assert worker._read(attempt_id)["result"]["reason"] == "relay connection lost during a command"
+
+
+def test_a_failing_message_handler_answers_the_command_at_once(lab, monkeypatch):
+    worker, executor, tmp_path = lab
+    attempt_id = start_session(worker)
+    data = snapshot(tmp_path, {})
+
+    def broken(text):
+        raise RuntimeError("disk failure")
+
+    monkeypatch.setattr("labflux.worker.decode", broken)  # Fails inside the chunk handler.
+    command_id = send_command(worker, attempt_id, data)
+    [result] = messages(worker, command_id)
+    assert (result["outcome"], result["reason"]) == ("error", "worker error: disk failure")
+    assert result["session_ended"] is False
+    monkeypatch.undo()
+    # The failed command is not left behind, so the session is not busy.
+    assert run(worker, attempt_id, data)[1]["outcome"] == "exited"
+
+
+def test_the_session_workspace_is_deleted_when_the_session_ends(client, service, tmp_path):
+    instance = register(client, cpu=2)
+    executor = SessionExecutor()
+    worker = Worker(Settings(data_dir=tmp_path / "worker", worker_id="vm-a"), executor=executor)
+    worker.instance_id = instance
+    worker.client.close()
+    worker.client = client
+    worker.client.headers["Authorization"] = "Bearer dev-worker-token"
+    worker.sent = []
+    worker.send = lambda message: worker.sent.append(message) or True
+    try:
+        session = open_session(client)
+        [start] = service.poll_commands("vm-a", instance)
+        attempt_id = start["payload"]["attempt_id"]
+        worker.accept(start)
+        wait_for(lambda: worker._read(attempt_id)["started"])
+        worker.flush()
+
+        def script(argv, cwd, output):
+            (cwd / ".venv").mkdir()
+            (cwd / ".venv" / "big").write_bytes(b"x" * 1000)
+            (cwd / "model.pt").write_bytes(b"x" * 100)  # Over the limit: stays remote only.
+            return 0
+
+        executor.script = script
+        data = snapshot(tmp_path, {"main.py": b"print()"})
+        result = run(worker, attempt_id, data, writeback_limit_bytes=10)[1]
+        assert result["skipped"] == [{"path": "model.pt", "size": 100}]
+        workspace = executor.workspaces[attempt_id]
+        assert {p.name for p in workspace.iterdir()} == {".venv", "main.py", "model.pt"}
+        worker.flush()
+        assert workspace.is_dir()  # Kept for as long as the session runs.
+
+        closed = client.post("/api/sessions/current/close", headers=user_headers()).json()
+        assert closed["state"] == "STOPPING"
+        [stop] = service.poll_commands("vm-a", instance)
+        worker.accept(stop)
+        wait_for(lambda: worker._read(attempt_id)["result"])
+        worker.flush()
+        assert not workspace.exists()
+        assert job(client, session["id"])["state"] == "CANCELLED"
+    finally:
+        for handle in worker.handles.values():
+            handle["cancel"].set()
+        worker.pool.shutdown(wait=True)
