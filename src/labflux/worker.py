@@ -311,10 +311,48 @@ class Worker:
                     "unsent_result": confirmed and not sent,
                 }
             )
-        return {
-            "attempts": records,
-            "containers": self.executor.inventory(self.settings.worker_id),
-        }
+        pending = {item["attempt_id"] for item in records if not item.get("unsent_result")}
+        containers = self._drop_interrupted(
+            self.executor.inventory(self.settings.worker_id), pending
+        )
+        return {"attempts": records, "containers": containers}
+
+    def _drop_interrupted(self, containers: list[dict], pending: set[str]) -> list[dict]:
+        """Remove stopped containers that a host shutdown, reboot or crash interrupted.
+
+        Docker keeps them across a reboot, and adopting one would report the shutdown's exit
+        (143, 137 or 255) as an ordinary program failure. Removing it (it is already stopped,
+        so termination is confirmed) and leaving it out lets the Scheduler close the execution
+        as lost and retry it. A clean exit or an OOM kill is still adopted as it happened.
+        """
+        booted = psutil.boot_time()
+        kept = []
+        for item in containers:
+            started = item.get("started_at")
+            if (
+                item["attempt_id"] in pending
+                and item["status"] in ("exited", "dead")
+                and started is not None
+                and started < booted
+                and item.get("exit_code") != 0
+                and not item.get("oom_killed")
+            ):
+                try:
+                    removed = self.executor.remove(self.settings.worker_id, item["attempt_id"])
+                except Exception:
+                    log.exception(
+                        "interrupted container removal failed",
+                        extra={"attempt_id": item["attempt_id"]},
+                    )
+                    removed = False
+                if removed:
+                    log.info(
+                        "removed a container interrupted by a host restart",
+                        extra={"attempt_id": item["attempt_id"]},
+                    )
+                    continue
+            kept.append(item)
+        return kept
 
     def register(self) -> dict:
         capacity = measure_capacity(self.settings, self.gpus)

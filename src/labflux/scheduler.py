@@ -25,6 +25,9 @@ from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerReg
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 EXPIRED_ATTEMPT = "worker heartbeat expired; termination unconfirmed"
+# A node restored after a Scheduler restart: it receives no new work until its Worker proves
+# its instance (heartbeat) or registers a new one with an inventory.
+RECONCILING = "RECONCILING"
 
 
 class ServiceError(Exception):
@@ -43,6 +46,21 @@ class Scheduler:
         self.settings = settings
         self.clock = clock
         self.db = Database(settings.data_dir)
+        self.restore()
+
+    def restore(self) -> None:
+        """Resume from the database after a (re)start.
+
+        Every committed transition is already durable, so only liveness is stale: nodes that
+        were ONLINE wait for their Worker again, with a fresh offline window measured from now
+        so that a long Scheduler downtime does not expire them all on the first tick.
+        """
+        with self.db.transaction() as connection:
+            connection.execute(
+                nodes.update()
+                .where(nodes.c.status == "ONLINE")
+                .values(status=RECONCILING, last_seen=self.clock())
+            )
 
     def _node(self, connection, node_id: str, instance_id: str) -> dict:
         row = connection.execute(select(nodes).where(nodes.c.id == node_id)).first()
@@ -284,8 +302,14 @@ class Scheduler:
             elif record is None and start is not None and not start.acked:
                 continue  # Never delivered; normal command polling hands it to the new instance.
             else:
+                # The node lost the execution (crash, reboot, removed container): retryable.
                 self._finish(
-                    connection, attempt, job, "FAILED", "container missing after worker restart"
+                    connection,
+                    attempt,
+                    job,
+                    "FAILED",
+                    "container missing after worker restart",
+                    lost=True,
                 )
                 result["closed"].append(attempt["id"])
         for item in inventory.containers:
@@ -303,8 +327,12 @@ class Scheduler:
         reason: str,
         exit_code: int | None = None,
         oom_killed: bool = False,
+        lost: bool = False,
     ) -> None:
-        """Record confirmed termination; CPU, RAM and GPUs are released together."""
+        """Record confirmed termination; CPU, RAM and GPUs are released together.
+
+        `lost` marks an infrastructure loss; a job with retries left is queued again.
+        """
         outcome = "CANCELLED" if job["cancel_requested"] else outcome
         connection.execute(
             attempts.update()
@@ -324,10 +352,24 @@ class Scheduler:
             .values(released=True)
         )
         if job["current_attempt_id"] == attempt["id"]:
+            state = outcome
+            if lost and outcome != "CANCELLED":
+                limit = JobSpec.model_validate(job["spec"]).max_retries
+                used = (
+                    connection.execute(
+                        select(func.count()).where(attempts.c.job_id == job["id"])
+                    ).scalar_one()
+                    - 1
+                )
+                if used < limit:
+                    # Same submission_seq: the job returns to its original queue position,
+                    # ahead of everything submitted after it. Dispatch adds a new attempt.
+                    state = "QUEUED"
+                    reason = f"{reason}; queued for retry {used + 1} of {limit}"
             connection.execute(
                 jobs.update()
                 .where(jobs.c.id == job["id"])
-                .values(state=outcome, reason=reason, updated_at=self.clock())
+                .values(state=state, reason=reason, updated_at=self.clock())
             )
         connection.execute(
             commands.update().where(commands.c.attempt_id == attempt["id"]).values(acked=True)
@@ -337,8 +379,9 @@ class Scheduler:
         with self.db.transaction() as connection:
             node = self._node(connection, node_id, payload.instance_id)
             status = node["status"]
-            if status == "OFFLINE":
-                # The same instance is back after its heartbeats lapsed; its records are intact.
+            if status in ("OFFLINE", RECONCILING):
+                # The same instance is back after its heartbeats lapsed or the Scheduler
+                # restarted; its records are intact, so the instance check reconciles it.
                 status = "ONLINE"
                 self._resume(connection, node_id, set(payload.active_attempts))
             connection.execute(
@@ -547,7 +590,7 @@ class Scheduler:
             expired = (
                 connection.execute(
                     select(nodes.c.id).where(
-                        nodes.c.status == "ONLINE",
+                        nodes.c.status.in_(["ONLINE", RECONCILING]),
                         nodes.c.last_seen < self.clock() - self.settings.offline_timeout_s,
                     )
                 )
@@ -741,7 +784,8 @@ class Scheduler:
         with self.db.transaction() as connection:
             job = self._job(connection, job_id, owner)
             if job["state"] not in TERMINAL:
-                if job["current_attempt_id"] is None:
+                # A job queued for retry still points at its last, already released attempt.
+                if job["state"] == "QUEUED":
                     connection.execute(
                         jobs.update()
                         .where(jobs.c.id == job_id)

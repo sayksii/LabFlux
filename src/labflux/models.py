@@ -34,6 +34,9 @@ class JobSpec(BaseModel):
     time_limit_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     source_id: str | None = None
     datasets: list[str] = Field(default_factory=list)
+    # New attempts allowed after an infrastructure loss (the node or its container was lost);
+    # cancellation, time limits and program exits are never retried.
+    max_retries: int = Field(default=0, ge=0, le=10)
 
     @field_validator("argv")
     @classmethod
