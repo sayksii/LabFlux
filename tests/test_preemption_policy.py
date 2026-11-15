@@ -5,6 +5,7 @@ from labflux.models import JobSpec
 from labflux.policy import (
     FcfsPolicy,
     PriorityPolicy,
+    Release,
     Victim,
     cheapest_preemption,
     choose_victims,
@@ -99,6 +100,32 @@ def test_it_already_fits_without_stopping_anything():
     a = victim("a")
     assert choose([a], request(cpu=1), used(a)) == []
     assert fits_after_stopping(NODE, used(a), frozenset(), frozenset(), request(), [], 32)
+
+
+def test_resources_on_their_way_back_count_as_free():
+    """An attempt already stopping (a cancel, a session end, an idle model being reclaimed)
+    frees its resources by itself: fewer victims are needed, or none."""
+    a, b = victim("a", lost=1), victim("b", lost=2)
+    stopping = Release("job x on kayle to stop", cpu=1, memory_mib=256)
+    # Four CPUs: a, b, the stopping attempt and a job that cannot be stopped.
+    allocation = used(a, b, cpu=2, memory=512, jobs=2)
+
+    def pick(need, released=(stopping,)):
+        return choose_victims(
+            NODE, allocation, frozenset(), frozenset(), need, [a, b], 32, released
+        )
+
+    assert pick(request(cpu=2), released=()) == [a, b]
+    assert pick(request(cpu=2)) == [a]
+    assert pick(request(cpu=1)) == []
+    assert pick(request(cpu=4)) is None
+    # A card on its way back counts too, and so does the job slot it frees.
+    card = Release("idle model m on kayle to be reclaimed", 1, 256, frozenset({CARD_A}))
+    held = frozenset({CARD_A})
+    gpu = request(gpu=1)
+    allocation = used(cpu=1, memory=256, jobs=1)
+    assert choose_victims(NODE, allocation, held, held, gpu, [], 1) is None
+    assert choose_victims(NODE, allocation, held, held, gpu, [], 1, [card]) == []
 
 
 def test_across_nodes_the_least_total_lost_work_wins():

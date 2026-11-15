@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Callable
 
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from labflux.config import Settings
 from labflux.database import (
@@ -34,12 +34,15 @@ from labflux.models import (
     WorkerRegistration,
 )
 from labflux.policy import (
+    INTERACTIVE_CLASS,
     Booking,
     Ranked,
+    Release,
     Reservation,
     Victim,
     cheapest_preemption,
     choose_victims,
+    class_rank,
     clock_text,
     dominant_share,
     earliest_start,
@@ -738,26 +741,30 @@ class Scheduler:
     ) -> str | None:
         """Let the blocked head job stop preemptible batch jobs to make room for it (M11).
 
-        Returns a note when the head waits for preempted jobs to stop, or None when nothing is
-        preempted for it. One round at a time: while any attempt is still stopping for a
-        preemption, no new one starts. The resources are released, and the head dispatched,
-        only by the victims' confirmed termination.
+        Returns a note when the head waits for preempted jobs or for resources already on their
+        way back, or None when nothing is preempted for it. Interactive work (sessions, model
+        services) may preempt under every policy, a batch job only under policies that allow
+        it. One round at a time: while any attempt is still stopping for a preemption, no new
+        one starts. Resources already on their way back count as free: if the head fits once
+        they are released it preempts nothing, otherwise it needs fewer victims. The resources
+        are released, and the head dispatched, only by the victims' confirmed termination.
         """
         job, spec = entry.job, entry.spec
-        kind = job.get("kind")
         if not self.settings.preemption_enabled or not (
-            kind == SESSION_KIND or (kind == "BATCH" and self.policy.batch_preemption)
+            class_rank(job) == INTERACTIVE_CLASS
+            or (job.get("kind") == "BATCH" and self.policy.batch_preemption)
         ):
             return None
         waiting = self._preemption_in_progress(connection, job)
         if waiting:
             return waiting
         victims = self._victims(connection, entry, available, usage, now)
+        releases = self._releases(connection, available, now)
         request = spec.resources.model_dump()
-        options = {}
+        options, ready = {}, []
         for node in available:
-            here = victims.get(node["id"])
-            if not here or not set(spec.datasets).issubset(node["capacity"]["datasets"]):
+            here, freed = victims.get(node["id"], []), releases.get(node["id"], [])
+            if not (here or freed) or not set(spec.datasets).issubset(node["capacity"]["datasets"]):
                 continue
             matching = frozenset(gpu["uuid"] for gpu in self._eligible_gpus(node, request, set()))
             chosen = choose_victims(
@@ -768,9 +775,14 @@ class Scheduler:
                 request,
                 here,
                 self.settings.max_parallel_jobs,
+                freed,
             )
-            if chosen:
+            if chosen == [] and freed:
+                ready.append(node["id"])
+            elif chosen:
                 options[node["id"]] = chosen
+        if ready:
+            return "waiting for " + ", ".join(release.what for release in releases[min(ready)])
         best = cheapest_preemption(options)
         if best is None:
             return None
@@ -800,6 +812,57 @@ class Scheduler:
             note += f" (preempted for job {', '.join(others)})"
         return note
 
+    def _releases(self, connection, available: list, now: float) -> dict[str, list[Release]]:
+        """Resources already on their way back, per available node: attempts stopping for a
+        cancel, a session end or a model stop, and idle on-demand models that M10 reclaims as
+        soon as a job waits. Attempts on nodes that are not available never count."""
+        result: dict[str, list[Release]] = {node["id"]: [] for node in available}
+        cards: dict[str, set[str]] = {}
+        for row in connection.execute(
+            select(attempt_gpus.c.attempt_id, attempt_gpus.c.gpu_uuid).where(
+                attempt_gpus.c.released.is_(False)
+            )
+        ):
+            cards.setdefault(row.attempt_id, set()).add(row.gpu_uuid)
+        for row in connection.execute(
+            select(
+                jobs,
+                attempts.c.id.label("attempt_id"),
+                attempts.c.node_id,
+                attempts.c.resources,
+                attempts.c.state.label("attempt_state"),
+            )
+            .select_from(attempts.join(jobs, jobs.c.id == attempts.c.job_id))
+            .where(
+                attempts.c.released.is_(False),
+                attempts.c.preempted_by.is_(None),
+                attempts.c.node_id.in_(list(result)),
+                or_(
+                    attempts.c.state == "STOPPING",
+                    and_(jobs.c.kind == MODEL_KIND, jobs.c.state == "RUNNING"),
+                ),
+            )
+            .order_by(attempts.c.created_at, attempts.c.id)
+        ):
+            job = row_dict(row)
+            if job["attempt_state"] == "STOPPING":
+                model = job["kind"] == MODEL_KIND
+                who = f"model {job['service']}" if model else f"job {short(job['id'])}"
+                what = f"{who} on {job['node_id']} to stop"
+            elif self._idle_stop(job, now, waiting=True):
+                what = f"idle model {job['service']} on {job['node_id']} to be reclaimed"
+            else:
+                continue
+            result[job["node_id"]].append(
+                Release(
+                    what=what,
+                    cpu=job["resources"]["cpu"],
+                    memory_mib=job["resources"]["memory_mib"],
+                    cards=frozenset(cards.get(job["attempt_id"], ())),
+                )
+            )
+        return result
+
     def _victims(
         self, connection, entry: Ranked, available: list, usage: dict, now: float
     ) -> dict[str, list[Victim]]:
@@ -807,7 +870,8 @@ class Scheduler:
 
         A victim is the current attempt of a batch job marked preemptible and safe to rerun,
         not cancelled, RUNNING or STARTING on an available node, not already stopping for a
-        preemption and preempted fewer than max_preemptions_per_job times. A batch head also
+        preemption and preempted fewer than max_preemptions_per_job times. Sessions and model
+        services are never victims; as the head they may stop any such job. A batch head also
         needs a strictly higher explicit priority than the victim, and must rank ahead of it
         even if the victim were queued now: otherwise an old job's waiting bonus would put it
         back in front as soon as it is requeued, and the two would preempt each other.
@@ -858,7 +922,7 @@ class Scheduler:
             cards.setdefault(row.attempt_id, set()).add(row.gpu_uuid)
         default = self.settings.default_priority
         mine = default if spec.priority is None else spec.priority
-        session = job.get("kind") == SESSION_KIND
+        interactive = class_rank(job) == INTERACTIVE_CLASS
         result: dict[str, list[Victim]] = {}
         for row in rows:
             victim_spec = JobSpec.model_validate(row.spec)
@@ -867,7 +931,7 @@ class Scheduler:
             if preempted.get(row.job_id, 0) >= self.settings.max_preemptions_per_job:
                 continue
             priority = default if victim_spec.priority is None else victim_spec.priority
-            if not session:
+            if not interactive:
                 queued = {
                     "id": row.job_id,
                     "owner": row.owner,
@@ -965,18 +1029,20 @@ class Scheduler:
                             jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
                         )
                     note = f"{policy.name}: first in line ({entry.why}); {reason}"
-                    if job["kind"] == MODEL_KIND and not policy.backfill:
-                        # A model service ranks ahead of every batch job, so as the head it
-                        # would stop even jobs that fit on idle nodes, for as long as it waits.
-                        note = (
-                            f"{policy.name}: {entry.why}; {reason}; model services do not hold "
-                            "up later jobs"
-                        )
-                        self._note(connection, job, note)
-                        continue
                     waiting = self._preempt(
                         connection, entry, available, allocated, held, usage, now
                     )
+                    if job["kind"] == MODEL_KIND and not policy.backfill:
+                        # A model service ranks ahead of every batch job, so as the head it
+                        # would stop even jobs that fit on idle nodes, for as long as it waits.
+                        # It may still preempt; if it cannot, the next blocked job may.
+                        note = f"{policy.name}: {entry.why}; {reason}"
+                        if waiting:
+                            note += f"; {waiting}"
+                        self._note(
+                            connection, job, f"{note}; model services do not hold up later jobs"
+                        )
+                        continue
                     if waiting:
                         note += f"; {waiting}"
                         if policy.backfill:
@@ -1840,6 +1906,27 @@ class Scheduler:
                     .values(lease_expires_at=self._model_lease(row.service))
                 )
 
+    def _idle_stop(self, job: dict, now: float, waiting: bool) -> str | None:
+        """Why an idle model service is stopped now, or None: a RUNNING on-demand model with no
+        request in flight, idle for idle_stop_s, or for reclaim_idle_s while other jobs wait
+        (waiting). _manage_models stops it; a blocked head job waits for it (M11)."""
+        config = self.settings.models.get(job["service"] or "")
+        if (
+            config is None
+            or config.mode != "on_demand"
+            or job["state"] != "RUNNING"
+            or job["cancel_requested"]
+            or job["lease_expires_at"] is None
+            or self._inflight(job["id"])
+        ):
+            return None
+        idle = now - (job["lease_expires_at"] - config.idle_stop_s)
+        if job["lease_expires_at"] <= now:
+            return f"idle for {idle:.0f}s"
+        if waiting and idle >= config.reclaim_idle_s:
+            return f"idle for {idle:.0f}s while other jobs wait for resources"
+        return None
+
     def _manage_models(self, connection) -> None:
         """Stop idle on-demand models, models removed from the configuration and models whose
         configuration changed; cancel queued on-demand models nobody asks for any more; start
@@ -1916,17 +2003,9 @@ class Scheduler:
                     .values(lease_expires_at=self._model_lease(job["service"]))
                 )
                 continue
-            if config.mode != "on_demand" or self._inflight(job["id"]):
-                continue
-            idle = now - (job["lease_expires_at"] - config.idle_stop_s)
-            if job["lease_expires_at"] <= now:
-                self._request_stop(connection, job, f"idle for {idle:.0f}s; {STOP_WAIT}")
-            elif waiting and idle >= config.reclaim_idle_s:
-                self._request_stop(
-                    connection,
-                    job,
-                    f"idle for {idle:.0f}s while other jobs wait for resources; {STOP_WAIT}",
-                )
+            reason = self._idle_stop(job, now, waiting)
+            if reason:
+                self._request_stop(connection, job, f"{reason}; {STOP_WAIT}")
         self.model_polled = asked
         for name, config in models.items():
             if (
