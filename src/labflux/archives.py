@@ -13,8 +13,11 @@ from pathspec import GitIgnoreSpec
 ALWAYS_EXCLUDED = {".git", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache", ".labflux"}
 
 
-def pack_directory(root: Path, target: Path, *, source: bool = True) -> None:
+def pack_directory(root: Path, target: Path, *, source: bool = True) -> list[str]:
+    """Pack root into target. A source snapshot leaves symbolic links out (they are never
+    followed) and returns their relative paths; any other archive rejects them."""
     root = root.resolve()
+    links: list[str] = []
     patterns = []
     if source:
         patterns = ["data/", "datasets/", "outputs/", ".env", ".env.*", "*.pyc", "*.sqlite*"]
@@ -37,13 +40,19 @@ def pack_directory(root: Path, target: Path, *, source: bool = True) -> None:
                     if source and (name in ALWAYS_EXCLUDED or ignored.match_file(relative)):
                         continue
                     if path.is_symlink():
-                        raise ValueError(f"archive cannot contain symbolic links: {relative}")
+                        if not source:
+                            raise ValueError(f"archive cannot contain symbolic links: {relative}")
+                        links.append(relative)
+                        continue
                     kept.append(name)
                 subdirs[:] = kept
                 for name in sorted(files):
                     path = base / name
                     relative = path.relative_to(root).as_posix()
                     if source and (name in ALWAYS_EXCLUDED or ignored.match_file(relative)):
+                        continue
+                    if source and path.is_symlink():
+                        links.append(relative)
                         continue
                     if path.is_symlink() or not path.is_file():
                         raise ValueError(
@@ -55,6 +64,7 @@ def pack_directory(root: Path, target: Path, *, source: bool = True) -> None:
                     info.mode &= 0o777
                     with path.open("rb") as stream:
                         archive.addfile(info, stream)
+    return sorted(links)
 
 
 def extract_archive(archive: Path, destination: Path, *, max_bytes: int, max_members: int) -> None:

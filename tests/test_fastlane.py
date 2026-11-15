@@ -3,6 +3,9 @@
 import io
 import json
 import os
+import pty
+import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -28,6 +31,7 @@ from labflux.session_protocol import (
     Notice,
     Output,
     SessionView,
+    SkippedFile,
     WritebackChunk,
     decode,
     encode,
@@ -223,6 +227,67 @@ def test_labflux_shell_passes_hangup_on_and_removes_its_standins(tmp_path, signu
         process.kill()
 
 
+@pytest.mark.parametrize(
+    ("shell", "rc"),
+    [
+        ("bash", ".bashrc"),
+        pytest.param(
+            "zsh", ".zshrc", marks=pytest.mark.skipif(not shutil.which("zsh"), reason="no zsh")
+        ),
+    ],
+)
+def test_labflux_shell_keeps_standins_first_after_startup_files(tmp_path, shell, rc):
+    """Start-up files (conda init, pyenv) and later activations prepend to PATH; the stand-ins
+    must stay first, and a name an alias shadows is reported."""
+    bin_dir = fake_bin(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / rc).write_text(f"export PATH=\"{bin_dir}:$PATH\"\nalias pytest='echo aliased'\n")
+    first, second = tmp_path / "first.txt", tmp_path / "second.txt"
+    commands = (
+        f"command -v python > {first}\n"
+        f'PATH="{bin_dir}:$PATH"\n'  # Like `conda activate` after the shell started.
+        f"command -v python > {second}\n"
+        "exit\n"
+    )
+    master, slave = pty.openpty()
+    env = {**os.environ, "HOME": str(home)}
+    env.pop("ZDOTDIR", None)
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-m", "labflux.cli", "shell", "--shell", shutil.which(shell)],
+        cwd=tmp_path,
+        env=env,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+    )
+    os.close(slave)
+    output = b""
+    try:
+        os.write(master, commands.encode())
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            if not select.select([master], [], [], 0.5)[0]:
+                continue
+            try:
+                data = os.read(master, 4096)
+            except OSError:  # EIO: the shell closed the terminal.
+                break
+            if not data:
+                break
+            output += data
+        assert process.wait(timeout=30) == 0, output
+    finally:
+        process.kill()
+        os.close(master)
+    for report in (first, second):
+        resolved = Path(report.read_text().strip())
+        assert resolved.name == "python" and "labflux-standins-" in resolved.parent.name, output
+    assert b"labflux: warning: pytest is" in output and b"labflux run -- pytest" in output
+    assert b"warning: python " not in output
+
+
 # Write-back ----------------------------------------------------------------------------------
 
 
@@ -253,7 +318,9 @@ def test_writeback_places_new_and_unchanged_files(tmp_path):
     assert (root / "results.json").read_text() == "new"
     assert (root / "a" / "b" / "gen.txt").read_text() == "gen"
     assert not (root / ".venv").exists() and not (root / "m.pyc").exists()
-    assert list((root / ".labflux").iterdir()) == []  # The staging directory is removed.
+    # The staging directory is removed; the state directory ignores itself for git.
+    assert [path.name for path in (root / ".labflux").iterdir()] == [".gitignore"]
+    assert (root / ".labflux" / ".gitignore").read_text() == "*\n"
 
 
 def test_writeback_conflicts_keep_local_files_and_save_remote_copies(tmp_path):
@@ -401,8 +468,8 @@ def fake():
     thread.join(timeout=10)
 
 
-def run(fake, tmp_path, argv, cwd=None, **settings):
-    root = project(tmp_path / "proj")
+def run(fake, tmp_path, argv, cwd=None, toml="", **settings):
+    root = project(tmp_path / "proj", toml)
     (root / "main.py").write_text("print('hi')\n")
     config = Settings(
         data_dir=tmp_path / "data",
@@ -483,7 +550,7 @@ def test_run_rejects_a_writeback_that_fails_its_checksum(fake, tmp_path, capsysb
 def test_run_errors_and_worker_unavailable_retry(fake, tmp_path, capsysbinary):
     replies = [
         ErrorMessage(code="worker_unavailable", message="no relay"),
-        ErrorMessage(code="busy", message="one command at a time"),
+        ErrorMessage(code="lost", message="no result in time"),
     ]
 
     async def script(websocket, _received):
@@ -492,7 +559,40 @@ def test_run_errors_and_worker_unavailable_retry(fake, tmp_path, capsysbinary):
     fake.script = script
     assert run(fake, tmp_path, ["python", "main.py"]) == 125
     assert fake.connections == 2
-    assert b"busy: one command at a time" in capsysbinary.readouterr().err
+    assert b"lost: no result in time" in capsysbinary.readouterr().err
+
+
+def test_run_waits_for_a_busy_session_with_a_fresh_snapshot(
+    fake, tmp_path, capsysbinary, monkeypatch
+):
+    monkeypatch.setattr(fastlane, "BUSY_RETRY_S", 0.01)
+    busy = ErrorMessage(code="busy", message="another command is running in this session")
+    replies = [busy, busy, DONE]
+
+    async def script(websocket, _received):
+        if len(replies) == 3:  # The command ahead of this one writes a file back meanwhile.
+            (tmp_path / "proj" / "results.json").write_text("{}")
+        await websocket.send_text(replies.pop(0).model_dump_json())
+
+    fake.script = script
+    assert run(fake, tmp_path, ["python", "main.py"]) == 0
+    assert fake.connections == 3 and fake.opened == 1
+    assert capsysbinary.readouterr().err.count(b"waiting for it to finish") == 1
+    digests = [messages[0]["snapshot_sha256"] for messages in fake.received]
+    assert digests[0] != digests[1] == digests[2]
+
+
+def test_run_gives_up_on_a_busy_session_after_busy_wait_s(
+    fake, tmp_path, capsysbinary, monkeypatch
+):
+    monkeypatch.setattr(fastlane, "BUSY_RETRY_S", 0.01)
+    fake.script = finish_with(ErrorMessage(code="busy", message="another command is running"))
+    started = time.monotonic()
+    assert run(fake, tmp_path, ["python", "main.py"], toml="[session]\nbusy_wait_s = 0.2\n") == 125
+    assert time.monotonic() - started < 30 and fake.connections >= 2
+    err = capsysbinary.readouterr().err
+    assert b"still running another command after 0.2 s" in err and b"busy_wait_s" in err
+    assert fastlane.load_project(project(tmp_path / "other")).session.busy_wait_s == 120
 
 
 def test_run_leases_again_once_after_not_ready(fake, tmp_path, capsysbinary):
@@ -510,11 +610,11 @@ def test_run_reads_an_error_sent_while_the_snapshot_is_uploading(fake, tmp_path,
     root = project(tmp_path / "proj")
     (root / "weights.bin").write_bytes(os.urandom(4 * 1024**2))  # Many chunks, incompressible.
     fake.read_all = False
-    fake.script = finish_with(ErrorMessage(code="busy", message="one command at a time"))
+    fake.script = finish_with(ErrorMessage(code="too_large", message="snapshot exceeds 1 bytes"))
     assert run(fake, tmp_path, ["python", "main.py"]) == 125
     assert len(fake.received[0]) == 1  # The reply came before any chunk was read.
     err = capsysbinary.readouterr().err
-    assert b"busy: one command at a time" in err and b"connection" not in err
+    assert b"too_large: snapshot exceeds 1 bytes" in err and b"connection" not in err
 
 
 def test_run_conflict_and_oversized_snapshot_fail_with_125(fake, tmp_path, capsysbinary):
@@ -550,7 +650,8 @@ def test_run_reports_a_session_that_ended_while_waiting(fake, tmp_path, capsysbi
     assert fake.connections == 0
 
 
-def test_ctrl_c_sends_cancel_and_keeps_the_result(fake, tmp_path, capsysbinary):
+@pytest.mark.parametrize("session_ended", [False, True])
+def test_ctrl_c_sends_cancel_and_keeps_the_result(fake, tmp_path, capsysbinary, session_ended):
     seen = []
 
     async def script(websocket, _received):
@@ -560,7 +661,7 @@ def test_ctrl_c_sends_cancel_and_keeps_the_result(fake, tmp_path, capsysbinary):
         os.kill(os.getpid(), signal.SIGINT)
         seen.append(await websocket.receive_json())
         await websocket.send_text(Notice(id=CID, text="still here").model_dump_json())
-        result = CommandResult(id=CID, outcome="cancelled", session_ended=True)
+        result = CommandResult(id=CID, outcome="cancelled", session_ended=session_ended)
         await websocket.send_text(result.model_dump_json())
 
     fake.script = script
@@ -568,6 +669,9 @@ def test_ctrl_c_sends_cancel_and_keeps_the_result(fake, tmp_path, capsysbinary):
     assert seen == [{"type": "cancel", "id": ""}]
     out = capsysbinary.readouterr()
     assert out.out == b"1\n" and b"still here" in out.err
+    # Ctrl-C stops the command only; "closed" is said only when the session really ended.
+    assert (b"the session was closed" in out.err) == session_ended
+    assert (b"the session is still running" in out.err) != session_ended
 
 
 @pytest.mark.parametrize(
@@ -588,3 +692,116 @@ def test_second_ctrl_c_and_termination_close_the_socket(fake, tmp_path, signals,
     fake.script = script
     assert run(fake, tmp_path, ["python", "main.py"]) == expected
     assert fake.disconnected.wait(5)
+
+
+# Symbolic links in the project ---------------------------------------------------------------
+
+
+def snapshot_names(messages) -> set[str]:
+    data = b"".join(decode(message["data"]) for message in messages[1:])
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
+        return set(archive.getnames())
+
+
+def test_run_skips_symlinks_with_one_notice_per_command(fake, tmp_path, capsysbinary):
+    root = project(tmp_path / "proj")
+    (tmp_path / "shared").mkdir()
+    (root / "weights").symlink_to(tmp_path / "shared")
+    (root / "latest.txt").symlink_to("main.py")
+    replies = [ErrorMessage(code="not_ready", message="session restarted"), DONE]
+
+    async def script(websocket, _received):
+        await websocket.send_text(replies.pop(0).model_dump_json())
+
+    fake.script = script  # Two snapshots for this one command.
+    assert run(fake, tmp_path, ["python", "main.py"]) == 0
+    assert fake.connections == 2
+    assert snapshot_names(fake.received[1]) == {".labflux.toml", "main.py"}
+    err = capsysbinary.readouterr().err
+    assert err.count(b"not sent to the session") == 1
+    assert b"2 symbolic links in the project were not sent" in err
+    assert b"latest.txt" in err and b"weights/" in err
+
+
+# Remote-only files (.labflux/remote-files.txt) -----------------------------------------------
+
+
+def result_with(*files, count=None, **fields):
+    fields = {"outcome": "exited", "exit_code": 0, **fields}
+    return CommandResult(
+        id=CID,
+        skipped=[SkippedFile(path=path, size=size) for path, size in files],
+        skipped_count=len(files) if count is None else count,
+        **fields,
+    )
+
+
+def test_run_mirrors_the_remote_only_list_and_hints_once_per_change(fake, tmp_path, capsysbinary):
+    fake.created = False  # The same session throughout.
+    manifest = tmp_path / "proj" / ".labflux" / "remote-files.txt"
+    model = ("checkpoints/model.pt", 500 * 1024**2)
+    fake.script = finish_with(result_with(model, ("big.bin", 12 * 1024**2)))
+    assert run(fake, tmp_path, ["python", "train.py"]) == 0
+    hints = [
+        line for line in capsysbinary.readouterr().err.splitlines() if b"remote session" in line
+    ]
+    assert len(hints) == 1
+    for part in (b"2 files", b"512.0 MB", b"checkpoints/model.pt", b"big.bin", b"/outputs"):
+        assert part in hints[0]
+    assert b".labflux/remote-files.txt" in hints[0]
+    text = manifest.read_text()
+    header = [line for line in text.splitlines() if line.startswith("#")]
+    for part in ("only in the remote", "same path", "session ends", "/outputs", "2 files"):
+        assert part in " ".join(header)
+    assert text.splitlines()[len(header) :] == [
+        "checkpoints/model.pt\t524288000 bytes (500.0 MB)",
+        "big.bin\t12582912 bytes (12.0 MB)",
+    ]
+    assert (manifest.parent / ".gitignore").read_text() == "*\n"
+
+    # Unchanged list: the file stays, nothing is printed, and .labflux is not snapshotted.
+    assert run(fake, tmp_path, ["python", "eval.py"]) == 0
+    assert b"remote session" not in capsysbinary.readouterr().err
+    assert manifest.read_text() == text
+    assert snapshot_names(fake.received[-1]) == {".labflux.toml", "main.py"}
+
+    # Changed list: one hint again. More files than listed are noted.
+    fake.script = finish_with(result_with(model, count=7))
+    assert run(fake, tmp_path, ["python", "eval.py"]) == 0
+    err = capsysbinary.readouterr().err
+    assert err.count(b"remote session") == 1 and b"7 files (over 500.0 MB)" in err
+    assert "only the first 1 are listed, 6 more exist" in manifest.read_text()
+    assert "big.bin" not in manifest.read_text()
+
+    # Empty list: the file is removed.
+    fake.script = finish_with(DONE)
+    assert run(fake, tmp_path, ["python", "eval.py"]) == 0
+    assert not manifest.exists() and b"remote session" not in capsysbinary.readouterr().err
+
+
+def test_remote_only_list_ends_with_the_session(fake, tmp_path, capsysbinary):
+    manifest = tmp_path / "proj" / ".labflux" / "remote-files.txt"
+    model = ("model.pt", 200 * 1024**2)
+    fake.created = False
+    fake.script = finish_with(result_with(model))
+    assert run(fake, tmp_path, ["python", "train.py"]) == 0
+    assert manifest.exists()
+    # A new session starts: the old list is removed even though this command fails.
+    fake.created = True
+    fake.script = finish_with(ErrorMessage(code="lost", message="no result in time"))
+    assert run(fake, tmp_path, ["python", "train.py"]) == 125
+    assert not manifest.exists()
+    # The session ends with the command (timeout): nothing is remote-only any more.
+    fake.created = False
+    fake.script = finish_with(result_with(model))
+    assert run(fake, tmp_path, ["python", "train.py"]) == 0
+    capsysbinary.readouterr()
+    fake.script = finish_with(
+        result_with(model, outcome="timeout", exit_code=None, session_ended=True)
+    )
+    assert run(fake, tmp_path, ["python", "train.py"]) == 124
+    err = capsysbinary.readouterr().err
+    assert not manifest.exists()
+    assert b"1 file (200.0 MB) over the write-back limit ended with the session" in err
+    assert b"without being written back: model.pt" in err
+    assert b"only in the remote session" not in err

@@ -123,7 +123,13 @@ def submit(
                 raise typer.BadParameter("--source must be a directory")
             with tempfile.TemporaryDirectory(prefix="labflux-source-") as temp:
                 archive = Path(temp) / "source.tar.gz"
-                pack_directory(source, archive)
+                links = pack_directory(source, archive)
+                if links:
+                    typer.echo(
+                        f"Symbolic links are not uploaded (links are not followed): "
+                        f"{', '.join(links)}",
+                        err=True,
+                    )
                 with archive.open("rb") as content:
                     uploaded = checked(
                         client.post(
@@ -316,7 +322,11 @@ def local(argv: list[str] = typer.Argument(..., help="The command, after --")) -
 def shell(
     ctx: typer.Context, program: str | None = typer.Option(None, "--shell", help="Shell to run")
 ) -> None:
-    """Start a shell whose PATH routes python, pytest, uv run, ... to your session."""
+    """Start a shell whose PATH routes python, pytest, uv run, ... to your session.
+
+    bash and zsh keep the stand-ins first on PATH after their start-up files and before every
+    prompt; other shells only get PATH set once, before their start-up files run.
+    """
     from labflux import fastlane
 
     _, project = _project(Path.cwd())
@@ -350,8 +360,27 @@ def session_status(ctx: typer.Context) -> None:
 @session_app.command("close")
 def session_close(ctx: typer.Context) -> None:
     """Close your session; its container stops and its resources are released."""
+    from labflux import fastlane
+
     with api_client(ctx.obj) as client:
         show(_current_session(client.post("/api/sessions/current/close")))
+    root = fastlane.find_project_root(Path.cwd())
+    if root is not None:
+        fastlane.clear_remote_files(root)  # The session's files end with it.
+
+
+@session_app.command("files")
+def session_files() -> None:
+    """List the files that exist only in the remote session (over the write-back limit)."""
+    from labflux import fastlane
+
+    cwd = Path.cwd()
+    root = fastlane.find_project_root(cwd)
+    if root is None:
+        typer.echo(f"labflux: no {fastlane.PROJECT_FILE} found above {cwd}", err=True)
+        raise typer.Exit(1)
+    text = fastlane.read_remote_files(root)
+    typer.echo(text or "No files exist only in the remote session.\n", nl=False)
 
 
 if __name__ == "__main__":

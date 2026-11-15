@@ -4,6 +4,7 @@ The CLI leases the user's session over HTTP, then sends each command over its ow
 an ExecRequest, the project snapshot (D4b), and optionally a cancel. It prints the relayed
 output as raw bytes, applies the write-back archive (D12) and exits with the remote exit code,
 or 124 (timeout), 130 (cancelled), 125 (LabFlux error) and 127 (stand-in command not found).
+Ctrl-C stops the command only; the session stays for the next one.
 """
 
 from __future__ import annotations
@@ -52,6 +53,7 @@ from labflux.session_protocol import (
     Output,
     SessionRequest,
     SessionView,
+    SkippedFile,
     SnapshotChunk,
     WritebackChunk,
     decode,
@@ -64,6 +66,11 @@ from labflux.session_protocol import (
 POLL_S = 0.25  # Waiting for a queued or starting session.
 RECV_S = 0.2  # Granularity for noticing a signal while waiting for relayed messages.
 WORKER_RETRY_S = 10.0  # How long worker_unavailable is retried, once a second.
+BUSY_RETRY_S = 1.0  # Between attempts while the session runs another command.
+DEFAULT_BUSY_WAIT_S = 120.0  # Total wait for a busy session; [session] busy_wait_s overrides.
+STATE_DIR = ".labflux"  # Client state inside the project; never snapshotted or written back.
+REMOTE_FILES = f"{STATE_DIR}/remote-files.txt"  # The session's remote-only files (see below).
+HINT_NAMES = 3  # File names shown in the one-line hint.
 ENDED_STATES = {"STOPPING", "SUCCEEDED", "FAILED", "CANCELLED"}
 EXIT_BROKEN_PIPE = 128 + signal.SIGPIPE
 # File timestamps come from a coarse kernel clock (one jiffy, up to 10 ms), so a local edit just
@@ -86,6 +93,8 @@ class SessionDefaults(BaseModel):
     min_vram_mib: int | None = None
     image: str | None = Field(default=None, min_length=1, max_length=512)
     datasets: list[str] = Field(default_factory=list)
+    # A session runs one command at a time: how long a command waits for the one before it.
+    busy_wait_s: float = Field(default=DEFAULT_BUSY_WAIT_S, ge=0)
 
 
 class RouteConfig(BaseModel):
@@ -239,6 +248,79 @@ def write_standins(names: set[str]) -> Path:
     return directory
 
 
+def _keep_first(directory: Path, names: set[str]) -> str:
+    """bash/zsh lines for the end of the start-up files: put the stand-ins back in front of
+    PATH (conda init, pyenv and venv activation prepend to it) and warn about every routed
+    name that still resolves elsewhere, which an alias or a shell function causes."""
+    quoted = shlex.quote(str(directory))
+    warning = (
+        'labflux: warning: $(type "$__labflux_name" 2>&1 | head -n 1); that is not the '
+        "LabFlux stand-in, so $__labflux_name runs locally. Remove the alias or function, "
+        "or use: labflux run -- $__labflux_name"
+    )
+    return f"""
+__labflux_first() {{
+  __labflux_status=$?
+  case "$PATH" in
+    {quoted}:*) ;;
+    *) PATH={quoted}:"$PATH" ;;
+  esac
+  return $__labflux_status
+}}
+__labflux_first
+for __labflux_name in {" ".join(sorted(names))}; do
+  if [ "$(command -v "$__labflux_name")" != {quoted}/"$__labflux_name" ]; then
+    echo "{warning}" >&2
+  fi
+done
+unset __labflux_name
+"""
+
+
+def shell_startup(shell: str, directory: Path, names: set[str], env: dict) -> list[str]:
+    """Extra shell arguments (and env changes) that keep the stand-ins first on PATH after the
+    user's start-up files ran and before every prompt, so a later `conda activate` does not
+    shadow them either. Only bash and zsh are wrapped; other shells get PATH alone."""
+    name = Path(shell).name
+    if name == "bash":
+        rcfile = directory / ".labflux-bashrc"
+        rcfile.write_text(
+            "if [ -f ~/.bashrc ]; then . ~/.bashrc; fi\n"
+            + _keep_first(directory, names)
+            # After the user's commands, with $? kept; element 0 when it is an array.
+            + 'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND\n}__labflux_first"\n'
+        )
+        return ["--rcfile", str(rcfile)]
+    if name == "zsh":
+        # zsh reads .zshenv and .zshrc from ZDOTDIR: ours source the user's files from the
+        # user's own ZDOTDIR (which the user's .zshenv may set), then add the precmd hook.
+        zdotdir = directory / ".labflux-zsh"
+        zdotdir.mkdir()
+        (zdotdir / ".zshenv").write_text(
+            "ZDOTDIR=${LABFLUX_USER_ZDOTDIR:-$HOME}\n"
+            "if [[ -f $ZDOTDIR/.zshenv ]]; then . $ZDOTDIR/.zshenv; fi\n"
+            "LABFLUX_USER_ZDOTDIR=$ZDOTDIR\n"
+            f"ZDOTDIR={shlex.quote(str(zdotdir))}\n"
+        )
+        (zdotdir / ".zshrc").write_text(
+            "ZDOTDIR=$LABFLUX_USER_ZDOTDIR\n"
+            "if [[ -f $ZDOTDIR/.zshrc ]]; then . $ZDOTDIR/.zshrc; fi\n"
+            + _keep_first(directory, names)
+            + "autoload -Uz add-zsh-hook && add-zsh-hook precmd __labflux_first\n"
+        )
+        if "ZDOTDIR" in env:
+            env["LABFLUX_USER_ZDOTDIR"] = env["ZDOTDIR"]
+        else:
+            env.pop("LABFLUX_USER_ZDOTDIR", None)
+        env["ZDOTDIR"] = str(zdotdir)
+        return []
+    say(
+        f"{name} is not bash or zsh: if its start-up files change PATH, the stand-ins can be "
+        "shadowed; check with `command -v python`"
+    )
+    return []
+
+
 def run_shell(shell: str, config: Path | None, names: set[str]) -> int:
     """Run an interactive shell with the stand-ins first on PATH; returns its exit status."""
     env = dict(os.environ)
@@ -263,7 +345,8 @@ def run_shell(shell: str, config: Path | None, names: set[str]) -> int:
     handlers = {signal.SIGINT: lambda *_: None, signal.SIGHUP: forward, signal.SIGTERM: forward}
     previous = {signum: _set_signal(signum, handler) for signum, handler in handlers.items()}
     try:
-        children.append(subprocess.Popen([shell], env=env))
+        arguments = shell_startup(shell, directory, names, env)
+        children.append(subprocess.Popen([shell, *arguments], env=env))
         code = children[0].wait()
     except OSError as exc:
         print(f"labflux: cannot start {shell}: {exc.strerror or exc}", file=sys.stderr)
@@ -284,6 +367,18 @@ def _set_signal(signum, handler):
 # Write-back ----------------------------------------------------------------------------------
 
 
+def state_dir(root: Path) -> Path:
+    """<root>/.labflux, created with a .gitignore that keeps git from tracking its contents."""
+    state = root / STATE_DIR
+    if state.is_symlink():
+        raise ValueError(f"{state} must be a directory, not a link")
+    state.mkdir(exist_ok=True)
+    ignore = state / ".gitignore"
+    if not ignore.exists():
+        ignore.write_text("*\n")
+    return state
+
+
 def apply_writeback(
     root: Path, archive: Path, t0: int, *, max_bytes: int, max_members: int
 ) -> list[str]:
@@ -291,12 +386,8 @@ def apply_writeback(
     archive. A local file changed since t0 (or a link or directory in the way) is kept and the
     remote copy is saved beside it as <name>.remote."""
     root = root.resolve()
-    state = root / ".labflux"
-    if state.is_symlink():
-        raise ValueError(f"{state} must be a directory, not a link")
-    state.mkdir(exist_ok=True)
     # Inside the root, so os.replace stays on one filesystem; .labflux is never snapshotted.
-    staging = Path(tempfile.mkdtemp(prefix="writeback-", dir=state))
+    staging = Path(tempfile.mkdtemp(prefix="writeback-", dir=state_dir(root)))
     notices = []
     try:
         extract_archive(archive, staging, max_bytes=max_bytes, max_members=max_members)
@@ -346,6 +437,75 @@ def _place(root: Path, relative: str, source: Path, t0: int) -> str | None:
     except OSError as exc:
         return f"{relative} was not written back: {exc.strerror or exc}"
     return None
+
+
+# Remote-only files ---------------------------------------------------------------------------
+#
+# Files over the write-back limit stay in the session workspace. Every CommandResult carries
+# the session's current list; the client mirrors it in .labflux/remote-files.txt so that an AI
+# tool can look it up after the one-line hint has left its context.
+
+
+def mib(size: int) -> str:
+    return f"{size / 1024**2:.1f} MB"
+
+
+def _total(files: list[SkippedFile], count: int) -> str:
+    """Like "3 files (812.0 MB)"; "over" when more files exist than the result listed."""
+    size = mib(sum(item.size for item in files))
+    return (
+        f"{count} file{'' if count == 1 else 's'} ({'over ' if count > len(files) else ''}{size})"
+    )
+
+
+def _names(files: list[SkippedFile], count: int) -> str:
+    names = ", ".join(item.path for item in files[:HINT_NAMES])
+    return names + (", ..." if count > HINT_NAMES else "")
+
+
+def update_remote_files(root: Path, files: list[SkippedFile], count: int) -> str | None:
+    """Rewrite .labflux/remote-files.txt from the session's remote-only list (removing it when
+    the list is empty); returns the one-line hint when the list is non-empty and changed."""
+    path = root / REMOTE_FILES
+    if not count:
+        path.unlink(missing_ok=True)
+        return None
+    more = count - len(files)
+    lines = [
+        "# Files that exist only in the remote LabFlux session: they were over the write-back",
+        "# limit, so they were not copied to this machine. Commands routed to the session",
+        "# (python, pytest, uv run, labflux run -- ...) can read them at the same path.",
+        "# They are deleted when the session ends; write files you want to keep to /outputs.",
+        f"# {_total(files, count)}"
+        + (f"; only the first {len(files)} are listed, {more} more exist" if more > 0 else ""),
+        *(f"{item.path}\t{item.size} bytes ({mib(item.size)})" for item in files),
+    ]
+    text = "\n".join(lines) + "\n"
+    try:
+        if path.read_text() == text:
+            return None
+    except OSError:  # No list yet.
+        pass
+    state_dir(root)
+    path.write_text(text)
+    return (
+        f"{_total(files, count)} exist{'s' if count == 1 else ''} only in the remote session: "
+        f"{_names(files, count)}; list: {REMOTE_FILES}; write files you want to keep to /outputs"
+    )
+
+
+def clear_remote_files(root: Path) -> None:
+    try:
+        (root / REMOTE_FILES).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def read_remote_files(root: Path) -> str | None:
+    try:
+        return (root / REMOTE_FILES).read_text()
+    except OSError:
+        return None
 
 
 # `labflux run` -------------------------------------------------------------------------------
@@ -398,10 +558,6 @@ def say(text: str) -> None:
     print(f"labflux: {text}", file=sys.stderr, flush=True)
 
 
-def mib(size: int) -> str:
-    return f"{size / 1024**2:.1f} MB"
-
-
 def run_command(
     settings,
     root: Path,
@@ -433,7 +589,10 @@ def run_command(
                 trust_env=False,
             ) as client,
         ):
-            return _Run(settings, client, interrupts, root, relative, argv).run(request)
+            run = _Run(
+                settings, client, interrupts, root, relative, argv, project.session.busy_wait_s
+            )
+            return run.run(request)
     except FastLaneError as exc:
         say(str(exc))
     except httpx.HTTPError as exc:
@@ -455,13 +614,15 @@ def _sha256(path: Path) -> str:
 
 
 class _Run:
-    def __init__(self, settings, client, interrupts, root, cwd, argv):
+    def __init__(self, settings, client, interrupts, root, cwd, argv, busy_wait_s):
         self.settings = settings
         self.client = client
         self.interrupts = interrupts
         self.root = root
         self.cwd = cwd
         self.argv = argv
+        self.busy_wait_s = busy_wait_s
+        self.links_noted = False
 
     def run(self, request: SessionRequest) -> int:
         created_id = None
@@ -469,6 +630,7 @@ class _Run:
             view = self.open(request)
             if view.created:
                 created_id = view.id
+                clear_remote_files(self.root)  # The list belonged to an earlier session.
             view = self.wait(view, created=view.id == created_id)
             if isinstance(view, int):
                 return view
@@ -523,13 +685,43 @@ class _Run:
         return view
 
     def execute(self, view: SessionView) -> int | ErrorMessage:
+        """Run the command, waiting up to busy_wait_s while the session runs another one (AI
+        tools start commands in parallel). Every attempt takes a fresh snapshot, so the command
+        sees what the one before it wrote back."""
+        deadline = time.monotonic() + self.busy_wait_s
+        noted = False
+        while True:
+            outcome = self.attempt(view)
+            if not isinstance(outcome, ErrorMessage) or outcome.code != "busy":
+                return outcome
+            if time.monotonic() >= deadline:
+                raise FastLaneError(
+                    f"the session was still running another command after {self.busy_wait_s:g} s "
+                    "(busy_wait_s under [session] in .labflux.toml); run the command again"
+                )
+            if not noted:
+                say("the session is running another command; waiting for it to finish")
+                noted = True
+            time.sleep(BUSY_RETRY_S)
+            if self.interrupts.any:
+                return self.interrupts.exit_code
+
+    def attempt(self, view: SessionView) -> int | ErrorMessage:
         t0 = time.time_ns() - MTIME_SLACK_NS
         with tempfile.TemporaryDirectory(prefix="labflux-run-") as temp:
             snapshot = Path(temp) / "snapshot.tar.gz"
             try:
-                pack_directory(self.root, snapshot)
+                links = pack_directory(self.root, snapshot)
             except (ValueError, OSError) as exc:
                 raise FastLaneError(f"cannot snapshot the project: {exc}") from exc
+            if links and not self.links_noted:
+                self.links_noted = True
+                say(
+                    f"{len(links)} symbolic link{'' if len(links) == 1 else 's'} in the project "
+                    f"{'was' if len(links) == 1 else 'were'} not sent to the session (links are "
+                    f"not followed): {', '.join(links[:HINT_NAMES])}"
+                    + (", ..." if len(links) > HINT_NAMES else "")
+                )
             size = snapshot.stat().st_size
             if size > self.settings.max_source_bytes:
                 raise FastLaneError(
@@ -596,7 +788,8 @@ class _Run:
         with writeback.open("wb") as archive:
             while True:
                 if self.interrupts.abort:
-                    return self.interrupts.exit_code  # Closing the socket cancels remotely.
+                    # Closing the socket stops the command remotely; the session stays.
+                    return self.interrupts.exit_code
                 if self.interrupts.sigint and not cancel_sent:
                     cancel_sent = True
                     try:
@@ -635,6 +828,7 @@ class _Run:
     def finish(self, result: CommandResult, writeback: Path, t0: int) -> int:
         if result.reason:
             say(result.reason)
+        self.note_remote_files(result)
         if result.writeback_files:
             if (
                 writeback.stat().st_size != result.writeback_size
@@ -655,13 +849,27 @@ class _Run:
                 return EXIT_ERROR
             for notice in notices:
                 say(notice)
-        if result.skipped_count:
-            listed = ", ".join(item.path for item in result.skipped)
-            more = result.skipped_count - len(result.skipped)
-            say(
-                f"{result.skipped_count} files were not written back (over the write-back "
-                f"limit): {listed}" + (f" and {more} more" if more > 0 else "")
-            )
+        if result.outcome == "cancelled" and not result.session_ended:
+            say("the command was stopped; the session is still running")
         if result.session_ended and result.outcome != "exited":
             say("the session was closed; the next command starts a new one")
         return exit_status(result)
+
+    def note_remote_files(self, result: CommandResult) -> None:
+        """Mirror the session's remote-only list locally and print at most one line about it."""
+        files, count = result.skipped, result.skipped_count
+        if result.session_ended:  # The session's files are gone with it.
+            clear_remote_files(self.root)
+            if count:
+                say(
+                    f"{_total(files, count)} over the write-back limit ended with the session "
+                    f"without being written back: {_names(files, count)}"
+                )
+            return
+        try:
+            hint = update_remote_files(self.root, files, count)
+        except (OSError, ValueError) as exc:
+            say(f"cannot update {REMOTE_FILES}: {exc}")
+            return
+        if hint:
+            say(hint)

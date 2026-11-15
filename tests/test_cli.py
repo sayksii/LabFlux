@@ -27,8 +27,10 @@ def test_cli_submit_upload_status_nodes_and_queued_cancel(client, tmp_path, monk
     source = tmp_path / "source"
     source.mkdir()
     (source / "main.py").write_text("print('hello')")
+    (source / "latest.py").symlink_to("main.py")
     result = runner.invoke(cli.app, ["submit", str(spec), "--source", str(source)])
     assert result.exit_code == 0, result.output
+    assert "Symbolic links are not uploaded" in result.stderr and "latest.py" in result.stderr
     job = json.loads(result.stdout)
     assert job["state"] == "QUEUED" and job["spec"]["source_id"]
     assert runner.invoke(cli.app, ["status", job["id"]]).exit_code == 0
@@ -193,6 +195,7 @@ def test_cli_shell_puts_standins_first_and_cleans_up(tmp_path, monkeypatch):
         cli.app, ["--config", str(config), "shell", "--shell", str(program)]
     )
     assert result.exit_code == 7, result.output
+    assert "fake-shell is not bash or zsh" in result.output  # Start-up files are not wrapped.
     lines = report.read_text().splitlines()
     assert "labflux-standins-" in lines[0] and not Path(lines[0]).exists()
     assert {".labflux-standins", "python", "pytest", "uv", "mytool"} <= set(lines[1:-1])
@@ -225,3 +228,29 @@ def test_cli_session_status_and_close(monkeypatch):
         ("POST", "/api/sessions/current/close"),
         ("POST", "/api/sessions/current/close"),
     ]
+
+
+def test_cli_session_files_prints_the_list_and_close_removes_it(tmp_path, monkeypatch):
+    root, _ = fast_lane_project(tmp_path, monkeypatch)
+    runner = CliRunner()
+    empty = runner.invoke(cli.app, ["session", "files"])
+    assert empty.exit_code == 0 and "No files exist only in the remote session" in empty.output
+    files = [fastlane.SkippedFile(path="checkpoints/model.pt", size=3 * 1024**2)]
+    assert fastlane.update_remote_files(root, files, 1)
+    listed = runner.invoke(cli.app, ["session", "files"])  # From a subdirectory of the project.
+    assert listed.exit_code == 0
+    assert listed.stdout == (root / ".labflux" / "remote-files.txt").read_text()
+    assert "checkpoints/model.pt\t3145728 bytes (3.0 MB)" in listed.stdout
+
+    session = {"id": "s" * 32, "state": "STOPPING", "lease_expires_at": None}
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=session)),
+        base_url="http://test",
+    )
+    monkeypatch.setattr(cli, "api_client", lambda _: nullcontext(client))
+    assert runner.invoke(cli.app, ["session", "close"]).exit_code == 0
+    assert not (root / ".labflux" / "remote-files.txt").exists()
+
+    monkeypatch.chdir(tmp_path)
+    outside = runner.invoke(cli.app, ["session", "files"])
+    assert outside.exit_code == 1 and "no .labflux.toml found above" in outside.output
