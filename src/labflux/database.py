@@ -53,8 +53,11 @@ jobs = Table(
     Column("schedule_note", Text, nullable=False, default=""),
     # BATCH, or SESSION for a fast-lane session (M9), whose container is its current attempt.
     Column("kind", String, nullable=False, default="BATCH", server_default="BATCH"),
-    # Sessions only: when an idle RUNNING session is stopped; None while queued or starting.
+    # Sessions: when an idle RUNNING session is stopped; None while queued or starting.
+    # Model services: when an idle on-demand model is stopped (far ahead for persistent ones).
     Column("lease_expires_at", Float),
+    # Model services only (kind MODEL): the configured model name.
+    Column("service", String),
 )
 attempts = Table(
     "attempts",
@@ -137,11 +140,16 @@ def add_sessions(connection) -> None:
     connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN lease_expires_at REAL")
 
 
+def add_services(connection) -> None:
+    connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN service TEXT")
+
+
 # Migration N upgrades a database at version N - 1; version 1 is the original bootstrap.
 MIGRATIONS = {
     2: lambda connection: attempt_gpus.create(connection),
     3: add_schedule_note,
     4: add_sessions,
+    5: add_services,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

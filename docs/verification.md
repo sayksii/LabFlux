@@ -843,6 +843,98 @@ session 映像 `localhost/labflux/python-uv:3.12-uv0.11.8`。測試專案只有�
 lockfile 過期時錯誤訊息足以讓 AI 自行修正。測試後關閉 session、確認沒有殘留容器並刪除暫存檔。
 未涵蓋：GPU session、跨機器（Scheduler 與 Worker 在同一台），以及 zsh。
 
+## M10：共享模型服務與推論 Gateway（kayle，2026-11-16）
+
+設計見 `docs/architecture.md` 第 9 節（G1～G7）。模型服務是 `kind = "MODEL"`、擁有者 `@models` 的工作紀錄，
+`jobs.service` 記錄模型名稱（migration 5）；Gateway 在 `src/labflux/inference.py`，Worker 端在 `worker.py` 的 M10 段落。
+Scheduler 設定新增 `models`（每個模型的映像、參數、資源、權重資料集、port、健康檢查、模式與時間設定）、
+`gateway_max_request_bytes`（16 MiB）與 `gateway_read_timeout_s`（600 秒）。CLI 新增 `labflux models`。
+
+| Checklist | 驗證 |
+|---|---|
+| 10.1 | `test_requests_start_one_service_on_a_node_with_the_weights`：START 帶有 `service`（port、健康檢查、啟動上限、`shm_mib`、`pids_limit`），`HOME=/workspace`，只排到有權重資料集的節點；模型名稱、`NVIDIA_VISIBLE_DEVICES` 與模式的設定檢查 |
+| 10.2 | `examples/fake-model/server.py`（只用標準函式庫）；`tests/test_model_docker.py` 以 `python:3.12-slim` 容器執行，權重資料集的位置改放這個腳本 |
+| 10.3 | `test_states_from_stopped_to_serving_and_back`：stopped → waiting（資源不足）→ starting → serving → stopping → stopped；`/api/models` 與 `/v1/models` 顯示狀態 |
+| 10.4 | 同一模型的兩次請求得到同一個服務、只有一個 START；Docker 測試中兩位使用者同時冷啟動，只建立一個容器 |
+| 10.5 | 假 Worker（WebSocket）轉送串流請求，內容、`Content-Type` 與順序不變；Worker 端對假模型轉送串流、一般與 embeddings 請求（`tests/test_inference_worker.py`）；錯誤使用 OpenAI 格式（401、400、404） |
+| 10.6 | `cold_wait_s = 0` 時立即回 503、`Retry-After: 10`，模型已開始啟動；失敗後在重試時間前回 503 `model_failed` 並帶剩餘秒數 |
+| 10.7 | 假模型 `/health` 回 503 期間不送 `STARTED`，通過後才送；超過 `startup_timeout_s` 停止容器並回報 `FAILED`（`model server not healthy within 1s`）；Docker 測試中 3 秒未就緒的模型以 503 回應請求，容器被清除 |
+| 10.8 | 進行中的請求阻止閒置停止；請求結束（完成、Worker 端錯誤、Worker 中途斷線、客戶端中途離開）時計數歸零並重新計算閒置時間；Docker 測試中客戶端讀到第一段就離開，假模型記錄 `client disconnected mid-stream` |
+| 10.9 | 閒置 300 秒停止；有工作排隊時閒置 60 秒提前回收；常駐模型自己啟動、不因閒置或排隊工作停止，失敗後等 `retry_after_failure_s` 才重新啟動；從設定移除的模型被停止或取消；模型服務排在先提交的批次工作之前 |
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：343 passed、1 skipped（main 為 301 passed）。
+- `sg docker -c 'uv run pytest -q -m "not vm and not gpu"'`：370 passed、1 skipped，其中 `tests/test_model_docker.py` 2 個；
+  模型相關的三個測試檔另外連續執行 3 次，每次 42 passed。兩位使用者同時冷啟動（假模型啟動 1 秒）到兩個串流回應都完成約 2.7 秒；
+  服務中時一般請求經 Gateway、Worker 到容器再回來約 51 ms。
+- `scripts/lab_deploy.py` 把節點清單的 `[models.<name>]` 寫進產生的 `scheduler.toml`（巢狀的 `resources`、`env` 寫成 inline table，
+  名稱含 `/`、`:`、`.` 時加引號），模型要求的資料集沒有任何節點提供時拒絕；`tests/test_lab_deploy.py` 20 passed。
+
+**程式審查與修正（2026-11-16）**：獨立審查提出 11 項，依原則修正實際會發生且成本低的項目，其餘列入下方已知限制。
+
+- `fcfs`／`priority` 下排隊的模型服務不再擋住後面的工作；自動釋放的模型排隊超過 `cold_wait_s + 30` 秒沒有請求就取消。
+- 設定改變時停止執行中的模型並以新設定重啟（排隊中的直接換成新設定）；比較時忽略優先權。
+- 所有使用者都能讀模型服務的日誌（`labflux logs <job_id>`）。
+- Worker 重啟接手時，尚未通過健康檢查的模型維持 `STARTING`，不再以容器的啟動時間當成可服務。
+- 模型的時間設定拒絕 `inf` 與 `nan`（否則排程迴圈會停住）。
+- 回應中途被切斷時切斷連線、不送結尾（真實 uvicorn 測試中客戶端得到 `RemoteProtocolError`，而不是看似完整的 200）；
+  回應完整送完後才到的取消不會把它標成未完成。
+- 取消改為關閉連到模型的 socket：假模型每個字間隔 5 秒時，取消後 1.5 秒內結束（原本要等下一個字或讀取逾時）。
+
+
+### 10.10 實驗室部署與 gemma-4-31B（kindred，2026-11-16）
+
+以 commit `17b1486`（main `1504cdd` 加上 `feat/third-node` 與本次 M10）執行 `lab_deploy.py deploy`，三台一起升級。
+部署前三台都沒有配置；先在 kayle 以 SQLite backup API 備份 Scheduler 資料庫（schema 版本 2、21 個工作），
+新版 Scheduler 啟動時升級到版本 5，原本 21 個工作都保留。三台部署後都是 `ONLINE`。
+
+gemma 的設定沿用原本 compose 的參數（`vllm/vllm-openai:v0.30.0`、tensor parallel 2、`--max-model-len=65536`、
+`--gpu-memory-utilization=0.90`、`--language-model-only`）：資源 8 CPU、48 GiB、2 張 A40，`shm_mib = 16384`；
+權重是 kindred 上登錄為資料集 `hf-models` 的 Hugging Face 快取（唯讀掛載、`HF_HUB_OFFLINE=1`）。
+容器以 `labflux` 帳號（UID 2001，容器內沒有對應的 passwd 項目）執行，所以另設 `USER`／`LOGNAME`；
+`cap_drop=ALL`、`no-new-privileges` 與記憶體上限都照常生效，vLLM 可以啟動。
+
+第一階段為自動釋放模式（閒置 180 秒），驗證啟動、共用與交還 GPU：
+
+| 檢查 | 結果 |
+|---|---|
+| 第一個請求（冷啟動） | `/v1/chat/completions` 等待中模型被排到 kindred 的卡 3、4；306 秒後回應 HTTP 200，內容為 gemma 的中文自我介紹 |
+| 三個客戶端同時請求（kayle、karma、kindred，同一個帳號） | 都是 HTTP 200；`labflux models` 顯示進行中 3 個請求、同一個服務；一般請求約 2.7～3.0 秒完成，串流請求 0.09 秒收到第一個位元組、2.3 秒完成 |
+| 提前回收與交還 GPU | 模型服務中時提交 `gpu_model = "A40"` 的 MNIST，因兩張卡都被佔用而排隊；最後一個請求結束約 60 秒後模型被停止，MNIST 立刻分到卡 3 並完成（142 秒、99.0%） |
+
+第二階段改為常駐模式（啟動上限 600 秒），只重新部署 kayle（重啟 Scheduler）：沒有任何請求，gemma 在部署完成後
+238 秒自己啟動並進入可服務狀態；`/v1/models` 顯示 `persistent`、`serving`、`kindred`，`/v1/completions` 0.29 秒回應；
+模型容器沒有開放任何 port，卡 3、4 各用約 41 GB VRAM，與原本的 compose 容器相同。
+
+- 重新部署 kayle 時沒有未釋放的配置，所以這次沒有實際驗證「有常駐模型執行時重啟 Scheduler」；這個情況依賴 M6.6 的還原機制，
+  已在 Docker 測試驗證。
+- 「多人共用」以三台機器上的三個客戶端同時使用同一個服務驗證；實驗室目前只有一個 LabFlux 帳號，沒有以不同帳號測試。
+- 指令調整過的模型對 `/v1/completions` 的純文字續寫會產生沒有意義的文字，這是模型本身的行為，聊天介面正常。
+
+**已知限制（M10）**
+
+判定原則與前幾次審查相同：少見情況記錄為限制，不為它擴大設計。
+
+- Gateway 只能從 LabFlux 節點連到（G2）；其他機器以 SSH 轉送連入。
+- Scheduler 重啟時進行中的推論請求失敗，需要重送；模型服務的工作紀錄保留，進行中請求數從 0 開始。
+- 提前回收的條件只看「有沒有工作在排隊」：任何排隊工作（包含另一個模型的服務）都會讓閒置超過 `reclaim_idle_s`
+  的自動釋放模型被停掉，即使那個工作用不到釋放出來的資源；代價是多幾次冷啟動。
+- 閒置停止的判斷與新請求之間有極短的空窗（`ensure_model` 回傳之後、開始計數之前），剛好落在閒置期限上時，
+  該請求會失敗或被截斷。
+- 慢速的客戶端最多累積 64 則未讀的回應訊息（每則最多 256 KiB 原始資料，實際多為一次網路讀取的大小），
+  超過時請求被中止；走 SSH 轉送接收很大的 embeddings 回應時可能遇到。
+- 客戶端取消時，模型還沒送出回應開頭之前（非串流請求就是整段生成期間）無法傳給模型，模型會生成完才結束，
+  最長 `gateway_read_timeout_s`。
+- 卡在 `UNKNOWN`（節點失聯）的模型不會改到其他節點啟動，也無法由使用者取消，要等節點回來。
+- 模型容器在 Docker 預設的 bridge 網路上，同一台機器的其他容器可以不經 Gateway 直接連到模型的 port。
+- vLLM 映像約 10 GB，`image_pull_timeout_s` 預設 300 秒；模型節點上要先拉好映像。
+- 模型的權重要預先放在節點上（G4），LabFlux 不下載權重。
+- 模型的日誌與批次工作共用 `max_log_bytes`（16 MiB）上限；長時間執行的常駐模型寫滿後不再保存新的日誌。
+- Gateway 不改寫請求，`--served-model-name` 必須與設定的模型名稱相同；所有使用者都可以使用所有模型。
+- 模型服務的資源占用不計入任何使用者的近期用量（擁有者是 `@models`）。
+- 每個中途被切斷的回應，uvicorn 會另外記一筆 `Exception in ASGI application` 的 ERROR 與 traceback（切斷連線的副作用）。
+- 設定改變時停止模型也會中斷它正在處理的請求。Scheduler 重啟後的第一次排程之前，若有心跳或註冊觸發派送，
+  排隊中的模型可能先以舊設定啟動，下一輪再被停止並以新設定重啟；節點在重啟後先處於 `RECONCILING`，實際上很少發生。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。

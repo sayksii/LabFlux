@@ -62,6 +62,8 @@ def test_inventory_files_parse():
     example = lab.parse_inventory(tomllib.loads((ROOT / "configs/lab.example.toml").read_text()))
     assert example.scheduler.name == "node-a" and example.public_bind
     assert example.known_hosts == ROOT / ".labflux/lab/known_hosts"
+    assert example.models
+    lab.validate_generated(example, tokens())
 
 
 def test_inventory_fields(inventory):
@@ -81,6 +83,10 @@ def test_inventory_fields(inventory):
         (lambda v: v["scheduler"].update(node="missing"), "scheduler.node"),
         (lambda v: v["scheduler"].update(port=80), "unprivileged"),
         (lambda v: v["scheduler"].update(users=[]), "users"),
+        (
+            lambda v: v.update(models={"m": {"image": "x", "argv": ["y"], "datasets": ["hf"]}}),
+            "model 'm': no inventory node provides dataset 'hf'",
+        ),
     ],
 )
 def test_inventory_rejects_invalid_values(change, message):
@@ -152,6 +158,36 @@ def test_generated_tomls_are_valid_settings(inventory):
     assert scheduler.worker_token == "worker-secret"
     cli = Settings.model_validate(tomllib.loads(lab.cli_toml(inventory, "user-secret")))
     assert cli.user_token == "user-secret" and cli.scheduler_url == inventory.scheduler_url
+    lab.validate_generated(inventory, tokens())
+
+
+def test_models_pass_through_to_scheduler_toml():
+    values = inventory_values()
+    values["nodes"][0]["datasets"] = {"hf-models": "/srv/models/hf"}
+    values["models"] = {
+        "Qwen/Qwen2.5-7B:v1.5": {
+            "image": "vllm/vllm-openai",
+            "argv": ["Qwen/Qwen2.5-7B", "--served-model-name=Qwen/Qwen2.5-7B:v1.5"],
+            "env": {"HF_HUB_OFFLINE": "1", "HF_HOME": "/datasets/hf-models", "Q": 'a "b" \\c'},
+            "resources": {"cpu": 8, "memory_mib": 32768, "gpu": 2, "gpu_model": "RTX A5000"},
+            "datasets": ["hf-models", "mnist"],
+            "mode": "persistent",
+            "startup_timeout_s": 600,
+        },
+        "tiny": {"image": "example/tiny", "argv": ["serve"]},
+    }
+    inventory = lab.parse_inventory(values)
+    generated = lab.scheduler_toml(inventory, tokens())
+    assert '[models."Qwen/Qwen2.5-7B:v1.5"]' in generated and "[models.tiny]" in generated
+    models = Settings.model_validate(tomllib.loads(generated)).models
+    qwen = models["Qwen/Qwen2.5-7B:v1.5"]
+    assert qwen.argv == values["models"]["Qwen/Qwen2.5-7B:v1.5"]["argv"]
+    assert qwen.env == {"HF_HUB_OFFLINE": "1", "HF_HOME": "/datasets/hf-models", "Q": 'a "b" \\c'}
+    assert (qwen.resources.gpu, qwen.resources.gpu_model) == (2, "RTX A5000")
+    assert (qwen.resources.cpu, qwen.resources.memory_mib) == (8, 32768)
+    assert qwen.datasets == ["hf-models", "mnist"]
+    assert (qwen.mode, qwen.startup_timeout_s) == ("persistent", 600)
+    assert models["tiny"].mode == "on_demand" and models["tiny"].argv == ["serve"]
     lab.validate_generated(inventory, tokens())
 
 

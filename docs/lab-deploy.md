@@ -148,6 +148,38 @@ ssh -L 8770:192.0.2.10:8770 kayle
 新增使用者：把名稱加進 `configs/local-lab.toml` 的 `scheduler.users`，重新 `deploy --node kayle`，
 再從 `.labflux/lab/scheduler.toml` 把該使用者的 Token 私下交給他。從清單移除的使用者，Token 會在下次部署時失效。
 
+## 模型服務（M10）
+
+在 `configs/local-lab.toml` 加一個 `[models.<名稱>]` 表格（欄位見 `src/labflux/config.py` 的 `ModelConfig`，
+完整範例見 `configs/lab.example.toml`），`deploy --node kayle` 時會原樣寫進 `scheduler.toml`。
+名稱就是客戶端送出的 `model`；含 `/`、`:`、`.` 時要加引號，例如 `[models."qwen2.5-14b"]`，
+vLLM 也要以 `--served-model-name` 設成同一個名稱。
+
+權重不會在啟動時下載，要先放到節點上，再登錄成該節點的資料集：
+
+```toml
+[[nodes]]
+name = "kayle"
+# ...
+datasets = { hf-models = "/srv/models/hf" }
+```
+
+模型設定 `datasets = ["hf-models"]` 後，權重以唯讀方式掛載在 `/datasets/hf-models`，模型也只會排到有這個資料集的節點；
+列出的資料集沒有任何節點提供時，腳本會拒絕部署。容器以 `labflux` 帳號執行、`HOME=/workspace`，
+所以權重目錄要讓 `labflux` 讀得到。搭配 `HF_HUB_OFFLINE=1` 與 `HF_HOME=/datasets/hf-models`，vLLM 只讀本機快取。
+
+Gateway 在 `http://192.0.2.10:8770/v1`，與 OpenAI API 相容，金鑰就是自己的 LabFlux 使用者 Token：
+
+```bash
+export OPENAI_BASE_URL=http://192.0.2.10:8770/v1
+export OPENAI_API_KEY=<自己的 user_token>
+curl -s $OPENAI_BASE_URL/models -H "Authorization: Bearer $OPENAI_API_KEY"
+```
+
+8770 只放行 LabFlux 節點；其他機器先建立上一節的 SSH 轉送，再改用 `http://localhost:8770/v1`。
+`labflux --config .labflux/lab/cli.toml models` 列出每個模型的模式、狀態（`waiting`、`starting`、`serving`、
+`stopping`、`failed`、`stopped`）、所在節點與進行中的請求數。
+
 ## 日誌
 
 ```bash

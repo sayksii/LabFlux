@@ -176,6 +176,14 @@ def nodes(ctx: typer.Context) -> None:
 
 
 @app.command()
+def models(ctx: typer.Context) -> None:
+    """List configured models: mode, state (waiting, starting, serving, stopping, failed or
+    stopped), node, requests in flight and when an idle on-demand model stops."""
+    with api_client(ctx.obj) as client:
+        show(checked(client.get("/api/models")).json())
+
+
+@app.command()
 def cancel(ctx: typer.Context, job_id: str) -> None:
     """Cancel a queued job or request confirmed termination of a running job."""
     with api_client(ctx.obj) as client:

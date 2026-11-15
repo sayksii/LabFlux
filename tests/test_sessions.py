@@ -343,10 +343,11 @@ def test_a_version_3_database_migrates_and_existing_jobs_are_batch(settings):
     with first.db.transaction() as connection:
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN kind")
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN lease_expires_at")
+        connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN service")  # Version 5 (M10).
         connection.execute(update(schema_version).values(version=3))
     first.db.close()
     database = Database(settings.data_dir)
     with database.transaction() as connection:
         row = connection.execute(select(jobs).where(jobs.c.id == job_id)).one()
-    assert (row.kind, row.lease_expires_at) == ("BATCH", None)
+    assert (row.kind, row.lease_expires_at, row.service) == ("BATCH", None, None)
     database.close()

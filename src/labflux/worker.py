@@ -11,11 +11,13 @@ import re
 import shutil
 import tarfile
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from socket import SHUT_RDWR
 from typing import BinaryIO
 
 import httpx
@@ -26,6 +28,15 @@ from websockets.sync.client import connect
 from labflux.archives import extract_archive, pack_directory
 from labflux.config import Settings
 from labflux.gpu import GpuProbe
+from labflux.inference import (
+    InferBody,
+    InferCancel,
+    InferChunk,
+    InferEnd,
+    InferHead,
+    InferRequest,
+    parse_to_worker,
+)
 from labflux.models import Capacity, ExecutionSpec
 from labflux.runtime import DockerExecutor, ExecutionResult
 from labflux.session_protocol import (
@@ -107,6 +118,18 @@ class CommandRun:
         return self.command.attempt_id
 
 
+@dataclass
+class InferRun:
+    """One relayed inference request (M10): its body upload, then its thread."""
+
+    request: InferRequest
+    body: bytearray = field(default_factory=bytearray)
+    cancel: threading.Event = field(default_factory=threading.Event)
+    reason: str = "cancelled"
+    thread: threading.Thread | None = None
+    response: httpx.Response | None = None
+
+
 def write_json(path: Path, value: dict) -> None:
     temp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
     with temp.open("x", encoding="utf-8") as stream:
@@ -160,10 +183,20 @@ class Worker:
             "exec": self._on_exec,
             "snapshot_chunk": self._on_snapshot_chunk,
             "cancel": self._on_cancel,
+            "infer": self._on_infer,
+            "infer_body": self._on_infer_body,
+            "infer_cancel": self._on_infer_cancel,
         }
-        # Fast-lane commands by command ID, and why the Worker itself ended a session.
+        # Fast-lane commands by command ID, and why the Worker itself ended a session (or a
+        # model service, which may also replace the outcome).
         self.runs: dict[str, CommandRun] = {}
         self.end_reasons: dict[str, str] = {}
+        self.end_outcomes: dict[str, str] = {}
+        # Inference requests by request ID, and model server base URLs by attempt (M10).
+        self.inference: dict[str, InferRun] = {}
+        self.addresses: dict[str, str] = {}
+        # For model containers on this host; never through a proxy.
+        self.local = httpx.Client(trust_env=False)
         self.socket = None
         self.lock = threading.RLock()
         self.pool = ThreadPoolExecutor(
@@ -641,7 +674,10 @@ class Worker:
                     directory / "workspace",
                     directory / "outputs",
                     lambda stream, data: self._log(spec.attempt_id, stream, data),
-                    lambda: self._started(spec.attempt_id),
+                    # A model server counts as started only once it is healthy (plan 10.7).
+                    (lambda: self._service_started(spec))
+                    if spec.service
+                    else (lambda: self._started(spec.attempt_id)),
                     cancel,
                     detach=self.stop_event,
                     on_launch=lambda: self._change(spec.attempt_id, launched=True),
@@ -675,10 +711,18 @@ class Worker:
                     self._reply(run.id, **self._session_ended(spec.attempt_id, "cancelled"))
                 else:
                     run.thread.join(COMMAND_JOIN_S)
+        if spec.service:
+            self._abort_inference(spec.attempt_id, "the model service ended")
+            with self.lock:
+                self.addresses.pop(spec.attempt_id, None)
+        if spec.session or spec.service:
             with self.lock:
                 reason = self.end_reasons.pop(spec.attempt_id, None)
+                outcome = self.end_outcomes.pop(spec.attempt_id, None)
             if result is not None and reason:
                 result.reason = reason
+            if result is not None and outcome and result.termination_confirmed:
+                result.outcome = outcome
         with self.lock:
             # None means the worker is shutting down: the result stays open for adoption.
             if result is not None:
@@ -962,6 +1006,7 @@ class Worker:
         self._reply(run.id, **fields, **self._remote_only(self._session_state(run.attempt_id)))
 
     def _relay_lost(self) -> None:
+        self._abort_inference(None, "relay connection lost")
         with self.lock:
             runs = list(self.runs.values())
         for run in runs:
@@ -1237,6 +1282,218 @@ class Worker:
             "writeback_files": len(packed),
         }
 
+    # Model services and inference requests (M10, G1) ---------------------------------------
+    # Like fast-lane commands, the handlers run on the doorbell thread and never block; each
+    # request runs on its own daemon thread and talks to the container over its Docker network.
+
+    def _service_started(self, spec: ExecutionSpec) -> None:
+        threading.Thread(
+            target=self._await_ready, args=(spec,), name=f"ready-{spec.attempt_id[:8]}", daemon=True
+        ).start()
+
+    def _await_ready(self, spec: ExecutionSpec) -> None:
+        """Report STARTED once the model server passes its health check (plan 10.7); stop it
+        as FAILED when that takes longer than startup_timeout_s. After a Worker restart the
+        adopted container gets a full startup window again."""
+        attempt_id, service = spec.attempt_id, spec.service
+        deadline = time.monotonic() + service.startup_timeout_s
+        while True:
+            with self.lock:
+                handle = self.handles.get(attempt_id)
+                running = attempt_id in self.active
+            if handle is None or not running or handle["cancel"].is_set():
+                return
+            try:
+                if self._read(attempt_id).get("started"):
+                    return  # Adopted after it was already serving.
+                response = self.local.get(self._service_url(spec) + service.health_path, timeout=2)
+                if response.status_code == 200:
+                    log.info("model service is healthy", extra={"attempt_id": attempt_id})
+                    self._started(attempt_id)
+                    return
+            except Exception:
+                with self.lock:
+                    self.addresses.pop(attempt_id, None)  # E.g. no address assigned yet.
+            if time.monotonic() >= deadline:
+                with self.lock:
+                    self.end_outcomes[attempt_id] = "FAILED"
+                self._end_session(
+                    attempt_id,
+                    f"model server not healthy within {service.startup_timeout_s:.0f}s",
+                )
+                return
+            handle["cancel"].wait(1)
+
+    def _service_spec(self, attempt_id: str) -> ExecutionSpec | None:
+        """The spec of a model service that is serving on this worker, or None."""
+        with self.lock:
+            handle = self.handles.get(attempt_id)
+            if handle is None or attempt_id not in self.active or handle["cancel"].is_set():
+                return None
+            try:
+                state = self._read(attempt_id)
+            except (OSError, ValueError):
+                return None
+        if not state.get("started") or not (state.get("spec") or {}).get("service"):
+            return None
+        return ExecutionSpec.model_validate(state["spec"])
+
+    def _service_url(self, spec: ExecutionSpec) -> str:
+        with self.lock:
+            address = self.addresses.get(spec.attempt_id)
+        if address is None:
+            address = self.executor.service_address(spec)
+            with self.lock:
+                self.addresses[spec.attempt_id] = address
+        return address
+
+    def _infer_end(self, request_id: str, error: str | None = None) -> None:
+        self.send(InferEnd(id=request_id, error=error).model_dump())
+
+    def _drop_infer(self, run: InferRun) -> None:
+        with self.lock:
+            self.inference.pop(run.request.id, None)
+
+    def _abort_inference(self, attempt_id: str | None, reason: str) -> None:
+        """End the requests of one model service (or all of them, for None)."""
+        with self.lock:
+            runs = [
+                run
+                for run in self.inference.values()
+                if attempt_id is None or run.request.attempt_id == attempt_id
+            ]
+        for run in runs:
+            self._cancel_infer(run, reason)
+
+    def _cancel_infer(self, run: InferRun, reason: str) -> None:
+        run.reason = reason
+        run.cancel.set()
+        if run.thread is None:
+            self._drop_infer(run)
+            self._infer_end(run.request.id, reason)
+            return
+        # Shutting the socket down wakes the thread blocked reading the model's response and
+        # makes the model server see the disconnect, so it stops generating; Response.close()
+        # from a thread other than the reader does neither until the read times out. Known
+        # limit: before the response headers (for a non-streamed request, the whole
+        # generation) there is no response to shut down, so the model finishes and the thread
+        # then drops the result.
+        with self.lock:  # See _run_infer: the connection is not serving another request.
+            response = run.response
+            if response is None:
+                return
+            try:
+                response.extensions["network_stream"].get_extra_info("socket").shutdown(SHUT_RDWR)
+            except Exception:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+
+    def _on_infer(self, message: dict) -> None:
+        request_id = message.get("id")
+        valid_id = isinstance(request_id, str) and re.fullmatch(r"[0-9a-f]{32}", request_id)
+        try:
+            request = parse_to_worker(message)
+            if not isinstance(request, InferRequest):
+                raise ValueError("not an inference request")
+        except ValueError as exc:
+            if valid_id:
+                self._infer_end(request_id, f"invalid request: {exc}"[:2048])
+            return
+        if request.body_size > self.settings.gateway_max_request_bytes:
+            self._infer_end(request.id, "request body too large")
+            return
+        if self._service_spec(request.attempt_id) is None:
+            self._infer_end(request.id, "the model is not serving on this worker")
+            return
+        with self.lock:
+            self.inference[request.id] = InferRun(request)
+
+    def _on_infer_body(self, message: dict) -> None:
+        try:
+            chunk = parse_to_worker(message)
+        except ValueError:
+            log.warning("ignored a malformed inference body chunk")
+            return
+        run = self.inference.get(chunk.id) if isinstance(chunk, InferBody) else None
+        if run is None or run.thread is not None:
+            return
+        try:
+            run.body += decode(chunk.data)
+            size = run.request.body_size
+            if len(run.body) > size or (chunk.final and len(run.body) != size):
+                raise ValueError("request body does not match its declared size")
+        except ValueError as exc:
+            self._drop_infer(run)
+            self._infer_end(run.request.id, str(exc))
+            return
+        if not chunk.final:
+            return
+        thread = threading.Thread(
+            target=self._run_infer, args=(run,), name=f"infer-{run.request.id[:8]}", daemon=True
+        )
+        thread.start()
+        run.thread = thread
+
+    def _on_infer_cancel(self, message: dict) -> None:
+        try:
+            request = parse_to_worker(message)
+        except ValueError:
+            return
+        run = self.inference.get(request.id) if isinstance(request, InferCancel) else None
+        if run is not None:
+            self._cancel_infer(run, "cancelled by the client")
+
+    def _run_infer(self, run: InferRun) -> None:
+        """Send the request to the model server and stream its response back as it arrives."""
+        request = run.request
+        error = None
+        complete = False  # The model's whole response was relayed.
+        try:
+            spec = self._service_spec(request.attempt_id)
+            if spec is None:
+                error = "the model is not serving on this worker"
+                return
+            with self.local.stream(
+                "POST",
+                f"{self._service_url(spec)}/v1/{request.path}",
+                content=bytes(run.body),
+                headers={"Content-Type": request.content_type, "Accept-Encoding": "identity"},
+                timeout=httpx.Timeout(request.read_timeout_s, connect=10),
+            ) as response:
+                run.response = response
+                try:
+                    content_type = response.headers.get("content-type", "application/json")
+                    head = InferHead(
+                        id=request.id, status=response.status_code, content_type=content_type[:256]
+                    )
+                    if run.cancel.is_set() or not self.send(head.model_dump()):
+                        return
+                    # iter_raw without a size yields bytes as they arrive (one token at a time).
+                    for data in response.iter_raw():
+                        for offset in range(0, len(data), CHUNK_BYTES):
+                            piece = encode(data[offset : offset + CHUNK_BYTES])
+                            chunk = InferChunk(id=request.id, data=piece).model_dump()
+                            if run.cancel.is_set() or not self.send(chunk):
+                                return
+                    # A cancel's socket shutdown can end the body just like the model finishing.
+                    complete = not run.cancel.is_set()
+                finally:
+                    # Cleared before the connection can go back to the pool and serve another
+                    # request, so a late cancel never shuts that request's socket down.
+                    with self.lock:
+                        run.response = None
+        except Exception as exc:
+            if not run.cancel.is_set():
+                error = f"model request failed: {type(exc).__name__}: {exc}"[:2048]
+        finally:
+            self._drop_infer(run)
+            if not complete and error is None:
+                # Cancelled, or a send failed (then this end most likely fails too).
+                error = run.reason if run.cancel.is_set() else "relay connection lost"
+            self._infer_end(request.id, error)
+
     def run(self) -> None:
         self.executor.check()
         self.register()
@@ -1276,4 +1533,5 @@ class Worker:
             except httpx.HTTPError:
                 log.warning("final events remain in the local outbox")
             self.client.close()
+            self.local.close()
             self.gpus.close()

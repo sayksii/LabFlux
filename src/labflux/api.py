@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 
-from labflux import __version__, relay
+from labflux import __version__, inference, relay
 from labflux.artifacts import ArtifactStore
 from labflux.config import Settings
 from labflux.hub import Hub
@@ -139,6 +139,28 @@ def create_app(
     @app.get("/api/nodes")
     def list_nodes(owner: str = Depends(user)):
         return service.list_nodes()
+
+    @app.get("/api/models")
+    def list_models(owner: str = Depends(user)):
+        return service.list_models()
+
+    @app.get("/v1/models")
+    def openai_models(owner: str = Depends(user)):
+        """Configured models in the OpenAI list shape, with their LabFlux state."""
+        return {
+            "object": "list",
+            "data": [
+                {"id": view["name"], "object": "model", "owned_by": "labflux", "labflux": view}
+                for view in service.list_models()
+            ],
+        }
+
+    @app.post("/v1/{path:path}")
+    async def openai_relay(path: str, request: Request, owner: str = Depends(user)):
+        """The inference Gateway (M10): relayed to the model's server through its Worker."""
+        if path not in inference.RELAYED_PATHS:
+            return inference.openai_error(404, f"/v1/{path} is not supported", "not_found")
+        return await inference.forward(request, path, service, hub)
 
     @app.post("/api/artifacts/sources", status_code=201)
     async def upload_source(request: Request, owner: str = Depends(user)):
