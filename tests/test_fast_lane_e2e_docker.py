@@ -291,7 +291,7 @@ def test_fast_lane_commands_sync_files_and_end_sessions(lane, tmp_path):
     assert lane.current() is None
 
 
-def test_fast_lane_remote_only_files_and_concurrent_commands(lane):
+def test_fast_lane_remote_only_files_and_concurrent_commands(lane, tmp_path):
     project = lane.project
     manifest = project / ".labflux" / "remote-files.txt"
     size = 2 * 1024**2  # Twice the write-back limit of this Scheduler.
@@ -304,7 +304,8 @@ def test_fast_lane_remote_only_files_and_concurrent_commands(lane):
         "-c",
         "import pathlib; pathlib.Path('checkpoints').mkdir(); "
         f"pathlib.Path('checkpoints/model.bin').write_bytes(bytes({size})); "
-        "pathlib.Path('small.txt').write_text('small')",
+        "pathlib.Path('small.txt').write_text('small'); "
+        "pathlib.Path('/outputs/keep.txt').write_text('kept')",
     )
     assert first.returncode == 0, first.stderr
     assert (project / "small.txt").read_text() == "small"
@@ -344,10 +345,15 @@ def test_fast_lane_remote_only_files_and_concurrent_commands(lane):
     assert lane.job(session["id"])["current_attempt_id"] == attempt_id
     assert len(lane.containers()) == 1
 
-    # Closing the session ends the remote-only files, and the local list with them.
+    # Closing the session ends the remote-only files, and the local list with them; what a
+    # command wrote to /outputs is uploaded like a batch job's output.
     assert lane.run("session", "close").returncode == 0
     assert not manifest.exists()
     lane.wait_released(session["id"])
+    wait_for(lambda: lane.job(session["id"])["outputs"])
+    fetched = lane.run("fetch", session["id"], "--directory", str(tmp_path / "kept"))
+    assert fetched.returncode == 0, fetched.stderr
+    assert (tmp_path / "kept" / "keep.txt").read_text() == "kept"
 
 
 def test_fast_lane_latency_with_a_running_session(lane):
