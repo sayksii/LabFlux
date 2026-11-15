@@ -956,7 +956,8 @@ migration 6 加入 `attempts.preempted_by`，attempt 狀態多一個 `PREEMPTED`
 停止沿用 `_request_stop`，多一個 `preempted_by` 參數：不設 `cancel_requested`，在 attempt 記下搶占它的工作。
 `_finish` 把停止生效或執行遺失的 attempt 記為 `PREEMPTED`，工作以原本的 `submission_seq` 回到 `QUEUED`。
 `handle_event` 的 STARTED、`_resume` 與 `_reconcile` 把 `preempted_by` 當成取消處理，不會回到執行中，也不會重送 START。
-backfill 的 `_bookings` 把停止中的被搶占 attempt 當作現在結束。Dashboard 的 attempt 表格顯示 `PREEMPTED`；
+backfill 的 `_bookings` 把停止中的被搶占 attempt 當作現在結束（接到 M10 之後的審查改成所有停止中的 attempt，見下方「程式審查」）。
+Dashboard 的 attempt 表格顯示 `PREEMPTED`；
 被搶占而停止中的工作仍可以取消。
 
 **接上 M10 後加入的部分。**
@@ -1001,9 +1002,11 @@ API 測試在 `tests/test_preemption.py`（以 HTTP API 操作，Worker 的命�
 | 11.5 | 損失 = 現在減 STARTED 時間（還沒 STARTED 為 0，時鐘偏差不會變負）；順序為損失、優先權、job id | `tests/test_preemption_policy.py` 的 `test_lost_work_counts_from_the_reported_start`、`test_order_is_lost_work_then_priority_then_job_id` |
 | 11.5 | 依序加入直到放得下，再移除用不到的；CPU、RAM 與同時執行數都計入；已經放得下時不停任何工作；全部停掉也放不下時不搶占 | `tests/test_preemption_policy.py` 的 `test_one_victim_with_less_lost_work_is_enough`、`test_victims_are_added_until_it_fits`、`test_victims_that_are_no_longer_needed_are_dropped`、`test_memory_and_the_job_slot_limit_count`、`test_it_already_fits_without_stopping_anything` |
 | 11.5 | 一個就夠時停損失少（較晚開始）的；多個節點選損失總和最少，相同時選工作數少的，再依節點 ID | `test_of_two_candidates_the_one_with_less_lost_work_is_stopped`、`test_node_with_less_total_lost_work_is_chosen`；`tests/test_preemption_policy.py` 的 `test_across_nodes_the_least_total_lost_work_wins` |
+| 11.5 | 只考慮有隊首資料集的節點：另一個節點上的工作損失較少（較晚開始），但那個節點沒有資料集，不停；停有資料集節點上的工作，隊首派送到那裡 | `test_only_a_node_with_the_preemptors_dataset_is_considered` |
 | 11.5 | GPU：只停持有符合卡片的工作（假的 3090／A5000 資料），新工作拿到那張卡 | `test_gpu_request_stops_the_job_holding_a_matching_card`；`tests/test_preemption_policy.py` 的 `test_a_gpu_request_frees_a_matching_card_only`。符合的卡片沿用 `_eligible_gpus`（型號、最低 VRAM、外部使用），VRAM 與外部使用的篩選由 M7 的測試涵蓋 |
 | 11.6 | STOP 命令為 `stop-<attempt_id>`；被搶占的工作 `STOPPING`、不設 `cancel_requested`，原因為 `preempted by job <id>; waiting for confirmed container termination`；確認終止前再排程一次也不派送，確認後才派送到該節點 | `test_higher_priority_job_gets_the_node_only_after_the_victim_is_confirmed_stopped`；Docker：`test_higher_priority_job_preempts_a_real_container_which_then_reruns` |
 | 11.6 | backfill：停止期間，之後提交、會延遲搶占工作的小工作與重新排隊的被搶占工作都拿不到先釋放的 CPU | `test_backfill_does_not_hand_resources_being_freed_to_a_later_job` |
+| 11.2、11.6 | backfill：隊首等取消中的工作停止（不搶占）時，保留時段落在現在（`reserved on kayle as soon as they stop`）；之後提交、600 秒的短工作放得進旁邊空著的 CPU，但會讓隊首在停止確認後又放不下，所以不派送；確認後隊首派送（審查問題 R1） | `test_backfill_does_not_hand_the_room_beside_a_cancel_in_progress_to_a_later_job` |
 | 11.6 | 停止期間心跳中斷又恢復維持 `STOPPING`，STOP 照樣送達；遲到的 STARTED 不讓它回到執行中；Worker 重啟後容器已不在，記為 `PREEMPTED` 並派送搶占的工作 | `test_heartbeat_lapse_during_the_stop_keeps_the_attempt_stopping`、`test_start_reported_after_a_lapse_during_the_stop_does_not_resume_the_victim`、`test_worker_restart_with_the_victims_container_gone_counts_as_preempted` |
 | 11.7 | attempt `PREEMPTED`（`preempted_by` 為搶占的工作），工作以原本的 `submission_seq` 回到 `QUEUED`，原因含 `1 of 3`；之後以新的 attempt 執行 | `test_higher_priority_job_gets_the_node_only_after_the_victim_is_confirmed_stopped` |
 | 11.7 | 實際容器：被搶占那次的 `/outputs` 可以下載，重跑以新 attempt 成功 | Docker：`test_higher_priority_job_preempts_a_real_container_which_then_reruns` |
@@ -1045,6 +1048,10 @@ API 測試在 `tests/test_preemption.py`（以 HTTP API 操作，Worker 的命�
   結束後沒有留下容器或 GPU 程序。
 - `uv run ruff check src tests`：通過；`uv run ruff format --check src tests`：61 個檔案都已格式化。
 - 沒有執行 `-m vm`。
+- 接到 M10 之後的審查修正（R1）、資料集測試與部署腳本的排程策略（commit 7eb2571）：
+  `uv run pytest -q -m "not docker and not vm and not gpu"`：411 passed、1 skipped（同上，沒有 zsh）、32 deselected；
+  `uv run ruff check src tests scripts`：通過；`uv run ruff format --check src tests scripts`：65 個檔案都已格式化。
+  這些改動只動 Scheduler 的 backfill 預約、測試與部署腳本，沒有改 Worker，所以沒有重跑 Docker 與 GPU 測試。
 
 **程式審查（2026-11-16）。** 接到 M10 之前，兩個審查 agent 獨立審查 M11，合併重複後 3 個問題，都以臨時測試重現：
 
@@ -1053,6 +1060,25 @@ API 測試在 `tests/test_preemption.py`（以 HTTP API 操作，Worker 的命�
 2. 被搶占 GPU 工作所在節點的 Worker 在停止期間重新註冊，可能在別的節點多搶占一個工作。很少發生，列入下方已知限制，不修正。
 3. `labflux logs --follow` 追蹤時，工作重跑後新 attempt 開頭的輸出被跳過，也沒有提示。節點失聯後的重跑本來就有這個問題，
    搶占讓重跑變常見。已修正（只改 CLI）。
+
+**接到 M10 之後的程式審查（2026-11-16）。** rebase 到 M10、加入模型服務的部分之後再審查一次，找到 2 個問題，
+都以臨時測試重現：
+
+1. （R1）backfill 的 `_bookings` 只把停止中的被搶占 attempt 當作現在結束；因使用者取消、session 結束、模型閒置停止或回收、
+   模型從設定移除而停止中的 attempt，仍然算到硬性時限或 lease 到期。隊首等這些停止（PE10）時，保留時段因此落在很久以後，
+   停止的幾秒內，短工作或重新排隊的被搶占工作可以 backfill 進隊首也需要的空間，停止確認後隊首又放不下，再搶占一次。
+   已修正：每一種停止都會讓工作 `cancel_requested`，或讓 attempt 記下 `preempted_by`，`_bookings` 以這個條件把停止中的
+   attempt 都當作現在結束（attempt 是 `STOPPING`，或心跳中斷後是 `UNKNOWN` 都一樣）。上表的
+   `test_backfill_does_not_hand_the_room_beside_a_cancel_in_progress_to_a_later_job` 在修正前失敗（短工作被派送）。
+2. （R2）被擋住的模型服務在等已經在釋放的資源時，不會占住它們（`fcfs`、`priority` 下模型服務不擋住後面的工作），
+   下一個被擋住的工作可能把同一份釋放算成自己的，選太少被搶占的工作。要同時有一個在等的模型和另一個被擋住的工作才會發生，
+   列入下方已知限制，不修正。
+
+**部署腳本的排程策略。** 批次工作只在 `priority` 與 `backfill` 下搶占，但 `scripts/lab_deploy.py` 原本不寫 `scheduling_policy`，
+實驗室一律是 `fcfs`。節點清單的 `[scheduler]` 現在可以加 `policy`（`fcfs`、`priority`、`backfill`，其他值在解析清單時拒絕），
+有設定時寫進產生的 `scheduler.toml`；沒有設定時產生的檔案不變，維持 `fcfs`。`configs/lab.example.toml` 附註解掉的範例，
+用法見 `docs/lab-deploy.md`。`tests/test_lab_deploy.py`：25 passed（三種策略產生的 TOML 都能被 `Settings` 載入並帶有該策略、
+錯誤的值被拒絕、沒有設定時只少這一行）。
 
 **尚未驗證。**
 
@@ -1077,6 +1103,9 @@ API 測試在 `tests/test_preemption.py`（以 HTTP API 操作，Worker 的命�
 - 被搶占 GPU 工作所在節點的 Worker 在停止期間重新註冊時，該節點的卡在 Worker 第一次心跳之前看不到；被搶占的 attempt 一結束，
   隊首就可能在另一個節點開始第二次、其實不需要的搶占，多停一個工作、讓它重跑一次。要在停止的幾秒內剛好重啟 Worker 才會發生，
   不修正（程式審查問題 2）。
+- 被擋住的模型服務（MODEL 工作）在等已經在釋放的資源時不會占住它們，下一個被擋住的工作可能把同一份釋放算成自己的，
+  選太少被搶占的工作；結果多一輪搶占，那個工作還是啟動不了，要等下一輪。要同時有一個在等的模型和另一個被擋住的工作才會發生，
+  不修正（接到 M10 之後的程式審查問題 R2）。
 - 被搶占容器的輸出上傳失敗（例如超過伺服器上限）時，Worker 回報 `FAILED`，工作以 `FAILED` 結束，不會重新排隊。
 - STOP 到達時程式剛好正常結束，Worker 回報 `CANCELLED`，attempt 記為 `PREEMPTED` 並重跑。
 - 舊版 Worker 會拒絕含新欄位的 START（`extra="forbid"`），Scheduler、Worker 與 CLI 要一起升級；資料庫與 Worker 本機紀錄裡用
