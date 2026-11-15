@@ -199,6 +199,30 @@ def test_labflux_local_runs_the_real_command_with_a_stripped_path(tmp_path):
         fastlane.shutil.rmtree(directory)
 
 
+@pytest.mark.parametrize(("signum", "expected"), [(signal.SIGTERM, 143), (signal.SIGHUP, 129)])
+def test_labflux_shell_passes_hangup_on_and_removes_its_standins(tmp_path, signum, expected):
+    seen = tmp_path / "path.txt"
+    shell = tmp_path / "fake-shell"
+    shell.write_text(f'#!/bin/sh\necho "$PATH" > {seen}.tmp\nmv {seen}.tmp {seen}\nexec sleep 30\n')
+    shell.chmod(0o755)
+    process = subprocess.Popen(
+        [sys.executable, "-I", "-m", "labflux.cli", "shell", "--shell", str(shell)],
+        cwd=tmp_path,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while not seen.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        standins = Path(seen.read_text().split(os.pathsep)[0])
+        assert (standins / STANDIN_MARKER).exists()
+        process.send_signal(signum)
+        assert process.wait(timeout=30) == expected
+        assert not standins.exists()
+    finally:
+        process.kill()
+
+
 # Write-back ----------------------------------------------------------------------------------
 
 
@@ -282,9 +306,11 @@ class FakeScheduler:
     """The three session endpoints, the job lookup and the command WebSocket."""
 
     def __init__(self):
-        self.states = ["RUNNING"]
+        self.states = ["RUNNING"]  # None: no current session (GET answers 404).
+        self.job = None  # GET /api/jobs/{id} body; 404 when None.
         self.post_response = None
         self.created = True
+        self.opened = 0
         self.closed = 0
         self.polls = 0
         self.on_poll = None
@@ -292,6 +318,7 @@ class FakeScheduler:
         self.received = []
         self.disconnected = threading.Event()
         self.script = None
+        self.read_all = True  # False: the script runs right after the ExecRequest.
         app = FastAPI()
 
         def view(state):
@@ -308,6 +335,7 @@ class FakeScheduler:
 
         @app.post("/api/sessions")
         def open_session(body: dict):
+            self.opened += 1
             if self.post_response:
                 return JSONResponse(*self.post_response)
             return view(self.states[0])
@@ -318,7 +346,11 @@ class FakeScheduler:
             if self.on_poll:
                 self.on_poll(self.polls)
             state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
-            return view(state)
+            return view(state) if state else JSONResponse({"detail": "no session"}, 404)
+
+        @app.get("/api/jobs/{job_id}")
+        def job(job_id: str):
+            return self.job if self.job else JSONResponse({"detail": "unknown job"}, 404)
 
         @app.post("/api/sessions/current/close")
         def close():
@@ -331,7 +363,7 @@ class FakeScheduler:
             await websocket.accept()
             self.connections += 1
             messages = [await websocket.receive_json()]
-            while not messages[-1].get("final"):
+            while self.read_all and not messages[-1].get("final"):
                 messages.append(await websocket.receive_json())
             self.received.append(messages)
             try:
@@ -426,6 +458,28 @@ def test_run_applies_the_writeback_and_reports_timeouts(fake, tmp_path, capsysbi
     assert b"command time limit exceeded" in err and b"next command starts a new one" in err
 
 
+@pytest.mark.parametrize("wrong", ["sha256", "size"])
+def test_run_rejects_a_writeback_that_fails_its_checksum(fake, tmp_path, capsysbinary, wrong):
+    archive = archive_of(tmp_path, {"results.json": b"{}"})
+    with archive.open("rb") as stream:
+        chunks = [WritebackChunk(id=CID, data=data, final=end) for data, end in iter_chunks(stream)]
+    size, digest = archive.stat().st_size, fastlane._sha256(archive)
+    fake.script = finish_with(
+        *chunks,
+        CommandResult(
+            id=CID,
+            outcome="exited",
+            exit_code=0,
+            writeback_size=size + 1 if wrong == "size" else size,
+            writeback_sha256="0" * 64 if wrong == "sha256" else digest,
+            writeback_files=1,
+        ),
+    )
+    assert run(fake, tmp_path, ["python", "main.py"]) == 125
+    assert not (tmp_path / "proj" / "results.json").exists()
+    assert b"failed its checksum" in capsysbinary.readouterr().err
+
+
 def test_run_errors_and_worker_unavailable_retry(fake, tmp_path, capsysbinary):
     replies = [
         ErrorMessage(code="worker_unavailable", message="no relay"),
@@ -439,6 +493,28 @@ def test_run_errors_and_worker_unavailable_retry(fake, tmp_path, capsysbinary):
     assert run(fake, tmp_path, ["python", "main.py"]) == 125
     assert fake.connections == 2
     assert b"busy: one command at a time" in capsysbinary.readouterr().err
+
+
+def test_run_leases_again_once_after_not_ready(fake, tmp_path, capsysbinary):
+    replies = [ErrorMessage(code="not_ready", message="session restarted"), DONE]
+
+    async def script(websocket, _received):
+        await websocket.send_text(replies.pop(0).model_dump_json())
+
+    fake.script = script
+    assert run(fake, tmp_path, ["python", "main.py"]) == 0
+    assert fake.opened == 2 and fake.connections == 2
+
+
+def test_run_reads_an_error_sent_while_the_snapshot_is_uploading(fake, tmp_path, capsysbinary):
+    root = project(tmp_path / "proj")
+    (root / "weights.bin").write_bytes(os.urandom(4 * 1024**2))  # Many chunks, incompressible.
+    fake.read_all = False
+    fake.script = finish_with(ErrorMessage(code="busy", message="one command at a time"))
+    assert run(fake, tmp_path, ["python", "main.py"]) == 125
+    assert len(fake.received[0]) == 1  # The reply came before any chunk was read.
+    err = capsysbinary.readouterr().err
+    assert b"busy: one command at a time" in err and b"connection" not in err
 
 
 def test_run_conflict_and_oversized_snapshot_fail_with_125(fake, tmp_path, capsysbinary):
@@ -466,6 +542,12 @@ def test_run_reports_a_session_that_ended_while_waiting(fake, tmp_path, capsysbi
     fake.states = ["QUEUED", "UNKNOWN"]
     assert run(fake, tmp_path, ["python", "main.py"]) == 125
     assert b"labflux session close" in capsysbinary.readouterr().err
+    # No longer the current session: the state and reason come from the job row.
+    fake.states = ["QUEUED", None]
+    fake.job = {"id": SID, "state": "CANCELLED", "reason": "closed by the user"}
+    assert run(fake, tmp_path, ["python", "main.py"]) == 125
+    assert b"ended (CANCELLED): closed by the user" in capsysbinary.readouterr().err
+    assert fake.connections == 0
 
 
 def test_ctrl_c_sends_cancel_and_keeps_the_result(fake, tmp_path, capsysbinary):

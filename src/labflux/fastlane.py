@@ -251,16 +251,26 @@ def run_shell(shell: str, config: Path | None, names: set[str]) -> int:
         "start your AI tool here and exit the shell to leave",
         file=sys.stderr,
     )
-    # A Python handler (not SIG_IGN) is reset on exec, so Ctrl-C still reaches the shell's
-    # programs while this process keeps waiting.
-    previous = _set_signal(signal.SIGINT, lambda *_: None)
+    # Python handlers (not SIG_IGN) are reset on exec, so Ctrl-C still reaches the shell's
+    # programs. SIGHUP (a closed terminal) and SIGTERM are passed on to the shell; this process
+    # keeps waiting for it, so the stand-in directory is always removed below.
+    children: list[subprocess.Popen] = []
+
+    def forward(signum, _frame):
+        for child in children:
+            child.send_signal(signum)
+
+    handlers = {signal.SIGINT: lambda *_: None, signal.SIGHUP: forward, signal.SIGTERM: forward}
+    previous = {signum: _set_signal(signum, handler) for signum, handler in handlers.items()}
     try:
-        code = subprocess.run([shell], env=env).returncode
+        children.append(subprocess.Popen([shell], env=env))
+        code = children[0].wait()
     except OSError as exc:
         print(f"labflux: cannot start {shell}: {exc.strerror or exc}", file=sys.stderr)
         code = EXIT_NOT_FOUND
     finally:
-        _set_signal(signal.SIGINT, previous)
+        for signum, handler in previous.items():
+            _set_signal(signum, handler)
         shutil.rmtree(directory, ignore_errors=True)
     return 128 - code if code < 0 else code
 
