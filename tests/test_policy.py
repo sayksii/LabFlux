@@ -201,13 +201,41 @@ def test_reservation_counts_matching_gpus_per_node(make_client, clock):
     assert job(client, head)["state"] == "QUEUED"
 
 
+def test_backfill_may_not_take_a_card_the_reserved_job_needs(make_client, clock):
+    client = make_client("backfill")
+    second_3090 = {**RTX3090, "uuid": "GPU-00000003-0000-0000-0000-000000000000", "index": 2}
+    cards = [RTX3090, second_3090]
+    instance = register(client, "kayle", cpu=8, memory=8192, gpus=cards)
+    heartbeat(client, "kayle", instance, cards)
+    submit(client, resources={"gpu": 1, "gpu_model": "3090"}, time_limit_s=600)
+    head = submit(client, user="bob", resources={"gpu": 2, "gpu_model": "3090"})
+    rival = submit(client, resources={"gpu": 1, "gpu_model": "3090"}, time_limit_s=3600)
+    assert job(client, head)["schedule_note"].endswith(f"reserved on kayle at {clock_text(1600)}")
+    assert job(client, rival)["state"] == "QUEUED"
+    assert "would delay job" in job(client, rival)["schedule_note"]
+
+
 def test_backfill_without_any_reservation_lets_later_jobs_start(make_client, clock):
     client = make_client("backfill")
     register(client, cpu=2)
     impossible = submit(client, cpu=4)
     later = submit(client, cpu=1)
-    assert "no online node can ever fit it" in job(client, impossible)["schedule_note"]
+    assert "no online node can fit it right now" in job(client, impossible)["schedule_note"]
     assert job(client, later)["state"] == "STARTING"
+    assert job(client, later)["schedule_note"].startswith("backfill: started on vm-a")
+
+
+def test_unreservable_job_does_not_leave_the_next_blocked_job_unprotected(make_client, clock):
+    client = make_client("backfill")
+    register(client, "kayle", cpu=4, memory=8192)
+    submit(client, cpu=2, time_limit_s=600)  # Holds 2 CPUs until t=1600.
+    impossible = submit(client, cpu=16)
+    head = submit(client, cpu=4, user="bob")
+    long = submit(client, cpu=2, time_limit_s=3600)
+    assert "does not block later jobs" in job(client, impossible)["schedule_note"]
+    assert job(client, head)["schedule_note"].endswith(f"reserved on kayle at {clock_text(1600)}")
+    assert job(client, long)["state"] == "QUEUED"
+    assert "would delay job" in job(client, long)["schedule_note"]
 
 
 def test_priority_estimate_and_policy_validation(make_client, client):

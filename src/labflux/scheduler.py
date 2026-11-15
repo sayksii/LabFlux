@@ -618,7 +618,6 @@ class Scheduler:
                 ]
             if not candidates:
                 if head is None:
-                    head = job
                     reason = (
                         "no online worker"
                         if not available
@@ -631,8 +630,15 @@ class Scheduler:
                     if policy.backfill:
                         reservation = self._reserve(entry, available, bookings, now)
                         if reservation is None:
-                            note += "; no online node can ever fit it, so later jobs may start"
-                        elif reservation.start <= now:
+                            # It cannot be reserved anywhere, so it must not leave the next
+                            # blocked job unprotected: that job becomes the head instead.
+                            note = (
+                                f"{policy.name}: {entry.why}; {reason}; no online node can fit "
+                                "it right now, so it does not block later jobs"
+                            )
+                            self._note(connection, job, note)
+                            continue
+                        if reservation.start <= now:
                             note += (
                                 f"; reserved on {reservation.node_id} as soon as attempts past "
                                 "their time limit release resources"
@@ -642,6 +648,7 @@ class Scheduler:
                                 f"; reserved on {reservation.node_id} at "
                                 f"{clock_text(reservation.start)}"
                             )
+                    head = job
                 elif fits_now:
                     estimate = (
                         f" (estimate {spec.estimated_runtime_s:.0f}s is advisory only)"
@@ -675,11 +682,6 @@ class Scheduler:
             gpu_uuids = [gpu["uuid"] for gpu in cards[: request["gpu"]]]
             if head is None:
                 note = f"{policy.name}: started on {node['id']} ({entry.why})"
-            elif reservation is None:
-                note = (
-                    f"{policy.name}: started on {node['id']} ahead of job {short(head['id'])}, "
-                    f"which no online node can fit ({entry.why})"
-                )
             else:
                 if node["id"] != reservation.node_id:
                     safe = f"the reserved job waits for {reservation.node_id}"
