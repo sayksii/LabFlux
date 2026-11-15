@@ -79,6 +79,8 @@ class ExecutionSpec(BaseModel):
     worker_id: str
     job: JobSpec
     gpu_uuids: list[Annotated[str, Field(pattern=GPU_UUID)]] = Field(default_factory=list)
+    # A fast-lane session container (M9): kept alive for commands, no time limit enforced.
+    session: bool = False
 
 
 class GpuDevice(BaseModel):

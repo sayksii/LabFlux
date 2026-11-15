@@ -51,6 +51,10 @@ jobs = Table(
     Column("updated_at", Float, nullable=False),
     # The latest scheduling decision for this job: why it waits, or why it was placed.
     Column("schedule_note", Text, nullable=False, default=""),
+    # BATCH, or SESSION for a fast-lane session (M9), whose container is its current attempt.
+    Column("kind", String, nullable=False, default="BATCH", server_default="BATCH"),
+    # Sessions only: when an idle RUNNING session is stopped; None while queued or starting.
+    Column("lease_expires_at", Float),
 )
 attempts = Table(
     "attempts",
@@ -128,8 +132,17 @@ def add_schedule_note(connection) -> None:
     connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN schedule_note TEXT NOT NULL DEFAULT ''")
 
 
+def add_sessions(connection) -> None:
+    connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'BATCH'")
+    connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN lease_expires_at REAL")
+
+
 # Migration N upgrades a database at version N - 1; version 1 is the original bootstrap.
-MIGRATIONS = {2: lambda connection: attempt_gpus.create(connection), 3: add_schedule_note}
+MIGRATIONS = {
+    2: lambda connection: attempt_gpus.create(connection),
+    3: add_schedule_note,
+    4: add_sessions,
+}
 SCHEMA_VERSION = max(MIGRATIONS)
 
 

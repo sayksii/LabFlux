@@ -218,6 +218,8 @@ def test_v1_database_upgrades_to_current_and_keeps_jobs(settings):
     with first.db.transaction() as connection:
         attempt_gpus.drop(connection)  # Version 1 had neither attempt_gpus nor schedule_note.
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN schedule_note")
+        connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN kind")  # Added by version 4.
+        connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN lease_expires_at")
         connection.execute(update(schema_version).values(version=1))
     first.db.close()
     database = Database(settings.data_dir)

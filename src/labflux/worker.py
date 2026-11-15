@@ -9,11 +9,14 @@ import logging
 import os
 import re
 import shutil
+import tarfile
 import threading
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 import httpx
 import psutil
@@ -25,6 +28,24 @@ from labflux.config import Settings
 from labflux.gpu import GpuProbe
 from labflux.models import Capacity, ExecutionSpec
 from labflux.runtime import DockerExecutor, ExecutionResult
+from labflux.session_protocol import (
+    CHUNK_BYTES,
+    MAX_SKIPPED_LISTED,
+    WORKSPACE,
+    CancelRequest,
+    CommandResult,
+    Notice,
+    Output,
+    SkippedFile,
+    SnapshotChunk,
+    WorkerExec,
+    WritebackChunk,
+    decode,
+    encode,
+    iter_chunks,
+    parse_worker_command,
+)
+from labflux.workspace import apply_snapshot, dependency_hash, is_directory, pack_files, scan
 
 log = logging.getLogger("labflux.worker")
 ATTEMPT_ID = re.compile(r"[a-f0-9]{32}")
@@ -32,6 +53,8 @@ ATTEMPT_ID = re.compile(r"[a-f0-9]{32}")
 COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 # First retry delay after a failed connection or flush; it doubles up to poll_interval_s.
 RETRY_S = 0.5
+# How long a finished session attempt waits for its in-flight command to send its result.
+COMMAND_JOIN_S = 30
 
 
 class Unaddressed(Exception):
@@ -58,6 +81,29 @@ class StopEvent(threading.Event):
         super().set()
         for event in self.linked:
             event.set()
+
+
+@dataclass
+class CommandRun:
+    """One fast-lane command: its snapshot upload, then its thread (M9)."""
+
+    command: WorkerExec
+    file: BinaryIO
+    path: Path
+    digest: object = field(default_factory=hashlib.sha256)
+    received: int = 0
+    cancel: threading.Event = field(default_factory=threading.Event)
+    thread: threading.Thread | None = None
+    output_bytes: int = 0
+    truncated: bool = False
+
+    @property
+    def id(self) -> str:
+        return self.command.id
+
+    @property
+    def attempt_id(self) -> str:
+        return self.command.attempt_id
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -109,7 +155,14 @@ class Worker:
         self.stop_event = StopEvent(self.commands_ready, self.outbox_ready)
         # Handlers for other message types on the doorbell connection (fast lane, T6); they run
         # on the doorbell thread and must not block.
-        self.handlers: dict[str, Callable[[dict], None]] = {}
+        self.handlers: dict[str, Callable[[dict], None]] = {
+            "exec": self._on_exec,
+            "snapshot_chunk": self._on_snapshot_chunk,
+            "cancel": self._on_cancel,
+        }
+        # Fast-lane commands by command ID, and why the Worker itself ended a session.
+        self.runs: dict[str, CommandRun] = {}
+        self.end_reasons: dict[str, str] = {}
         self.socket = None
         self.lock = threading.RLock()
         self.pool = ThreadPoolExecutor(
@@ -610,6 +663,21 @@ class Worker:
                     str(exc)[:2048],
                     not preparation_finished,
                 )
+        if spec.session:
+            # The last command still writes back from the workspace, which the outbox removes
+            # once the result is recorded; its reason replaces the generic "cancelled".
+            with self.lock:
+                runs = [run for run in self.runs.values() if run.attempt_id == spec.attempt_id]
+            for run in runs:
+                if run.thread is None:
+                    self._drop_run(run)  # Its snapshot was still arriving; nothing ran.
+                    self._reply(run.id, **self._session_ended(spec.attempt_id, "cancelled"))
+                else:
+                    run.thread.join(COMMAND_JOIN_S)
+            with self.lock:
+                reason = self.end_reasons.pop(spec.attempt_id, None)
+            if result is not None and reason:
+                result.reason = reason
         with self.lock:
             # None means the worker is shutting down: the result stays open for adoption.
             if result is not None:
@@ -814,6 +882,7 @@ class Worker:
                 log.warning("doorbell connection will retry: %s", type(exc).__name__)
             finally:
                 self.socket = None
+                self._relay_lost()
             self.stop_event.wait(delay)
             delay = min(delay * 2, self.settings.poll_interval_s)
 
@@ -847,6 +916,284 @@ class Worker:
         except (OSError, WebSocketException):
             return False
         return True
+
+    # Fast-lane session commands (M9, T6) ---------------------------------------------------
+    # The handlers run on the doorbell thread and never block; each command runs on its own
+    # daemon thread (the pool is sized to max_parallel_jobs and already holds the sessions).
+
+    def _relay(self, message: dict) -> None:
+        """Send a fast-lane message; a lost relay ends every session with a command in flight,
+        since nobody can receive that command's output or cancel it any more."""
+        if not self.send(message):
+            self._relay_lost()
+
+    def _reply(self, command_id: str, **fields) -> None:
+        self._relay(CommandResult(id=command_id, **fields).model_dump())
+
+    def _relay_lost(self) -> None:
+        with self.lock:
+            runs = list(self.runs.values())
+        for run in runs:
+            if run.thread is None:
+                self._drop_run(run)  # Still receiving its snapshot; nothing ran.
+            else:
+                self._end_session(run.attempt_id, "relay connection lost during a command")
+
+    def _drop_run(self, run: CommandRun) -> None:
+        with self.lock:
+            self.runs.pop(run.id, None)
+        try:
+            run.file.close()
+        except OSError:
+            pass
+        run.path.unlink(missing_ok=True)
+
+    def _end_session(self, attempt_id: str, reason: str) -> None:
+        """Terminate a session container from the Worker side; run() confirms the stop and the
+        attempt's FINISHED event carries this reason."""
+        with self.lock:
+            handle = self.handles.get(attempt_id)
+            if handle is None:
+                return
+            self.end_reasons.setdefault(attempt_id, reason)
+            handle["cancel"].set()
+
+    def _session_running(self, attempt_id: str) -> bool:
+        with self.lock:
+            handle = self.handles.get(attempt_id)
+            if handle is None or attempt_id not in self.active or handle["cancel"].is_set():
+                return False
+            try:
+                state = self._read(attempt_id)
+            except (OSError, ValueError):
+                return False
+            return bool(state.get("started")) and bool((state.get("spec") or {}).get("session"))
+
+    def _on_exec(self, message: dict) -> None:
+        try:
+            command = parse_worker_command(message)
+            if not isinstance(command, WorkerExec):
+                raise ValueError("not an exec command")
+        except ValueError as exc:
+            command_id = message.get("id")
+            if isinstance(command_id, str) and re.fullmatch(r"[0-9a-f]{32}", command_id):
+                self._reply(command_id, outcome="error", reason=f"invalid command: {exc}"[:2048])
+            return
+        if not self._session_running(command.attempt_id):
+            self._reply(command.id, outcome="error", reason="session is not running on this worker")
+            return
+        with self.lock:
+            busy = any(run.attempt_id == command.attempt_id for run in self.runs.values())
+            if not busy:
+                path = self.root / command.attempt_id / f"snapshot-{command.id}.tar.gz"
+                self.runs[command.id] = CommandRun(command, path.open("wb"), path)
+        if busy:
+            self._reply(command.id, outcome="error", reason="busy")
+
+    def _on_snapshot_chunk(self, message: dict) -> None:
+        try:
+            chunk = parse_worker_command(message)
+        except ValueError:
+            log.warning("ignored a malformed snapshot chunk")
+            return
+        run = self.runs.get(chunk.id) if isinstance(chunk, SnapshotChunk) else None
+        if run is None or run.thread is not None:
+            return
+        command = run.command
+        try:
+            data = decode(chunk.data)
+            run.received += len(data)
+            if run.received > command.snapshot_size:
+                raise ValueError("snapshot exceeds its declared size")
+            run.file.write(data)
+            run.digest.update(data)
+            if not chunk.final:
+                return
+            run.file.close()
+            if (
+                run.received != command.snapshot_size
+                or run.digest.hexdigest() != command.snapshot_sha256
+            ):
+                raise ValueError("snapshot size or checksum mismatch")
+        except (ValueError, OSError) as exc:
+            self._drop_run(run)
+            self._reply(run.id, outcome="error", reason=str(exc)[:2048])
+            return
+        thread = threading.Thread(
+            target=self._run_command, args=(run,), name=f"command-{run.id[:8]}", daemon=True
+        )
+        thread.start()
+        run.thread = thread  # Only once started, so _execute never joins an unstarted thread.
+
+    def _on_cancel(self, message: dict) -> None:
+        try:
+            request = parse_worker_command(message)
+        except ValueError:
+            return
+        run = self.runs.get(request.id) if isinstance(request, CancelRequest) else None
+        if run is None:
+            return
+        if run.thread is None:
+            self._drop_run(run)  # Nothing ran yet, so the session stays as it was.
+            self._reply(run.id, outcome="cancelled", reason="cancelled before the command started")
+        else:
+            run.cancel.set()
+
+    def _command_output(self, run: CommandRun, stream: str, data: bytes) -> None:
+        limit = run.command.output_limit_bytes
+        kept = data[: max(0, limit - run.output_bytes)]
+        run.output_bytes += len(kept)
+        for offset in range(0, len(kept), CHUNK_BYTES):
+            piece = kept[offset : offset + CHUNK_BYTES]
+            self._relay(Output(id=run.id, stream=stream, data=encode(piece)).model_dump())
+        if len(kept) < len(data) and not run.truncated:
+            run.truncated = True
+            self._relay(Notice(id=run.id, text=f"output truncated at {limit} bytes").model_dump())
+
+    def _session_ended(self, attempt_id: str, outcome: str) -> dict:
+        with self.lock:
+            reason = self.end_reasons.get(attempt_id, "session closed")
+        return {"outcome": outcome, "reason": reason, "session_ended": True}
+
+    def _run_command(self, run: CommandRun) -> None:
+        """Apply the snapshot, sync dependencies if they changed, run the command, then write
+        back new and modified files; the result is always the last message."""
+        command = run.command
+        attempt_id = command.attempt_id
+        directory = self.root / attempt_id
+        workspace = directory / "workspace"
+        session_path = directory / "session.json"
+        archive = directory / f"writeback-{run.id}.tar.gz"
+        with self.lock:
+            handle = self.handles[attempt_id]
+
+        def abort(reason: str) -> Callable[[bool], None]:
+            return lambda timed_out: self._end_session(
+                attempt_id, reason if timed_out else "command cancelled by the client"
+            )
+
+        try:
+            spec = ExecutionSpec.model_validate(self._read(attempt_id)["spec"])
+            session = {"files": [], "deps": None}
+            if session_path.exists():
+                session = json.loads(session_path.read_text())
+            try:
+                session["files"] = apply_snapshot(
+                    workspace,
+                    run.path,
+                    session["files"],
+                    self.settings.max_extracted_bytes,
+                    self.settings.max_archive_members,
+                )
+            except (ValueError, OSError, tarfile.TarError, EOFError) as exc:
+                self._reply(run.id, outcome="error", reason=f"snapshot rejected: {exc}"[:2048])
+                return
+            finally:
+                run.path.unlink(missing_ok=True)
+            write_json(session_path, session)
+
+            # Only the snapshot's dependency files count: a uv.lock that `uv sync` generated
+            # in the workspace must neither force --locked nor change the hash.
+            deps = dependency_hash(workspace, session["files"])
+            pyproject = workspace / "pyproject.toml"
+            if pyproject.is_file() and not pyproject.is_symlink() and deps != session["deps"]:
+                self._relay(Notice(id=run.id, text="running uv sync").model_dump())
+                locked = "uv.lock" in session["files"]
+                code, timed_out, stopped = self.executor.exec(
+                    spec,
+                    ["uv", "sync", "--locked"] if locked else ["uv", "sync"],
+                    WORKSPACE,
+                    lambda _stream, data: self._command_output(run, "stderr", data),
+                    run.cancel,
+                    command.sync_timeout_s,
+                    on_abort=abort("dependency sync time limit exceeded"),
+                )
+                if timed_out or stopped or handle["cancel"].is_set():
+                    outcome = "timeout" if timed_out else "cancelled"
+                    self._reply(run.id, **self._session_ended(attempt_id, outcome))
+                    return
+                if code is None:
+                    self._reply(run.id, outcome="error", reason="uv sync exit status unavailable")
+                    return
+                if code != 0:
+                    # deps is not stored, so the next command tries again.
+                    self._reply(run.id, outcome="exited", exit_code=code, reason="uv sync failed")
+                    return
+                session["deps"] = deps
+                write_json(session_path, session)
+
+            if not is_directory(workspace, command.cwd):
+                self._reply(
+                    run.id,
+                    outcome="error",
+                    reason=f"working directory {command.cwd or '.'} is not in the session "
+                    "workspace",
+                )
+                return
+            before = scan(workspace)
+            code, timed_out, stopped = self.executor.exec(
+                spec,
+                command.argv,
+                f"{WORKSPACE}/{command.cwd}" if command.cwd else WORKSPACE,
+                lambda stream, data: self._command_output(run, stream, data),
+                run.cancel,
+                command.timeout_s,
+                on_abort=abort("command time limit exceeded"),
+            )
+            if timed_out:
+                fields = self._session_ended(attempt_id, "timeout")
+            elif stopped or handle["cancel"].is_set():
+                fields = self._session_ended(attempt_id, "cancelled")
+            elif code is None:
+                fields = {"outcome": "error", "reason": "the command's exit status is unavailable"}
+            else:
+                fields = {"outcome": "exited", "exit_code": code}
+            fields.update(self._write_back(run, workspace, before, archive))
+            fields.setdefault("session_ended", handle["cancel"].is_set())
+            self._reply(run.id, **fields)
+        except Exception as exc:
+            log.exception("fast-lane command failed", extra={"attempt_id": attempt_id})
+            self._reply(run.id, outcome="error", reason=f"worker error: {exc}"[:2048])
+        finally:
+            archive.unlink(missing_ok=True)
+            self._drop_run(run)
+
+    def _write_back(self, run: CommandRun, workspace: Path, before: dict, archive: Path) -> dict:
+        """Stream new and modified files (up to the cap) and return the result fields."""
+        after = scan(workspace)
+        limit = run.command.writeback_limit_bytes
+        selected, skipped, total = [], [], 0
+        for path in sorted(p for p, value in after.items() if before.get(p) != value):
+            size = after[path][0]
+            if total + size <= limit:
+                selected.append(path)
+                total += size
+            else:
+                skipped.append(SkippedFile(path=path, size=size))
+        fields = {"skipped": skipped[:MAX_SKIPPED_LISTED], "skipped_count": len(skipped)}
+        if skipped:
+            megabytes = sum(item.size for item in skipped) / 1024**2
+            names = ", ".join(item.path for item in skipped[:10])
+            text = (
+                f"{len(skipped)} files ({megabytes:.1f} MB) over the write-back limit stay in "
+                f"the session: {names}" + (", ..." if len(skipped) > 10 else "")
+            )
+            self._relay(Notice(id=run.id, text=text[:2048]).model_dump())
+        packed = pack_files(workspace, selected, archive) if selected else []
+        if not packed:
+            return fields
+        digest = hashlib.sha256()
+        with archive.open("rb") as stream:
+            for text, final in iter_chunks(stream):
+                data = decode(text)
+                digest.update(data)
+                self._relay(WritebackChunk(id=run.id, data=text, final=final).model_dump())
+        fields.update(
+            writeback_size=archive.stat().st_size,
+            writeback_sha256=digest.hexdigest(),
+            writeback_files=len(packed),
+        )
+        return fields
 
     def run(self) -> None:
         self.executor.check()

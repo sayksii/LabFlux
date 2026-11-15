@@ -228,7 +228,8 @@ class DockerExecutor:
             remaining = (spec.job.time_limit_s or self.settings.job_time_limit_s) - max(
                 0, time.time() - started_wall
             )
-            deadline = time.monotonic() + max(0, remaining)
+            # A session container waits for commands; its lease, not a time limit, ends it.
+            deadline = float("inf") if spec.session else time.monotonic() + max(0, remaining)
             while True:
                 container.reload()
                 if not container.attrs["State"]["Running"]:
@@ -285,6 +286,78 @@ class DockerExecutor:
             for reader in readers:
                 if reader.ident is not None:
                     reader.join(timeout=5)
+            client.close()
+
+    def exec(
+        self,
+        spec: ExecutionSpec,
+        argv: list[str],
+        workdir: str,
+        on_output: Callable[[str, bytes], None],
+        stop: threading.Event,
+        timeout_s: float,
+        on_abort: Callable[[bool], None] | None = None,
+    ) -> tuple[int | None, bool, bool]:
+        """Run one command in a session container: (exit code, timed out, stopped).
+
+        On a timeout or `stop`, on_abort(timed_out) is called once; the caller terminates the
+        whole container there (Docker cannot kill an exec), which ends the output stream. This
+        method never stops the container itself, and it returns once the output reader is done
+        so that no output arrives after it.
+        """
+        client = docker.from_env(timeout=max(10, self.settings.request_timeout_s))
+        stream = None
+        reader = None
+        context = {"job_id": spec.job_id, "attempt_id": spec.attempt_id}
+        try:
+            api = client.api
+            exec_id = api.exec_create(
+                container_name(spec),
+                argv,
+                workdir=workdir,
+                stdout=True,
+                stderr=True,
+                stdin=False,
+                tty=False,
+            )["Id"]
+            stream = api.exec_start(exec_id, stream=True, demux=True)
+
+            def read() -> None:
+                try:
+                    for stdout, stderr in stream:
+                        if stdout:
+                            on_output("stdout", stdout)
+                        if stderr:
+                            on_output("stderr", stderr)
+                except Exception:
+                    log.exception("command output capture interrupted", extra=context)
+
+            reader = threading.Thread(target=read, daemon=True)
+            reader.start()
+            deadline = time.monotonic() + timeout_s
+            timed_out = stopped = False
+            give_up = None
+            while reader.is_alive():
+                if give_up is None and (stop.is_set() or time.monotonic() >= deadline):
+                    stopped, timed_out = stop.is_set(), not stop.is_set()
+                    if on_abort:
+                        on_abort(timed_out)
+                    give_up = time.monotonic() + self.settings.stop_grace_s + 30
+                elif give_up is not None and time.monotonic() >= give_up:
+                    break
+                reader.join(self.settings.runtime_poll_s)
+            if give_up is not None:
+                return None, timed_out, stopped
+            try:
+                return api.exec_inspect(exec_id).get("ExitCode"), False, False
+            except DockerException:
+                return None, False, False  # E.g. the container was removed by a STOP.
+        finally:
+            if stream is not None:
+                with suppress(Exception):
+                    stream.close()
+            if reader is not None and reader.ident is not None:
+                reader.join(timeout=5)
             client.close()
 
     def inventory(self, worker_id: str) -> list[dict]:

@@ -12,6 +12,13 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
 from labflux.models import GPU_UUID
+from labflux.session_protocol import (
+    DEFAULT_COMMAND_TIMEOUT_S,
+    DEFAULT_LEASE_S,
+    DEFAULT_SYNC_TIMEOUT_S,
+    DEFAULT_WRITEBACK_BYTES,
+    FastLaneMode,
+)
 
 
 class Settings(BaseModel):
@@ -65,6 +72,16 @@ class Settings(BaseModel):
     )
     # Worker-local uv cache mounted into every job at /uv-cache; None mounts nothing.
     uv_cache_dir: Path | None = None
+    # Fast lane (M9). session: commands reuse the user's session; oneshot: the Scheduler closes
+    # the session after each command, so every command gets a fresh container.
+    fast_lane_mode: FastLaneMode = "session"
+    session_lease_s: float = Field(default=DEFAULT_LEASE_S, gt=0)
+    session_command_timeout_s: float = Field(default=DEFAULT_COMMAND_TIMEOUT_S, gt=0)
+    # `uv sync` before a command when pyproject.toml or uv.lock changed.
+    session_sync_timeout_s: float = Field(default=DEFAULT_SYNC_TIMEOUT_S, gt=0)
+    # Raw file bytes written back per command; command output reuses max_log_bytes and the
+    # snapshot reuses max_source_bytes.
+    session_writeback_bytes: int = Field(default=DEFAULT_WRITEBACK_BYTES, ge=0)
 
     @model_validator(mode="after")
     def validate_settings(self) -> Settings:

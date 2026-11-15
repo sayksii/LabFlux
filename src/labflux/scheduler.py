@@ -7,6 +7,7 @@ import time
 import uuid
 from collections.abc import Callable
 
+from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 
 from labflux.config import Settings
@@ -33,12 +34,22 @@ from labflux.policy import (
     make_policy,
     short,
 )
+from labflux.session_protocol import (
+    KEEPALIVE_ARGV,
+    SESSION_ENV,
+    SESSION_KIND,
+    SESSION_LIVE_STATES,
+    SESSION_READY_STATE,
+    SessionRequest,
+    SessionView,
+)
 
 TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
 EXPIRED_ATTEMPT = "worker heartbeat expired; termination unconfirmed"
 # A node restored after a Scheduler restart: it receives no new work until its Worker proves
 # its instance (heartbeat) or registers a new one with an inventory.
 RECONCILING = "RECONCILING"
+STOP_WAIT = "waiting for confirmed container termination"
 
 
 class ServiceError(Exception):
@@ -60,6 +71,9 @@ class Scheduler:
         self.policy = make_policy(settings)
         # Wakes a node's Worker after its commands commit (the API wires it to the hub).
         self.doorbell: Callable[[str], None] = lambda node_id: None
+        # Sessions with a fast-lane command in flight. Only the relay changes it, on the event
+        # loop; tick() only reads it, so a lease never expires during a command.
+        self.session_busy: set[str] = set()
         self.restore()
 
     def restore(self) -> None:
@@ -462,8 +476,6 @@ class Scheduler:
             spec = spec.model_copy(update={"priority": self.settings.default_priority})
         if spec.estimated_runtime_s is not None and spec.estimated_runtime_s > spec.time_limit_s:
             raise ServiceError(422, "estimated_runtime_s cannot exceed time_limit_s")
-        job_id = uuid.uuid4().hex
-        now = self.clock()
         with self.db.transaction() as connection:
             if spec.source_id:
                 source = connection.execute(
@@ -475,28 +487,35 @@ class Scheduler:
                 ).first()
                 if not source:
                     raise ServiceError(404, "source artifact not found")
-            sequence = (
-                connection.execute(
-                    select(func.coalesce(func.max(jobs.c.submission_seq), 0))
-                ).scalar_one()
-                + 1
-            )
-            connection.execute(
-                jobs.insert().values(
-                    id=job_id,
-                    submission_seq=sequence,
-                    owner=owner,
-                    spec=spec.model_dump(),
-                    state="QUEUED",
-                    reason="waiting for scheduling",
-                    current_attempt_id=None,
-                    cancel_requested=False,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
+            job_id = self._insert_job(connection, owner, spec)
             self._schedule(connection)
         return self.get_job(job_id, owner)
+
+    def _insert_job(self, connection, owner: str, spec: JobSpec, kind: str = "BATCH") -> str:
+        job_id = uuid.uuid4().hex
+        now = self.clock()
+        sequence = (
+            connection.execute(
+                select(func.coalesce(func.max(jobs.c.submission_seq), 0))
+            ).scalar_one()
+            + 1
+        )
+        connection.execute(
+            jobs.insert().values(
+                id=job_id,
+                submission_seq=sequence,
+                owner=owner,
+                spec=spec.model_dump(),
+                state="QUEUED",
+                reason="waiting for scheduling",
+                current_attempt_id=None,
+                cancel_requested=False,
+                created_at=now,
+                updated_at=now,
+                kind=kind,
+            )
+        )
+        return job_id
 
     def _candidates(self, spec: JobSpec, available: list, allocated: dict, held: set) -> list:
         """Nodes where the job fits right now, each with its eligible cards (best first)."""
@@ -799,6 +818,8 @@ class Scheduler:
             "job": spec.model_dump(),
             "gpu_uuids": gpu_uuids,
         }
+        if job.get("kind") == SESSION_KIND:
+            payload["session"] = True
         connection.execute(
             commands.insert().values(
                 id=f"start-{attempt_id}",
@@ -862,7 +883,24 @@ class Scheduler:
                             updated_at=self.clock(),
                         )
                     )
+            self._expire_leases(connection)
             self._schedule(connection)
+
+    def _expire_leases(self, connection) -> None:
+        """Stop idle sessions whose lease has passed; a session with a command in flight waits.
+        A session that became RUNNING without a lease (adopted after a restart) gets one."""
+        now = self.clock()
+        for row in connection.execute(
+            select(jobs).where(jobs.c.kind == SESSION_KIND, jobs.c.state == SESSION_READY_STATE)
+        ).all():
+            if row.lease_expires_at is None:
+                connection.execute(
+                    jobs.update()
+                    .where(jobs.c.id == row.id)
+                    .values(lease_expires_at=now + self.settings.session_lease_s)
+                )
+            elif row.lease_expires_at < now and row.id not in self.session_busy:
+                self._request_stop(connection, row_dict(row), f"session lease expired; {STOP_WAIT}")
 
     def get_job(self, job_id: str, owner: str) -> dict:
         with self.db.transaction() as connection:
@@ -975,6 +1013,9 @@ class Scheduler:
                 lapsed = job["state"] == "UNKNOWN" and attempt["reason"] == EXPIRED_ATTEMPT
                 if job["state"] == "STARTING" or lapsed:
                     state = "STOPPING" if job["cancel_requested"] else "RUNNING"
+                    lease = {}
+                    if job["kind"] == SESSION_KIND and state == "RUNNING":
+                        lease = {"lease_expires_at": self.clock() + self.settings.session_lease_s}
                     connection.execute(
                         jobs.update()
                         .where(jobs.c.id == job["id"])
@@ -986,6 +1027,7 @@ class Scheduler:
                                 else "executing"
                             ),
                             updated_at=self.clock(),
+                            **lease,
                         )
                     )
                     connection.execute(
@@ -1041,51 +1083,54 @@ class Scheduler:
                     )
                     self._schedule(connection)
                 else:
-                    attempt = connection.execute(
-                        select(attempts).where(attempts.c.id == job["current_attempt_id"])
-                    ).one()
-                    connection.execute(
-                        jobs.update()
-                        .where(jobs.c.id == job_id)
-                        .values(
-                            state="STOPPING",
-                            cancel_requested=True,
-                            reason="waiting for confirmed container termination",
-                            updated_at=self.clock(),
-                        )
-                    )
-                    connection.execute(
-                        attempts.update()
-                        .where(attempts.c.id == attempt.id)
-                        .values(state="STOPPING")
-                    )
-                    connection.execute(
-                        commands.update()
-                        .where(commands.c.attempt_id == attempt.id, commands.c.kind == "START")
-                        .values(acked=True)
-                    )
-                    stop_id = f"stop-{attempt.id}"
-                    if not connection.execute(
-                        select(commands.c.id).where(commands.c.id == stop_id)
-                    ).first():
-                        connection.execute(
-                            commands.insert().values(
-                                id=stop_id,
-                                node_id=attempt.node_id,
-                                attempt_id=attempt.id,
-                                kind="STOP",
-                                payload={
-                                    "job_id": job_id,
-                                    "attempt_id": attempt.id,
-                                    "worker_id": attempt.node_id,
-                                    "job": job["spec"],
-                                },
-                                acked=False,
-                                created_at=self.clock(),
-                            )
-                        )
-                        self._ring(attempt.node_id)
+                    self._request_stop(connection, job, STOP_WAIT)
         return self.get_job(job_id, owner)
+
+    def _request_stop(self, connection, job: dict, reason: str) -> None:
+        """Durably ask the Worker to stop the job's current attempt (cancel, session end).
+
+        Resources stay reserved until the attempt's FINISHED event confirms termination.
+        """
+        attempt = connection.execute(
+            select(attempts).where(attempts.c.id == job["current_attempt_id"])
+        ).one()
+        connection.execute(
+            jobs.update()
+            .where(jobs.c.id == job["id"])
+            .values(
+                state="STOPPING",
+                cancel_requested=True,
+                reason=reason,
+                updated_at=self.clock(),
+            )
+        )
+        connection.execute(
+            attempts.update().where(attempts.c.id == attempt.id).values(state="STOPPING")
+        )
+        connection.execute(
+            commands.update()
+            .where(commands.c.attempt_id == attempt.id, commands.c.kind == "START")
+            .values(acked=True)
+        )
+        stop_id = f"stop-{attempt.id}"
+        if not connection.execute(select(commands.c.id).where(commands.c.id == stop_id)).first():
+            connection.execute(
+                commands.insert().values(
+                    id=stop_id,
+                    node_id=attempt.node_id,
+                    attempt_id=attempt.id,
+                    kind="STOP",
+                    payload={
+                        "job_id": job["id"],
+                        "attempt_id": attempt.id,
+                        "worker_id": attempt.node_id,
+                        "job": job["spec"],
+                    },
+                    acked=False,
+                    created_at=self.clock(),
+                )
+            )
+            self._ring(attempt.node_id)
 
     def upload_log(self, node_id: str, attempt_id: str, payload: LogUpload) -> dict:
         try:
@@ -1157,3 +1202,141 @@ class Scheduler:
     def _artifact_view(value: dict) -> dict:
         value.pop("relative_path", None)
         return value
+
+    # Fast-lane sessions (M9) ---------------------------------------------------------------
+    # A session is a job row with kind SESSION whose container is its current attempt, so the
+    # ledger, dispatch, STOP, UNKNOWN handling, reconcile and _finish apply to it unchanged.
+
+    def _session_view(self, connection, job: dict, created: bool = False) -> dict:
+        node_id = None
+        if job["current_attempt_id"]:
+            node_id = connection.execute(
+                select(attempts.c.node_id).where(attempts.c.id == job["current_attempt_id"])
+            ).scalar_one_or_none()
+        spec = job["spec"]
+        return SessionView(
+            id=job["id"],
+            state=job["state"],
+            reason=job["reason"],
+            node_id=node_id,
+            resources=spec["resources"],
+            image=spec["image"],
+            datasets=spec["datasets"],
+            lease_expires_at=job["lease_expires_at"],
+            created_at=job["created_at"],
+            mode=self.settings.fast_lane_mode,
+            created=created,
+        ).model_dump()
+
+    def _user_sessions(self, connection, owner: str, states) -> list[dict]:
+        return [
+            row_dict(row)
+            for row in connection.execute(
+                select(jobs)
+                .where(jobs.c.owner == owner, jobs.c.kind == SESSION_KIND, jobs.c.state.in_(states))
+                .order_by(jobs.c.submission_seq.desc())
+            )
+        ]
+
+    def open_session(self, owner: str, request: SessionRequest) -> dict:
+        """Return the user's live session if it matches the request, or lease a new one."""
+        image = request.image or self.settings.default_image
+        try:
+            spec = JobSpec(
+                image=image,
+                argv=list(KEEPALIVE_ARGV),
+                env=dict(SESSION_ENV),
+                resources=request.resources,
+                datasets=request.datasets,
+                # Used only by backfill bookings; the Worker never enforces it on sessions.
+                time_limit_s=self.settings.session_lease_s,
+                priority=self.settings.default_priority,
+                max_retries=0,
+            )
+        except ValidationError as exc:
+            raise ServiceError(422, str(exc)) from exc
+        with self.db.transaction() as connection:
+            for live in self._user_sessions(connection, owner, SESSION_LIVE_STATES):
+                current = live["spec"]
+                if (
+                    current["resources"] == spec.resources.model_dump()
+                    and current["image"] == image
+                    and sorted(current["datasets"]) == sorted(spec.datasets)
+                ):
+                    return self._session_view(connection, live)
+                resources = current["resources"]
+                raise ServiceError(
+                    409,
+                    f"you already have session {short(live['id'])} (cpu={resources['cpu']:g}, "
+                    f"memory_mib={resources['memory_mib']}, gpu={resources['gpu']}); "
+                    "close it with `labflux session close`",
+                )
+            for lost in self._user_sessions(connection, owner, ["UNKNOWN"]):
+                # Stops it if its node comes back; its resources stay held until then.
+                self._request_stop(connection, lost, f"replaced by a new session; {STOP_WAIT}")
+            job_id = self._insert_job(connection, owner, spec, kind=SESSION_KIND)
+            self._schedule(connection)
+            return self._session_view(connection, self._job(connection, job_id), created=True)
+
+    def _current_session(self, connection, owner: str) -> dict:
+        found = self._user_sessions(
+            connection, owner, SESSION_LIVE_STATES | {"STOPPING", "UNKNOWN"}
+        )
+        if not found:
+            raise ServiceError(404, "no session")
+        return found[0]
+
+    def current_session(self, owner: str) -> dict:
+        with self.db.transaction() as connection:
+            return self._session_view(connection, self._current_session(connection, owner))
+
+    def close_session(self, owner: str) -> dict:
+        with self.db.transaction() as connection:
+            job_id = self._current_session(connection, owner)["id"]
+        self.cancel(job_id, owner)
+        with self.db.transaction() as connection:
+            return self._session_view(connection, self._job(connection, job_id))
+
+    def begin_command(self, owner: str, session_id: str) -> tuple[str, str]:
+        """Accept a fast-lane command: 404 unless the session is the user's, 409 unless it is
+        ready. Renews the lease and returns (attempt_id, node_id)."""
+        with self.db.transaction() as connection:
+            job = self._job(connection, session_id, owner)
+            if job["kind"] != SESSION_KIND:
+                raise ServiceError(404, "session not found")
+            attempt = None
+            if job["current_attempt_id"]:
+                attempt = connection.execute(
+                    select(attempts).where(attempts.c.id == job["current_attempt_id"])
+                ).first()
+            if (
+                job["state"] != SESSION_READY_STATE
+                or job["cancel_requested"]
+                or attempt is None
+                or attempt.released
+            ):
+                raise ServiceError(409, f"session {short(session_id)} is {job['state']}")
+            connection.execute(
+                jobs.update()
+                .where(jobs.c.id == session_id)
+                .values(lease_expires_at=self.clock() + self.settings.session_lease_s)
+            )
+            return attempt.id, attempt.node_id
+
+    def end_command(self, session_id: str, stop_reason: str | None = None) -> None:
+        """After a command: renew the lease, or close the session (one-shot mode, relay loss)."""
+        if stop_reason is None and self.settings.fast_lane_mode == "oneshot":
+            stop_reason = "one-shot mode"
+        with self.db.transaction() as connection:
+            job = self._job(connection, session_id)
+            if job["state"] in TERMINAL or job["state"] == "QUEUED":
+                return
+            if stop_reason is not None:
+                if not job["cancel_requested"]:
+                    self._request_stop(connection, job, f"{stop_reason}; {STOP_WAIT}")
+            elif job["state"] == SESSION_READY_STATE:
+                connection.execute(
+                    jobs.update()
+                    .where(jobs.c.id == session_id)
+                    .values(lease_expires_at=self.clock() + self.settings.session_lease_s)
+                )
