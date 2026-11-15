@@ -56,7 +56,7 @@ class ControlledExecutor:
 
     def inventory(self, worker_id):
         return [
-            {"attempt_id": attempt_id, "worker_id": value["worker_id"], "status": value["status"]}
+            {"attempt_id": attempt_id, **value}
             for attempt_id, value in self.containers.items()
             if value["worker_id"] == worker_id
         ]

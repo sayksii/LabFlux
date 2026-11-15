@@ -68,3 +68,23 @@ def test_extraction_limit_and_no_overwrite(tmp_path):
     with pytest.raises(FileExistsError):
         extract_archive(archive, destination, max_bytes=1000, max_members=10)
     assert (destination / "file").read_text() == "keep"
+
+
+def test_source_snapshot_skips_symlinks_without_following_them(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("not part of the project")
+    root = tmp_path / "source"
+    (root / "pkg").mkdir(parents=True)
+    (root / "main.py").write_text("print('hello')")
+    (root / "pkg" / "latest.py").symlink_to("../main.py")
+    (root / "shared").symlink_to(outside)
+    (root / "dangling").symlink_to(tmp_path / "missing")
+    (root / "data").symlink_to(outside)  # Ignored by the default patterns: not reported.
+    archive = tmp_path / "source.tar.gz"
+    assert pack_directory(root, archive) == ["dangling", "pkg/latest.py", "shared/"]
+    with tarfile.open(archive) as packed:
+        assert set(packed.getnames()) == {"main.py"}
+    # Other archives (job outputs) still refuse links, and extraction always does.
+    with pytest.raises(ValueError, match="links"):
+        pack_directory(root, tmp_path / "output.tar.gz", source=False)

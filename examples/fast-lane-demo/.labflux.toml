@@ -1,0 +1,5 @@
+# 快速測試 demo 的專案設定：每個 session 用 1 顆 CPU、512 MiB，不用 GPU。
+[session]
+cpu = 1
+memory_mib = 512
+image = "python:3.12-slim"

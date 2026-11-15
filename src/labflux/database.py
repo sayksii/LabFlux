@@ -1,5 +1,6 @@
 """SQLite persistence and serialized allocation transactions."""
 
+import logging
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
@@ -22,6 +23,7 @@ from sqlalchemy import (
     select,
 )
 
+log = logging.getLogger("labflux.database")
 metadata = MetaData()
 schema_version = Table("schema_version", metadata, Column("version", Integer, primary_key=True))
 nodes = Table(
@@ -47,6 +49,12 @@ jobs = Table(
     Column("cancel_requested", Boolean, nullable=False, default=False),
     Column("created_at", Float, nullable=False),
     Column("updated_at", Float, nullable=False),
+    # The latest scheduling decision for this job: why it waits, or why it was placed.
+    Column("schedule_note", Text, nullable=False, default=""),
+    # BATCH, or SESSION for a fast-lane session (M9), whose container is its current attempt.
+    Column("kind", String, nullable=False, default="BATCH", server_default="BATCH"),
+    # Sessions only: when an idle RUNNING session is stopped; None while queued or starting.
+    Column("lease_expires_at", Float),
 )
 attempts = Table(
     "attempts",
@@ -119,8 +127,22 @@ Index(
     sqlite_where=attempt_gpus.c.released.is_(False),
 )
 
+
+def add_schedule_note(connection) -> None:
+    connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN schedule_note TEXT NOT NULL DEFAULT ''")
+
+
+def add_sessions(connection) -> None:
+    connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'BATCH'")
+    connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN lease_expires_at REAL")
+
+
 # Migration N upgrades a database at version N - 1; version 1 is the original bootstrap.
-MIGRATIONS = {2: lambda connection: attempt_gpus.create(connection)}
+MIGRATIONS = {
+    2: lambda connection: attempt_gpus.create(connection),
+    3: add_schedule_note,
+    4: add_sessions,
+}
 SCHEMA_VERSION = max(MIGRATIONS)
 
 
@@ -132,6 +154,7 @@ class Database:
             f"sqlite:///{self.path}", connect_args={"check_same_thread": False, "timeout": 30}
         )
         self.lock = RLock()
+        self._callbacks: dict[tuple, None] | None = None
 
         @event.listens_for(self.engine, "connect")
         def configure_sqlite(connection, _):
@@ -160,7 +183,9 @@ class Database:
     @contextmanager
     def transaction(self):
         # BEGIN IMMEDIATE protects read -> reserve -> dispatch, including concurrent API threads.
+        callbacks: dict[tuple, None] = {}
         with self.lock, self.engine.connect() as connection:
+            self._callbacks = callbacks
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             try:
                 yield connection
@@ -168,6 +193,19 @@ class Database:
             except BaseException:
                 connection.rollback()
                 raise
+            finally:
+                self._callbacks = None
+        # Committed and unlocked: notifications never run inside the transaction.
+        for function, *args in callbacks:
+            try:
+                function(*args)
+            except Exception:
+                log.exception("after-commit callback failed")
+
+    def after_commit(self, function, *args) -> None:
+        """Call function(*args) once the current transaction commits; dropped on rollback.
+        Repeated identical calls within one transaction run once."""
+        self._callbacks[(function, *args)] = None
 
     def close(self) -> None:
         self.engine.dispose()

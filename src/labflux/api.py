@@ -8,14 +8,16 @@ import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 
-from labflux import __version__
+from labflux import __version__, relay
 from labflux.artifacts import ArtifactStore
 from labflux.config import Settings
+from labflux.hub import Hub
 from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
 from labflux.scheduler import Scheduler, ServiceError
+from labflux.session_protocol import SessionRequest
 
 DASHBOARD_PAGE = Path(__file__).parent / "dashboard.html"
 
@@ -25,9 +27,13 @@ def create_app(
 ) -> FastAPI:
     settings = settings or Settings()
     service = Scheduler(settings, clock)
+    hub = Hub()
+    service.doorbell = hub.ring
 
     @asynccontextmanager
     async def lifespan(app):
+        hub.bind(asyncio.get_running_loop())
+
         async def scheduling_loop():
             while True:
                 await asyncio.to_thread(service.tick)
@@ -41,10 +47,12 @@ def create_app(
                 task.cancel()
                 with suppress(asyncio.CancelledError):
                     await task
+            hub.bind(None)
             service.db.close()
 
     app = FastAPI(title="LabFlux", version=__version__, lifespan=lifespan)
     app.state.scheduler = service
+    app.state.hub = hub
     app.state.settings = settings
     store = ArtifactStore(service)
 
@@ -57,12 +65,17 @@ def create_app(
             raise ServiceError(401, "Bearer token required")
         return authorization[7:]
 
-    def user(authorization: str | None = Header(default=None)) -> str:
-        token = bearer(authorization)
+    def identify(token: str) -> str | None:
         for identity, expected in settings.users.items():
             if hmac.compare_digest(token, expected):
                 return identity
-        raise ServiceError(401, "invalid user token")
+        return None
+
+    def user(authorization: str | None = Header(default=None)) -> str:
+        identity = identify(bearer(authorization))
+        if identity is None:
+            raise ServiceError(401, "invalid user token")
+        return identity
 
     def worker(authorization: str | None = Header(default=None)) -> None:
         if not hmac.compare_digest(bearer(authorization), settings.worker_token):
@@ -101,6 +114,28 @@ def create_app(
     ):
         return service.get_logs(job_id, owner, after, attempt_id)
 
+    @app.post("/api/sessions")
+    def open_session(request: SessionRequest, owner: str = Depends(user)):
+        return service.open_session(owner, request)
+
+    @app.get("/api/sessions/current")
+    def current_session(owner: str = Depends(user)):
+        return service.current_session(owner)
+
+    @app.post("/api/sessions/current/close")
+    def close_session(owner: str = Depends(user)):
+        return service.close_session(owner)
+
+    @app.websocket("/api/sessions/{session_id}/ws")
+    async def session_socket(websocket: WebSocket, session_id: str):
+        """One fast-lane command (T6); the token is accepted only in the header."""
+        header = websocket.headers.get("authorization", "")
+        owner = identify(header[7:]) if header.startswith("Bearer ") else None
+        if owner is None:
+            await websocket.close(code=1008, reason="invalid user token")
+            return
+        await relay.serve(websocket, owner, session_id, service, hub)
+
     @app.get("/api/nodes")
     def list_nodes(owner: str = Depends(user)):
         return service.list_nodes()
@@ -138,6 +173,24 @@ def create_app(
             service._attempt(connection, attempt_id, node_id, instance_id)
         upload = await store.receive(request, settings.max_output_bytes)
         return store.store_output(node_id, attempt_id, instance_id, upload)
+
+    @app.websocket("/internal/workers/{node_id}/ws")
+    async def worker_socket(websocket: WebSocket, node_id: str, instance_id: str = ""):
+        """The doorbell connection (T4); also carries the fast-lane relay (T6)."""
+        token = websocket.headers.get("authorization", "")
+        if not token.startswith("Bearer ") or not hmac.compare_digest(
+            token[7:], settings.worker_token
+        ):
+            await websocket.close(code=1008, reason="invalid worker token")
+            return
+        try:
+            # A blocking DB transaction, so it must not run on the event loop.
+            await asyncio.to_thread(service.check_instance, node_id, instance_id)
+        except ServiceError as exc:
+            await websocket.close(code=1008, reason=exc.detail)
+            return
+        await websocket.accept()
+        await hub.serve_worker(node_id, instance_id, websocket)
 
     @app.post("/internal/workers/register", dependencies=[Depends(worker)])
     def register(payload: WorkerRegistration):

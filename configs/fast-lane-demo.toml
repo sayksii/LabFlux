@@ -1,0 +1,20 @@
+# 快速測試 demo（docs/demo-fast-lane.md）：Scheduler、Worker 與 CLI 共用這份設定，
+# 只在本機 loopback、只用 CPU，不影響實驗室部署（port 8770）。
+# Scheduler 與 Worker 各自用 LABFLUX_DATA_DIR 指定不同的資料目錄。
+scheduler_url = "http://127.0.0.1:8790"
+bind_host = "127.0.0.1"
+bind_port = 8790
+user_token = "demo-user-token"
+worker_token = "demo-worker-token"
+worker_id = "fast-lane-demo"
+allocatable_cpu = 2
+allocatable_memory_mib = 2048
+gpus = []
+
+# 為了 demo 縮短的數值（正式預設：寫回 100 MB、單一指令 60 秒、閒置 10 分鐘）
+session_writeback_bytes = 5242880
+session_command_timeout_s = 20
+session_lease_s = 120
+
+[users]
+demo = "demo-user-token"

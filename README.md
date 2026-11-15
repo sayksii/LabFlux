@@ -61,6 +61,14 @@ Scheduler 在 `/dashboard` 提供監控頁（例如 `http://127.0.0.1:8000/dashb
 `resources.memory_mib` 使用 MiB，`time_limit_s` 表示容器啟動後的執行時限。
 工作在 `/workspace` 執行，把要取回的結果寫入 `/outputs`。
 
+`time_limit_s` 省略時使用 Scheduler 的 `job_time_limit_s`（預設 3600 秒）。其他選填欄位：
+
+| 欄位 | 預設 | 說明 |
+|---|---|---|
+| `priority` | Scheduler 的 `default_priority`（5） | 0–9，數字越大越優先；`fcfs` 模式不使用 |
+| `estimated_runtime_s` | 無 | 只用於說明，不得超過 `time_limit_s`；保留時段與 backfill 一律以硬性時限計算 |
+| `max_retries` | 0 | 執行遺失（節點失聯且確認容器已不存在）時最多重跑幾次，上限 10；見下方「故障與重跑」 |
+
 `--source` 上傳可重現的程式快照，預設排除 Git、虛擬環境、資料集、輸出與 `.env`，
 並讀取來源根目錄的 `.gitignore` 與 `.labfluxignore`。來源與輸出封存檔都拒絕路徑跳脫、
 連結與特殊檔案，且有大小／檔案數限制；下載結果不覆寫既有檔案。
@@ -122,11 +130,27 @@ uv run labflux --config CONFIG fetch JOB_ID --directory outputs/mnist
 
 ## 排程與通訊
 
-第一階段採嚴格 FCFS：隊首不能執行時，後續工作等待，即使其他節點仍有空間。
+排程策略由 Scheduler TOML 的 `scheduling_policy` 選擇，預設 `fcfs`：
+
+| 模式 | 行為 |
+|---|---|
+| `fcfs` | 嚴格 FCFS：隊首不能執行時，後續工作等待，即使其他節點仍有空間 |
+| `priority` | 依分數排序：`優先權 × 100 + 排隊分鐘 − 近期資源占用分鐘`，同分依提交順序 |
+| `backfill` | `priority` 再加上 EASY backfilling：替無法執行的第一個工作依硬性時限計算保留時段，只讓不會延後該時段的工作先跑 |
+
+近期占用是使用者在 `usage_window_s`（預設 3600 秒）內預約的分鐘數，乘上 CPU／RAM／GPU 中占叢集比例最高的一項。
+權重為 `score_priority_weight`、`score_wait_weight`、`score_usage_weight`（預設 100、1、1）。
+每個排隊工作的決策說明（例如「waiting behind job」、「reserved on 節點 at 時間」、「backfilled」）
+出現在工作的 `schedule_note`。互動 session 排在批次工作之前。
 同一節點可同時執行多個工作，但所有預約不得超過其 CPU／RAM 可分配容量。
 預約與派送在同一個 SQLite 交易完成；即時負載另外記錄，不與預約重複扣除。
 
-Worker 主動領取命令，心跳由獨立執行緒每 2 秒回報，避免下載映像或執行長工作阻塞心跳。
+Worker 主動註冊，並維持一條連到 Scheduler 的 WebSocket（`/internal/workers/{node_id}/ws`）當門鈴：
+Scheduler 寫入命令後通知 Worker，Worker 再以原本的 API 領取並 ack。命令仍以資料庫與 ack 為準，
+門鈴通知遺失時由備援輪詢補上。`poll_interval_s`（預設 5 秒）是 Worker 的備援間隔，
+同時用於命令輪詢與 outbox 上傳，也是門鈴重連與 outbox 重試退避的上限；Worker 的 outbox
+有新事件或日誌時立即喚醒上傳。舊設定若把 `poll_interval_s` 設成 0.25，會恢復頻繁輪詢，應刪除該設定。
+心跳由獨立執行緒每 2 秒回報，避免下載映像或執行長工作阻塞心跳。
 命令接收紀錄與結果 outbox 保存在 Worker 的資料目錄，重送 START 不會重複執行同一 attempt。
 超過 10 秒未收到心跳，節點變成 `OFFLINE`、未確認停止的工作變成 `UNKNOWN`，配置仍保留。
 同一個 Worker instance 恢復心跳時，節點直接回到 `ONLINE`；它回報仍在執行的 attempt 從 `UNKNOWN`
@@ -145,12 +169,88 @@ Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼�
 不認得的容器，只有在 Worker 本機也有紀錄時才會停止並移除，以免誤刪同名 Worker ID 的其他安裝。
 沒有附上清單的舊版 Worker 維持原本的行為：有未釋放 attempt 時拒絕註冊。
 
-使用者 API 為 `/api/jobs`、`/api/nodes`、`/api/artifacts`，以使用者 Bearer Token 驗證；
+### 故障與重跑
+
+- 核對時發現容器已不存在（例如整台機器停機），而且工作設定了 `max_retries`，Scheduler 關閉舊 attempt
+  （`FAILED`），建立新 attempt 並以原本的提交順序重新排隊。程式自己退出、超過時限、OOM 與已要求取消的工作不重跑。
+- Scheduler 以相同 `data_dir` 重啟後從 SQLite 還原：節點先標為 `RECONCILING`，工作與配置保留，
+  該節點收到原 Worker instance 的心跳或新 instance 的註冊核對後才回到 `ONLINE` 並恢復派送；
+  超過 `offline_timeout_s` 仍未出現則照常變成 `OFFLINE`，工作 `UNKNOWN`。
+- 網路中斷期間 Worker 的結果留在本機 outbox，恢復連線後送出，不會重複執行。
+
+使用者 API 為 `/api/jobs`、`/api/nodes`、`/api/artifacts`、`/api/sessions`，以使用者 Bearer Token 驗證；
 內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
 `/health` 不需認證，`/docs` 提供 API 規格。
 
-SQLite schema 在啟動時依序套用編號 migration（目前為版本 2）；也可執行 `uv run labflux db-upgrade`。
+SQLite schema 在啟動時依序套用編號 migration（目前為版本 4）；也可執行 `uv run labflux db-upgrade`。
 Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir`。
+新增的工作欄位與 WebSocket 介面需要 Scheduler、Worker 與 CLI 同時升級。
+
+## 快速測試（fast lane）
+
+AI coding 工具與 `git` 留在開發機；只有執行程式的指令送到遠端 session，在同一個容器與工作目錄執行，
+即時印出輸出並以遠端的 exit code 結束。專案根目錄放一個 `.labflux.toml`（可以是空檔），
+CLI 從目前目錄往上找到的那一層就是專案根目錄與快照範圍：
+
+```toml
+[session]          # 全部選填；命令列的 --cpu、--memory-mib、--gpu 優先
+cpu = 2
+memory_mib = 4096
+gpu = 1
+gpu_model = "3090"
+image = "localhost/labflux/python-uv:3.12-uv0.11.8"   # 省略時使用 default_image
+datasets = ["mnist"]
+busy_wait_s = 120  # session 正在執行另一個指令時最多等幾秒；0 表示不等
+
+[route]            # 增減預設送到遠端的指令
+add = ["mypy"]
+remove = ["nvidia-smi"]
+```
+
+```bash
+uv run labflux run -- pytest -q        # 在自己的 session 執行，沒有就自動租用
+uv run labflux shell                   # 開一個 PATH 前面放了指令替身的 shell，再從裡面啟動 AI 工具
+uv run labflux local -- python -V      # 跳過替身，執行本機的真正指令
+uv run labflux session status          # 目前的 session 與剩餘 lease 秒數
+uv run labflux session files           # 只存在遠端 session 的檔案清單
+uv run labflux session close           # 關閉 session，停止容器並釋放資源
+```
+
+親自走一次檔案流程（寫回、只在遠端的大檔、Ctrl-C、超時、閒置到期）的步驟見 [docs/demo-fast-lane.md](docs/demo-fast-lane.md)。
+
+- 預設送到遠端的指令：`python`、`python3`、`pytest`、`torchrun`、`accelerate`、`deepspeed`、`nvidia-smi`；
+  `uv` 只有 `uv run` 送到遠端。其他指令與專案外的指令都在本機執行。`bash run.sh` 在本機執行，
+  腳本裡的每個 `python` 各自送到遠端；整個腳本要在遠端執行請用 `labflux run -- bash run.sh`。
+- `labflux shell` 在 bash 與 zsh 的啟動檔執行完之後、以及每次顯示提示字元之前，把替身目錄放回 PATH 最前面，
+  所以 conda、pyenv 或之後的 `conda activate` 不會蓋掉替身；alias 或 shell function 蓋住清單上的指令時，啟動時會印出警告。
+  其他 shell 只在啟動前設定一次 PATH；可用 `command -v python` 確認。
+- 每個指令執行前送出一份完整快照（打包規則與 `--source` 相同）：遠端覆蓋快照中的檔案、刪除上一份快照有而這份沒有的檔案，
+  保留指令自己產生的檔案與 `.venv`；`pyproject.toml` 或 `uv.lock` 改變時先執行 `uv sync`。
+  專案裡的 symbolic link 不會送出（不跟隨連結），每個指令提示一次。
+- 指令新增或修改的檔案寫回本機同一位置（不含 `.venv`、`__pycache__` 等快取，每個指令上限 100 MB、10000 個檔案）；
+  本機同一檔案在指令執行期間也被改過時不覆蓋，改存成 `<檔名>.remote`。遠端刪除的檔案不會刪除本機檔案。
+- 超過寫回上限的檔案（例如 checkpoint）只留在遠端 session：累計列在專案的 `.labflux/remote-files.txt`
+  （`labflux session files` 可印出），清單變動時終端機印一行提示。之後送到遠端的指令以同一個路徑讀得到這些檔案；
+  session 結束時它們跟著刪除，要保留請寫到 `/outputs`（session 結束時上傳，之後以 session 的工作 ID 用 `labflux fetch` 取回）。
+- 同一個 session 一次執行一個指令；同時送出的第二個指令會等前一個結束再執行（`busy_wait_s`，預設最多 120 秒）。
+- exit code：遠端程式的 exit code；124 為指令超時，130 為 Ctrl-C 取消，125 為 LabFlux 錯誤，
+  127 為替身找不到本機指令。
+- Ctrl-C（或 CLI 的連線中斷）只停止這個指令：容器、工作目錄與 `.venv` 都保留，已寫出的檔案照常寫回，下一個指令沿用同一個 session。
+  指令超過時限時則結束整個 session 容器，下一個指令自動租用新的 session。
+- session 的 lease 是閒置時間：連續 10 分鐘沒有指令才回收，每個指令都會重新起算。
+- session 與批次工作共用同一個資源帳本，每位使用者同時最多一個；session 映像需要支援 `sleep infinity`，
+  並且有 `sh` 與可寫的 `/tmp`（取消指令時使用）。沒有 stdin／TTY，也不轉送開發機的環境變數。
+
+Scheduler TOML 的相關設定：
+
+| 設定 | 預設 | 說明 |
+|---|---|---|
+| `fast_lane_mode` | `session` | `session` 重用同一個容器；`oneshot` 每個指令結束就關閉 session，下一個指令使用新容器 |
+| `session_lease_s` | 600 | 閒置 lease；指令開始與結束時延長，到期且沒有指令在執行時停止容器 |
+| `session_queue_timeout_s` | 30 | 排隊中的 session 超過這段時間沒有被客戶端查詢（CLI 已結束）就取消 |
+| `session_command_timeout_s` | 60 | 單一指令的時限 |
+| `session_sync_timeout_s` | 900 | 指令前 `uv sync` 的時限 |
+| `session_writeback_bytes` | 104857600 | 每個指令寫回的檔案總量上限 |
 
 ## 三台 VM 與驗證
 
@@ -182,7 +282,7 @@ uv run python scripts/lab_deploy.py status
 
 ## 目前邊界
 
-目前交付到 M6.4 與 M7 的 GPU 配置（整張獨占）、uv 模式及實體機部署工具；
-進階排程、互動 session 與 vLLM 依後續階段加入。
-Worker 重啟後的對帳與接手（M6.4）已交付；確認停止後自動建立新 attempt 重排（M6.5）、
-Scheduler 重啟恢復（M6.6）與完整故障驗證（M6.7）尚未交付，因此對帳後關閉的工作不會自動重跑。
+目前交付到 M6.6、M7 的 GPU 配置（整張獨占）、uv 模式、實體機部署工具、M8 的排程策略，
+以及 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身）。
+故障驗證（M6.7）缺少實際 VM 關機；vLLM 與搶占依後續階段加入。
+已知限制見 [docs/verification.md](docs/verification.md)。

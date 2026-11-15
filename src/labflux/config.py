@@ -7,10 +7,18 @@ import re
 import socket
 import tomllib
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
 
 from labflux.models import GPU_UUID
+from labflux.session_protocol import (
+    DEFAULT_COMMAND_TIMEOUT_S,
+    DEFAULT_LEASE_S,
+    DEFAULT_SYNC_TIMEOUT_S,
+    DEFAULT_WRITEBACK_BYTES,
+    FastLaneMode,
+)
 
 
 class Settings(BaseModel):
@@ -27,9 +35,20 @@ class Settings(BaseModel):
     heartbeat_interval_s: float = Field(default=2, gt=0)
     offline_timeout_s: float = Field(default=10, gt=0)
     scheduler_interval_s: float = Field(default=0.25, gt=0)
-    poll_interval_s: float = Field(default=0.25, gt=0)
+    # Worker fallback for command polls and outbox flushes when no wake-up arrives (T4, T8).
+    poll_interval_s: float = Field(default=5, gt=0)
     request_timeout_s: float = Field(default=3, gt=0)
     job_time_limit_s: float = Field(default=3600, gt=0)
+    # fcfs: strict submission order. priority: score order (priority, waiting bonus, recent
+    # usage penalty). backfill: priority plus EASY backfilling behind a head-job reservation.
+    scheduling_policy: Literal["fcfs", "priority", "backfill"] = "fcfs"
+    default_priority: int = Field(default=5, ge=0, le=9)
+    # score = priority * w_priority + queued minutes * w_wait - recent usage minutes * w_usage
+    score_priority_weight: float = Field(default=100, ge=0)
+    score_wait_weight: float = Field(default=1, ge=0)
+    score_usage_weight: float = Field(default=1, ge=0)
+    # Recent usage: reserved minutes in this window, scaled by the dominant share of the cluster.
+    usage_window_s: float = Field(default=3600, gt=0)
     stop_grace_s: int = Field(default=2, ge=0)
     memory_reserve_mib: int = Field(default=512, ge=0)
     allocatable_cpu: float | None = Field(default=None, gt=0)
@@ -53,6 +72,19 @@ class Settings(BaseModel):
     )
     # Worker-local uv cache mounted into every job at /uv-cache; None mounts nothing.
     uv_cache_dir: Path | None = None
+    # Fast lane (M9). session: commands reuse the user's session; oneshot: the Scheduler closes
+    # the session after each command, so every command gets a fresh container.
+    fast_lane_mode: FastLaneMode = "session"
+    # Idle time without commands after which a session is closed; every command renews it.
+    session_lease_s: float = Field(default=DEFAULT_LEASE_S, gt=0)
+    # A queued session is cancelled when its client has not asked about it for this long.
+    session_queue_timeout_s: float = Field(default=30, gt=0)
+    session_command_timeout_s: float = Field(default=DEFAULT_COMMAND_TIMEOUT_S, gt=0)
+    # `uv sync` before a command when pyproject.toml or uv.lock changed.
+    session_sync_timeout_s: float = Field(default=DEFAULT_SYNC_TIMEOUT_S, gt=0)
+    # Raw file bytes written back per command; command output reuses max_log_bytes and the
+    # snapshot reuses max_source_bytes.
+    session_writeback_bytes: int = Field(default=DEFAULT_WRITEBACK_BYTES, ge=0)
 
     @model_validator(mode="after")
     def validate_settings(self) -> Settings:

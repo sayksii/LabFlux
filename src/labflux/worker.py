@@ -9,24 +9,53 @@ import logging
 import os
 import re
 import shutil
+import tarfile
 import threading
 import uuid
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 import httpx
 import psutil
+from websockets.exceptions import WebSocketException
+from websockets.sync.client import connect
 
 from labflux.archives import extract_archive, pack_directory
 from labflux.config import Settings
 from labflux.gpu import GpuProbe
 from labflux.models import Capacity, ExecutionSpec
 from labflux.runtime import DockerExecutor, ExecutionResult
+from labflux.session_protocol import (
+    CHUNK_BYTES,
+    MAX_SKIPPED_LISTED,
+    WORKSPACE,
+    CancelRequest,
+    CommandResult,
+    Notice,
+    Output,
+    SkippedFile,
+    SnapshotChunk,
+    WorkerExec,
+    WritebackChunk,
+    decode,
+    encode,
+    iter_chunks,
+    parse_worker_command,
+)
+from labflux.workspace import apply_snapshot, dependency_hash, is_directory, pack_files, scan
 
 log = logging.getLogger("labflux.worker")
 ATTEMPT_ID = re.compile(r"[a-f0-9]{32}")
 # Command IDs end up in a URL path, so separators and dots are never allowed.
 COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+# First retry delay after a failed connection or flush; it doubles up to poll_interval_s.
+RETRY_S = 0.5
+# How long a finished session attempt waits for its in-flight command to send its result.
+COMMAND_JOIN_S = 30
+CANCELLED = "command cancelled by the client"
 
 
 class Unaddressed(Exception):
@@ -40,6 +69,42 @@ class Invalid(Exception):
         super().__init__(reason)
         self.attempt_id = attempt_id
         self.reason = reason
+
+
+class StopEvent(threading.Event):
+    """Setting it also wakes the threads waiting on the linked wake-up events."""
+
+    def __init__(self, *linked: threading.Event):
+        super().__init__()
+        self.linked = linked
+
+    def set(self) -> None:
+        super().set()
+        for event in self.linked:
+            event.set()
+
+
+@dataclass
+class CommandRun:
+    """One fast-lane command: its snapshot upload, then its thread (M9)."""
+
+    command: WorkerExec
+    file: BinaryIO
+    path: Path
+    digest: object = field(default_factory=hashlib.sha256)
+    received: int = 0
+    cancel: threading.Event = field(default_factory=threading.Event)
+    thread: threading.Thread | None = None
+    output_bytes: int = 0
+    truncated: bool = False
+
+    @property
+    def id(self) -> str:
+        return self.command.id
+
+    @property
+    def attempt_id(self) -> str:
+        return self.command.attempt_id
 
 
 def write_json(path: Path, value: dict) -> None:
@@ -84,7 +149,22 @@ class Worker:
         self.assigned_gpus: dict[str, list[str]] = {}
         # Attempts executing in this instance, reported with each heartbeat.
         self.active: set[str] = set()
-        self.stop_event = threading.Event()
+        # Doorbell from the Scheduler: commands are waiting (T4).
+        self.commands_ready = threading.Event()
+        # Something new was written to the outbox (T8).
+        self.outbox_ready = threading.Event()
+        self.stop_event = StopEvent(self.commands_ready, self.outbox_ready)
+        # Handlers for other message types on the doorbell connection (fast lane, T6); they run
+        # on the doorbell thread and must not block.
+        self.handlers: dict[str, Callable[[dict], None]] = {
+            "exec": self._on_exec,
+            "snapshot_chunk": self._on_snapshot_chunk,
+            "cancel": self._on_cancel,
+        }
+        # Fast-lane commands by command ID, and why the Worker itself ended a session.
+        self.runs: dict[str, CommandRun] = {}
+        self.end_reasons: dict[str, str] = {}
+        self.socket = None
         self.lock = threading.RLock()
         self.pool = ThreadPoolExecutor(
             max_workers=settings.max_parallel_jobs, thread_name_prefix="job"
@@ -210,6 +290,7 @@ class Worker:
             done = Future()
             done.set_result(None)
             self.handles[attempt_id] = {"cancel": threading.Event(), "future": done}
+        self.outbox_ready.set()
 
     def accept(self, command: dict) -> None:
         spec = self._spec(command["payload"])
@@ -311,10 +392,48 @@ class Worker:
                     "unsent_result": confirmed and not sent,
                 }
             )
-        return {
-            "attempts": records,
-            "containers": self.executor.inventory(self.settings.worker_id),
-        }
+        pending = {item["attempt_id"] for item in records if not item.get("unsent_result")}
+        containers = self._drop_interrupted(
+            self.executor.inventory(self.settings.worker_id), pending
+        )
+        return {"attempts": records, "containers": containers}
+
+    def _drop_interrupted(self, containers: list[dict], pending: set[str]) -> list[dict]:
+        """Remove stopped containers that a host shutdown, reboot or crash interrupted.
+
+        Docker keeps them across a reboot, and adopting one would report the shutdown's exit
+        (143, 137 or 255) as an ordinary program failure. Removing it (it is already stopped,
+        so termination is confirmed) and leaving it out lets the Scheduler close the execution
+        as lost and retry it. A clean exit or an OOM kill is still adopted as it happened.
+        """
+        booted = psutil.boot_time()
+        kept = []
+        for item in containers:
+            started = item.get("started_at")
+            if (
+                item["attempt_id"] in pending
+                and item["status"] in ("exited", "dead")
+                and started is not None
+                and started < booted
+                and item.get("exit_code") != 0
+                and not item.get("oom_killed")
+            ):
+                try:
+                    removed = self.executor.remove(self.settings.worker_id, item["attempt_id"])
+                except Exception:
+                    log.exception(
+                        "interrupted container removal failed",
+                        extra={"attempt_id": item["attempt_id"]},
+                    )
+                    removed = False
+                if removed:
+                    log.info(
+                        "removed a container interrupted by a host restart",
+                        extra={"attempt_id": item["attempt_id"]},
+                    )
+                    continue
+            kept.append(item)
+        return kept
 
     def register(self) -> dict:
         capacity = measure_capacity(self.settings, self.gpus)
@@ -405,6 +524,7 @@ class Worker:
                     done = Future()
                     done.set_result(None)
                     self.handles[attempt_id] = {"cancel": cancel, "future": done}
+                    self.outbox_ready.set()
                     return
                 self._change(
                     attempt_id, result=None, result_sent=False, output_sent=False, launched=True
@@ -468,6 +588,7 @@ class Worker:
                     state["log_bytes"] += len(chunk)
                 target.flush()
             write_json(self._metadata(attempt_id), state)
+        self.outbox_ready.set()
 
     def _prepare(self, spec: ExecutionSpec, workspace: Path) -> None:
         workspace.mkdir(parents=True, exist_ok=True)
@@ -520,7 +641,7 @@ class Worker:
                     directory / "workspace",
                     directory / "outputs",
                     lambda stream, data: self._log(spec.attempt_id, stream, data),
-                    lambda: self._change(spec.attempt_id, started=True),
+                    lambda: self._started(spec.attempt_id),
                     cancel,
                     detach=self.stop_event,
                     on_launch=lambda: self._change(spec.attempt_id, launched=True),
@@ -543,6 +664,21 @@ class Worker:
                     str(exc)[:2048],
                     not preparation_finished,
                 )
+        if spec.session:
+            # The last command still writes back from the workspace, which the outbox removes
+            # once the result is recorded; its reason replaces the generic "cancelled".
+            with self.lock:
+                runs = [run for run in self.runs.values() if run.attempt_id == spec.attempt_id]
+            for run in runs:
+                if run.thread is None:
+                    self._drop_run(run)  # Its snapshot was still arriving; nothing ran.
+                    self._reply(run.id, **self._session_ended(spec.attempt_id, "cancelled"))
+                else:
+                    run.thread.join(COMMAND_JOIN_S)
+            with self.lock:
+                reason = self.end_reasons.pop(spec.attempt_id, None)
+            if result is not None and reason:
+                result.reason = reason
         with self.lock:
             # None means the worker is shutting down: the result stays open for adoption.
             if result is not None:
@@ -555,6 +691,11 @@ class Worker:
                 )
             self.assigned_gpus.pop(spec.attempt_id, None)
             self.active.discard(spec.attempt_id)
+        self.outbox_ready.set()
+
+    def _started(self, attempt_id: str) -> None:
+        self._change(attempt_id, started=True)
+        self.outbox_ready.set()
 
     def flush(self) -> None:
         with self.lock:
@@ -589,6 +730,8 @@ class Worker:
                             {**payload, "instance_id": self.instance_id},
                         )
                         state = self._change(attempt_id, log_offset=source.tell())
+                    else:
+                        self.outbox_ready.set()  # More lines may remain; flush again.
             state = self._read(attempt_id)
             if state["result"] is not None:
                 if log_path.exists() and state["log_offset"] < log_path.stat().st_size:
@@ -695,25 +838,419 @@ class Worker:
                 self.stop_event.wait(self.settings.heartbeat_interval_s)
 
     def _outbox(self) -> None:
+        """Flush when something is written (T8), else every poll_interval_s; back off while
+        the Scheduler is unreachable instead of retrying on every new log line."""
+        delay = min(RETRY_S, self.settings.poll_interval_s)
         while not self.stop_event.is_set():
+            self.outbox_ready.clear()
             try:
                 self.flush()
-            except httpx.HTTPError as exc:
-                log.warning("outbox will retry: %s", type(exc).__name__)
-            except Exception:
-                log.exception("outbox failure")
-            self.stop_event.wait(self.settings.poll_interval_s)
+            except Exception as exc:
+                if isinstance(exc, httpx.HTTPError):
+                    log.warning("outbox will retry: %s", type(exc).__name__)
+                else:
+                    log.exception("outbox failure")
+                self.stop_event.wait(delay)
+                delay = min(delay * 2, self.settings.poll_interval_s)
+                continue
+            delay = min(RETRY_S, self.settings.poll_interval_s)
+            self.outbox_ready.wait(self.settings.poll_interval_s)
+
+    def _doorbell(self) -> None:
+        """Keep the WebSocket to the Scheduler open; a ring wakes the command loop (T4)."""
+        base = self.settings.scheduler_url.rstrip("/").replace("http", "ws", 1)
+        url = f"{base}{self._url('ws')}?instance_id={self.instance_id}"
+        delay = min(RETRY_S, self.settings.poll_interval_s)
+        while not self.stop_event.is_set():
+            try:
+                with connect(
+                    url,
+                    additional_headers={"Authorization": f"Bearer {self.settings.worker_token}"},
+                    open_timeout=self.settings.request_timeout_s,
+                    close_timeout=self.settings.request_timeout_s,
+                    proxy=None,
+                ) as socket:
+                    self.socket = socket
+                    delay = min(RETRY_S, self.settings.poll_interval_s)
+                    self.commands_ready.set()  # Catch up on rings missed while disconnected.
+                    while not self.stop_event.is_set():
+                        try:
+                            message = socket.recv(timeout=1)
+                        except TimeoutError:
+                            continue  # Only to notice stop_event; nothing is sent.
+                        self._on_message(message)
+            except (OSError, WebSocketException) as exc:
+                log.warning("doorbell connection will retry: %s", type(exc).__name__)
+            finally:
+                self.socket = None
+                self._relay_lost()
+            self.stop_event.wait(delay)
+            delay = min(delay * 2, self.settings.poll_interval_s)
+
+    def _on_message(self, raw) -> None:
+        try:
+            message = json.loads(raw)
+        except ValueError:
+            log.warning("ignored a malformed doorbell message")
+            return
+        if not isinstance(message, dict):
+            return
+        if message.get("type") == "commands":
+            self.commands_ready.set()
+            return
+        handler = self.handlers.get(message.get("type"))
+        if handler is None:
+            return
+        try:
+            handler(message)
+        except Exception as exc:
+            log.exception("doorbell handler failed for a %r message", message.get("type"))
+            # Answer at once; otherwise the client waits for the Scheduler's guard time.
+            command_id = message.get("id")
+            run = self.runs.get(command_id) if isinstance(command_id, str) else None
+            if run is not None and run.thread is not None:
+                return  # The command is running; its thread sends the result.
+            if run is not None:
+                self._drop_run(run)
+            if isinstance(command_id, str) and re.fullmatch(r"[0-9a-f]{32}", command_id):
+                self._reply(command_id, outcome="error", reason=f"worker error: {exc}"[:2048])
+
+    def send(self, message: dict) -> bool:
+        """Send a JSON message to the Scheduler over the doorbell connection; False when it is
+        not connected. Delivery is best effort, like the relay it feeds (T6)."""
+        socket = self.socket
+        if socket is None:
+            return False
+        try:
+            socket.send(json.dumps(message))
+        except (OSError, WebSocketException):
+            return False
+        return True
+
+    # Fast-lane session commands (M9, T6) ---------------------------------------------------
+    # The handlers run on the doorbell thread and never block; each command runs on its own
+    # daemon thread (the pool is sized to max_parallel_jobs and already holds the sessions).
+
+    def _relay(self, message: dict) -> None:
+        """Send a fast-lane message; a lost relay ends every session with a command in flight,
+        since nobody can receive that command's output or cancel it any more."""
+        if not self.send(message):
+            self._relay_lost()
+
+    def _reply(self, command_id: str, **fields) -> None:
+        self._relay(CommandResult(id=command_id, **fields).model_dump())
+
+    def _session_state(self, attempt_id: str) -> dict:
+        """What a session keeps between commands: the last snapshot's file list, the synced
+        dependency hash, and the files ({path: size}) that exist only in its workspace because
+        they were over a write-back limit."""
+        state = {"files": [], "deps": None, "remote": {}}
+        path = self.root / attempt_id / "session.json"
+        if path.exists():
+            state.update(json.loads(path.read_text()))
+        return state
+
+    @staticmethod
+    def _remote_only(session: dict) -> dict:
+        """The result fields listing a session's remote-only files (CommandResult.skipped)."""
+        listed = [SkippedFile(path=p, size=size) for p, size in sorted(session["remote"].items())]
+        return {"skipped": listed[:MAX_SKIPPED_LISTED], "skipped_count": len(listed)}
+
+    def _reply_early(self, run: CommandRun, **fields) -> None:
+        """Result of a command that ended before its thread started; the session lives on, so
+        the result still carries its remote-only files."""
+        self._reply(run.id, **fields, **self._remote_only(self._session_state(run.attempt_id)))
+
+    def _relay_lost(self) -> None:
+        with self.lock:
+            runs = list(self.runs.values())
+        for run in runs:
+            if run.thread is None:
+                self._drop_run(run)  # Still receiving its snapshot; nothing ran.
+            else:
+                self._end_session(run.attempt_id, "relay connection lost during a command")
+
+    def _drop_run(self, run: CommandRun) -> None:
+        with self.lock:
+            self.runs.pop(run.id, None)
+        try:
+            run.file.close()
+        except OSError:
+            pass
+        run.path.unlink(missing_ok=True)
+
+    def _end_session(self, attempt_id: str, reason: str) -> None:
+        """Terminate a session container from the Worker side; run() confirms the stop and the
+        attempt's FINISHED event carries this reason."""
+        with self.lock:
+            handle = self.handles.get(attempt_id)
+            if handle is None:
+                return
+            self.end_reasons.setdefault(attempt_id, reason)
+            handle["cancel"].set()
+
+    def _session_running(self, attempt_id: str) -> bool:
+        with self.lock:
+            handle = self.handles.get(attempt_id)
+            if handle is None or attempt_id not in self.active or handle["cancel"].is_set():
+                return False
+            try:
+                state = self._read(attempt_id)
+            except (OSError, ValueError):
+                return False
+            return bool(state.get("started")) and bool((state.get("spec") or {}).get("session"))
+
+    def _on_exec(self, message: dict) -> None:
+        try:
+            command = parse_worker_command(message)
+            if not isinstance(command, WorkerExec):
+                raise ValueError("not an exec command")
+        except ValueError as exc:
+            command_id = message.get("id")
+            if isinstance(command_id, str) and re.fullmatch(r"[0-9a-f]{32}", command_id):
+                self._reply(command_id, outcome="error", reason=f"invalid command: {exc}"[:2048])
+            return
+        if not self._session_running(command.attempt_id):
+            self._reply(command.id, outcome="error", reason="session is not running on this worker")
+            return
+        with self.lock:
+            busy = any(run.attempt_id == command.attempt_id for run in self.runs.values())
+            if not busy:
+                path = self.root / command.attempt_id / f"snapshot-{command.id}.tar.gz"
+                self.runs[command.id] = CommandRun(command, path.open("wb"), path)
+        if busy:
+            self._reply(command.id, outcome="error", reason="busy")
+
+    def _on_snapshot_chunk(self, message: dict) -> None:
+        try:
+            chunk = parse_worker_command(message)
+        except ValueError:
+            log.warning("ignored a malformed snapshot chunk")
+            return
+        run = self.runs.get(chunk.id) if isinstance(chunk, SnapshotChunk) else None
+        if run is None or run.thread is not None:
+            return
+        command = run.command
+        try:
+            data = decode(chunk.data)
+            run.received += len(data)
+            if run.received > command.snapshot_size:
+                raise ValueError("snapshot exceeds its declared size")
+            run.file.write(data)
+            run.digest.update(data)
+            if not chunk.final:
+                return
+            run.file.close()
+            if (
+                run.received != command.snapshot_size
+                or run.digest.hexdigest() != command.snapshot_sha256
+            ):
+                raise ValueError("snapshot size or checksum mismatch")
+        except (ValueError, OSError) as exc:
+            self._drop_run(run)
+            self._reply_early(run, outcome="error", reason=str(exc)[:2048])
+            return
+        thread = threading.Thread(
+            target=self._run_command, args=(run,), name=f"command-{run.id[:8]}", daemon=True
+        )
+        thread.start()
+        run.thread = thread  # Only once started, so _execute never joins an unstarted thread.
+
+    def _on_cancel(self, message: dict) -> None:
+        try:
+            request = parse_worker_command(message)
+        except ValueError:
+            return
+        run = self.runs.get(request.id) if isinstance(request, CancelRequest) else None
+        if run is None:
+            return
+        if run.thread is None:
+            self._drop_run(run)  # Nothing ran yet, so the session stays as it was.
+            self._reply_early(
+                run, outcome="cancelled", reason="cancelled before the command started"
+            )
+        else:
+            run.cancel.set()  # Stops only the command; the session stays usable.
+
+    def _command_output(self, run: CommandRun, stream: str, data: bytes) -> None:
+        limit = run.command.output_limit_bytes
+        kept = data[: max(0, limit - run.output_bytes)]
+        run.output_bytes += len(kept)
+        for offset in range(0, len(kept), CHUNK_BYTES):
+            piece = kept[offset : offset + CHUNK_BYTES]
+            self._relay(Output(id=run.id, stream=stream, data=encode(piece)).model_dump())
+        if len(kept) < len(data) and not run.truncated:
+            run.truncated = True
+            self._relay(Notice(id=run.id, text=f"output truncated at {limit} bytes").model_dump())
+
+    def _session_ended(self, attempt_id: str, outcome: str) -> dict:
+        with self.lock:
+            reason = self.end_reasons.get(attempt_id, "session closed")
+        return {"outcome": outcome, "reason": reason, "session_ended": True}
+
+    def _run_command(self, run: CommandRun) -> None:
+        """Apply the snapshot, sync dependencies if they changed, run the command, then write
+        back new and modified files; the result is always the last message."""
+        command = run.command
+        attempt_id = command.attempt_id
+        directory = self.root / attempt_id
+        workspace = directory / "workspace"
+        session_path = directory / "session.json"
+        archive = directory / f"writeback-{run.id}.tar.gz"
+        with self.lock:
+            handle = self.handles[attempt_id]
+
+        session = {"remote": {}}
+
+        def abort(reason: str) -> Callable[[bool], None]:
+            # Called for a time limit, or for a cancel whose processes could not be stopped.
+            return lambda timed_out: self._end_session(
+                attempt_id, reason if timed_out else "the cancelled command could not be stopped"
+            )
+
+        def reply(**fields) -> None:
+            self._reply(run.id, **fields, **self._remote_only(session))
+
+        try:
+            spec = ExecutionSpec.model_validate(self._read(attempt_id)["spec"])
+            session = self._session_state(attempt_id)
+            try:
+                session["files"] = apply_snapshot(
+                    workspace,
+                    run.path,
+                    session["files"],
+                    self.settings.max_extracted_bytes,
+                    self.settings.max_archive_members,
+                )
+            except (ValueError, OSError, tarfile.TarError, EOFError) as exc:
+                reply(outcome="error", reason=f"snapshot rejected: {exc}"[:2048])
+                return
+            finally:
+                run.path.unlink(missing_ok=True)
+            for path in session["files"]:
+                session["remote"].pop(path, None)  # The snapshot's copy replaced it.
+            write_json(session_path, session)
+
+            # Only the snapshot's dependency files count: a uv.lock that `uv sync` generated
+            # in the workspace must neither force --locked nor change the hash.
+            deps = dependency_hash(workspace, session["files"])
+            pyproject = workspace / "pyproject.toml"
+            if pyproject.is_file() and not pyproject.is_symlink() and deps != session["deps"]:
+                self._relay(Notice(id=run.id, text="running uv sync").model_dump())
+                locked = "uv.lock" in session["files"]
+                code, timed_out, stopped = self.executor.exec(
+                    spec,
+                    ["uv", "sync", "--locked"] if locked else ["uv", "sync"],
+                    WORKSPACE,
+                    lambda _stream, data: self._command_output(run, "stderr", data),
+                    run.cancel,
+                    command.sync_timeout_s,
+                    on_abort=abort("dependency sync time limit exceeded"),
+                )
+                # In each case deps is not stored, so the next command syncs again.
+                if timed_out or handle["cancel"].is_set():
+                    outcome = "timeout" if timed_out else "cancelled"
+                    reply(**self._session_ended(attempt_id, outcome))
+                    return
+                if stopped:
+                    reply(outcome="cancelled", reason=CANCELLED)
+                    return
+                if code is None:
+                    reply(outcome="error", reason="uv sync exit status unavailable")
+                    return
+                if code != 0:
+                    reply(outcome="exited", exit_code=code, reason="uv sync failed")
+                    return
+                session["deps"] = deps
+                write_json(session_path, session)
+
+            if not is_directory(workspace, command.cwd):
+                reply(
+                    outcome="error",
+                    reason=f"working directory {command.cwd or '.'} is not in the session "
+                    "workspace",
+                )
+                return
+            before = scan(workspace)
+            code, timed_out, stopped = self.executor.exec(
+                spec,
+                command.argv,
+                f"{WORKSPACE}/{command.cwd}" if command.cwd else WORKSPACE,
+                lambda stream, data: self._command_output(run, stream, data),
+                run.cancel,
+                command.timeout_s,
+                on_abort=abort("command time limit exceeded"),
+            )
+            if timed_out:
+                fields = self._session_ended(attempt_id, "timeout")
+            elif handle["cancel"].is_set():
+                fields = self._session_ended(attempt_id, "cancelled")
+            elif stopped:  # Only the command's processes were stopped; the session stays.
+                fields = {"outcome": "cancelled", "reason": CANCELLED}
+            elif code is None:
+                fields = {"outcome": "error", "reason": "the command's exit status is unavailable"}
+            else:
+                fields = {"outcome": "exited", "exit_code": code}
+            fields.update(self._write_back(run, workspace, before, archive, session))
+            write_json(session_path, session)
+            fields.setdefault("session_ended", handle["cancel"].is_set())
+            reply(**fields)
+        except Exception as exc:
+            log.exception("fast-lane command failed", extra={"attempt_id": attempt_id})
+            reply(outcome="error", reason=f"worker error: {exc}"[:2048])
+        finally:
+            archive.unlink(missing_ok=True)
+            self._drop_run(run)
+
+    def _write_back(
+        self, run: CommandRun, workspace: Path, before: dict, archive: Path, session: dict
+    ) -> dict:
+        """Stream new and modified files, up to the size cap and the archive member limit, and
+        return the write-back result fields. session["remote"] becomes the files that now exist
+        only here: those over a limit, now or in an earlier command, until they are written back
+        or deleted. A listed file is tried again only when a command changes it."""
+        after = scan(workspace)
+        limit = run.command.writeback_limit_bytes
+        remote = set(session["remote"])
+        selected, total = [], 0
+        for path in sorted(p for p, value in after.items() if before.get(p) != value):
+            size = after[path][0]
+            if total + size <= limit and len(selected) < self.settings.max_archive_members:
+                selected.append(path)
+                total += size
+            else:
+                remote.add(path)
+        packed = pack_files(workspace, selected, archive) if selected else []
+        remote = (remote & after.keys()) - set(packed)
+        session["remote"] = {path: after[path][0] for path in remote}
+        if not packed:
+            return {}
+        digest = hashlib.sha256()
+        with archive.open("rb") as stream:
+            for text, final in iter_chunks(stream):
+                data = decode(text)
+                digest.update(data)
+                self._relay(WritebackChunk(id=run.id, data=text, final=final).model_dump())
+        return {
+            "writeback_size": archive.stat().st_size,
+            "writeback_sha256": digest.hexdigest(),
+            "writeback_files": len(packed),
+        }
 
     def run(self) -> None:
         self.executor.check()
         self.register()
         heartbeat = threading.Thread(target=self._heartbeats, name="heartbeats", daemon=True)
         outbox = threading.Thread(target=self._outbox, name="outbox", daemon=True)
+        doorbell = threading.Thread(target=self._doorbell, name="doorbell", daemon=True)
         heartbeat.start()
         outbox.start()
+        doorbell.start()
         log.info("worker registered", extra={"job_id": None, "attempt_id": None})
         try:
             while not self.stop_event.is_set():
+                # Cleared before polling, so a ring arriving mid-poll triggers another poll.
+                self.commands_ready.clear()
                 try:
                     response = self.client.get(
                         self._url("commands"), params={"instance_id": self.instance_id}
@@ -726,13 +1263,14 @@ class Worker:
                         log.error("command poll returned a non-list response")
                 except httpx.HTTPError as exc:
                     log.warning("command polling will retry: %s", type(exc).__name__)
-                self.stop_event.wait(self.settings.poll_interval_s)
+                self.commands_ready.wait(self.settings.poll_interval_s)
         finally:
             # Job containers keep running; the next instance adopts them when it registers.
             self.stop_event.set()
             self.pool.shutdown(wait=True)
             heartbeat.join(timeout=self.settings.request_timeout_s + 1)
             outbox.join(timeout=self.settings.request_timeout_s + 1)
+            doorbell.join(timeout=self.settings.request_timeout_s + 2)
             try:
                 self.flush()
             except httpx.HTTPError:

@@ -3,6 +3,7 @@
 import base64
 import codecs
 import json
+import os
 import tempfile
 import time
 from contextlib import contextmanager
@@ -122,7 +123,13 @@ def submit(
                 raise typer.BadParameter("--source must be a directory")
             with tempfile.TemporaryDirectory(prefix="labflux-source-") as temp:
                 archive = Path(temp) / "source.tar.gz"
-                pack_directory(source, archive)
+                links = pack_directory(source, archive)
+                if links:
+                    typer.echo(
+                        f"Symbolic links are not uploaded (links are not followed): "
+                        f"{', '.join(links)}",
+                        err=True,
+                    )
                 with archive.open("rb") as content:
                     uploaded = checked(
                         client.post(
@@ -237,6 +244,143 @@ def fetch(
                 max_members=ctx.obj.max_archive_members,
             )
         typer.echo(str(directory.resolve()))
+
+
+# Fast lane (M9). fastlane and websockets are imported lazily so a stand-in starts quickly.
+
+PASSTHROUGH = {"allow_extra_args": True, "ignore_unknown_options": True}
+
+
+def _project(cwd: Path):
+    """(root, config) of the project above cwd, (None, None) without one; invalid exits 125."""
+    from labflux import fastlane
+
+    root = fastlane.find_project_root(cwd)
+    if root is None:
+        return None, None
+    try:
+        return root, fastlane.load_project(root)
+    except fastlane.ProjectError as exc:
+        typer.echo(f"labflux: {exc}", err=True)
+        raise typer.Exit(fastlane.EXIT_ERROR) from exc
+
+
+@app.command(context_settings=PASSTHROUGH)
+def run(
+    ctx: typer.Context,
+    argv: list[str] = typer.Argument(..., help="The command, after --"),
+    gpu: int | None = typer.Option(None, "--gpu"),
+    cpu: float | None = typer.Option(None, "--cpu"),
+    memory_mib: int | None = typer.Option(None, "--memory-mib"),
+) -> None:
+    """Run a command in your fast-lane session, leasing one when needed: run -- pytest -q."""
+    from labflux import fastlane
+
+    cwd = Path.cwd()
+    root, project = _project(cwd)
+    if root is None:
+        typer.echo(
+            f"labflux: no {fastlane.PROJECT_FILE} found above {cwd}; create one at the project "
+            "root",
+            err=True,
+        )
+        raise typer.Exit(fastlane.EXIT_ERROR)
+    raise typer.Exit(
+        fastlane.run_command(
+            ctx.obj, root, project, argv, cwd, cpu=cpu, memory_mib=memory_mib, gpu=gpu
+        )
+    )
+
+
+@app.command("_standin", hidden=True, context_settings=PASSTHROUGH)
+def standin(ctx: typer.Context, name: str, args: list[str] | None = typer.Argument(None)) -> None:
+    """Entry point of the stand-in scripts written by `labflux shell`."""
+    from labflux import fastlane
+
+    cwd = Path.cwd()
+    try:
+        decision = fastlane.route(name, args or [], cwd)
+    except fastlane.ProjectError as exc:
+        typer.echo(f"labflux: {exc}", err=True)
+        raise typer.Exit(fastlane.EXIT_ERROR) from exc
+    if isinstance(decision, fastlane.Local):
+        raise typer.Exit(fastlane.exec_local(decision.argv))
+    raise typer.Exit(
+        fastlane.run_command(ctx.obj, decision.root, decision.project, decision.argv, cwd)
+    )
+
+
+@app.command(context_settings=PASSTHROUGH)
+def local(argv: list[str] = typer.Argument(..., help="The command, after --")) -> None:
+    """Run the real local command, bypassing the stand-ins: local -- python -V."""
+    from labflux import fastlane
+
+    raise typer.Exit(fastlane.exec_local(argv))
+
+
+@app.command()
+def shell(
+    ctx: typer.Context, program: str | None = typer.Option(None, "--shell", help="Shell to run")
+) -> None:
+    """Start a shell whose PATH routes python, pytest, uv run, ... to your session.
+
+    bash and zsh keep the stand-ins first on PATH after their start-up files and before every
+    prompt; other shells only get PATH set once, before their start-up files run.
+    """
+    from labflux import fastlane
+
+    _, project = _project(Path.cwd())
+    config = ctx.find_root().params.get("config")  # The raw --config value, if given.
+    config = Path(config) if config else None
+    program = program or os.environ.get("SHELL") or "/bin/sh"
+    raise typer.Exit(fastlane.run_shell(program, config, fastlane.standin_names(project)))
+
+
+session_app = typer.Typer(no_args_is_help=True, help="Inspect or close your fast-lane session")
+app.add_typer(session_app, name="session")
+
+
+def _current_session(response):
+    if response.status_code == 404:
+        typer.echo("You have no fast-lane session.", err=True)
+        raise typer.Exit(1)
+    value = checked(response).json()
+    if value.get("lease_expires_at") is not None:
+        value["lease_remaining_s"] = max(0, round(value["lease_expires_at"] - time.time()))
+    return value
+
+
+@session_app.command("status")
+def session_status(ctx: typer.Context) -> None:
+    """Show your current session and the seconds left on its lease."""
+    with api_client(ctx.obj) as client:
+        show(_current_session(client.get("/api/sessions/current")))
+
+
+@session_app.command("close")
+def session_close(ctx: typer.Context) -> None:
+    """Close your session; its container stops and its resources are released."""
+    from labflux import fastlane
+
+    with api_client(ctx.obj) as client:
+        show(_current_session(client.post("/api/sessions/current/close")))
+    root = fastlane.find_project_root(Path.cwd())
+    if root is not None:
+        fastlane.clear_remote_files(root)  # The session's files end with it.
+
+
+@session_app.command("files")
+def session_files() -> None:
+    """List the files that exist only in the remote session (over the write-back limit)."""
+    from labflux import fastlane
+
+    cwd = Path.cwd()
+    root = fastlane.find_project_root(cwd)
+    if root is None:
+        typer.echo(f"labflux: no {fastlane.PROJECT_FILE} found above {cwd}", err=True)
+        raise typer.Exit(1)
+    text = fastlane.read_remote_files(root)
+    typer.echo(text or "No files exist only in the remote session.\n", nl=False)
 
 
 if __name__ == "__main__":
