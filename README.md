@@ -67,7 +67,9 @@ Scheduler 在 `/dashboard` 提供監控頁（例如 `http://127.0.0.1:8000/dashb
 |---|---|---|
 | `priority` | Scheduler 的 `default_priority`（5） | 0–9，數字越大越優先；`fcfs` 模式不使用 |
 | `estimated_runtime_s` | 無 | 只用於說明，不得超過 `time_limit_s`；保留時段與 backfill 一律以硬性時限計算 |
-| `max_retries` | 0 | 執行遺失（節點失聯且確認容器已不存在）時最多重跑幾次，上限 10；見下方「故障與重跑」 |
+| `safe_to_rerun` | `false` | 程式從頭再跑一次不會造成傷害（例如不會重複寫入外部資料庫）；`preemptible` 與 `retries_on_node_failure` 都需要它 |
+| `preemptible` | `false` | 允許 Scheduler 為了更重要的工作停止它並重新排隊；需要 `"safe_to_rerun": true`，見下方「搶占」 |
+| `retries_on_node_failure` | 0 | 執行遺失（節點失聯且確認容器已不存在）時最多重跑幾次，上限 10；大於 0 時需要 `"safe_to_rerun": true`。舊名稱 `max_retries` 仍可使用；見下方「故障與重跑」 |
 
 `--source` 上傳可重現的程式快照，預設排除 Git、虛擬環境、資料集、輸出與 `.env`，
 並讀取來源根目錄的 `.gitignore` 與 `.labfluxignore`。來源與輸出封存檔都拒絕路徑跳脫、
@@ -171,8 +173,9 @@ Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼�
 
 ### 故障與重跑
 
-- 核對時發現容器已不存在（例如整台機器停機），而且工作設定了 `max_retries`，Scheduler 關閉舊 attempt
-  （`FAILED`），建立新 attempt 並以原本的提交順序重新排隊。程式自己退出、超過時限、OOM 與已要求取消的工作不重跑。
+- 核對時發現容器已不存在（例如整台機器停機），而且工作設定了 `retries_on_node_failure`（需同時設定 `safe_to_rerun`），
+  Scheduler 關閉舊 attempt（`FAILED`），建立新 attempt 並以原本的提交順序重新排隊。程式自己退出、超過時限、OOM
+  與已要求取消的工作不重跑。被搶占的 attempt 不計入這個次數（見下方「搶占」）。
 - Scheduler 以相同 `data_dir` 重啟後從 SQLite 還原：節點先標為 `RECONCILING`，工作與配置保留，
   該節點收到原 Worker instance 的心跳或新 instance 的註冊核對後才回到 `ONLINE` 並恢復派送；
   超過 `offline_timeout_s` 仍未出現則照常變成 `OFFLINE`，工作 `UNKNOWN`。
@@ -182,9 +185,51 @@ Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼�
 內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
 `/health` 不需認證，`/docs` 提供 API 規格。
 
-SQLite schema 在啟動時依序套用編號 migration（目前為版本 4）；也可執行 `uv run labflux db-upgrade`。
+SQLite schema 在啟動時依序套用編號 migration（目前為版本 5）；也可執行 `uv run labflux db-upgrade`。
 Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir`。
 新增的工作欄位與 WebSocket 介面需要 Scheduler、Worker 與 CLI 同時升級。
+
+## 搶占
+
+叢集滿載時，Scheduler 可以停掉擁有者允許中止的批次工作，把資源讓給更重要的工作。工作預設不會被搶占；
+要允許時，在工作 JSON 加上兩個欄位：
+
+```json
+{
+  "argv": ["uv", "run", "--locked", "python", "main.py", "--epochs", "3"],
+  "resources": {"cpu": 4, "memory_mib": 8192, "gpu": 1},
+  "priority": 3,
+  "safe_to_rerun": true,
+  "preemptible": true
+}
+```
+
+`safe_to_rerun` 表示程式從頭再跑一次不會造成傷害；`preemptible` 必須搭配它，否則提交時回傳 422，訊息指出缺少的欄位。
+
+被搶占時：
+
+- 容器照取消的流程停止，工作先變成 `STOPPING`，原因寫 `preempted by job ...`；確認容器終止後才釋放資源，搶占它的工作才開始執行。
+- 那次 attempt 變成 `PREEMPTED`，`/outputs` 照常上傳；`labflux status JOB_ID` 列出所有 attempt，
+  `labflux fetch JOB_ID --attempt-id ATTEMPT_ID` 取回被搶占那次的輸出。
+- 工作以原本的提交順序回到 `QUEUED`，之後以新的 attempt 從頭執行（還不支援從 checkpoint 接續）。
+- 每個工作最多被搶占 `max_preemptions_per_job` 次（預設 3），之後不再被選中，照常排隊與執行，不會因此失敗。
+  被搶占不消耗 `retries_on_node_failure`。
+- 停止期間工作剛好自己結束時，保留原本的結果；使用者同時取消時變成 `CANCELLED`。
+
+誰可以搶占：
+
+- 互動 session：在所有排程策略下（包含 `fcfs`），可以搶占任何優先權的可搶占批次工作。
+- 批次工作：只在 `priority` 與 `backfill` 策略下，而且只搶占顯式優先權（`priority`）比自己低、重新排隊後也會排在自己後面的工作。
+  排了很久的低優先權工作等待加分很高，重新排隊後可能又排到第一；這種工作不搶，以免兩個工作一直互搶。
+- 只有排在最前面、無法啟動的工作會搶占，整個叢集同時只進行一輪；執行中的 session 不會被搶占。
+- 有多個可停的工作時，先停這次執行跑得最短的（從頭重跑損失最少），一樣時停優先權較低的，只停到放得下為止。
+
+Scheduler TOML 的相關設定：
+
+| 設定 | 預設 | 說明 |
+|---|---|---|
+| `preemption_enabled` | `true` | `false` 時完全不搶占；沒有工作標記 `preemptible` 時本來就不會搶占 |
+| `max_preemptions_per_job` | 3 | 每個工作最多被搶占幾次，之後不再被選為搶占對象 |
 
 ## 快速測試（fast lane）
 
@@ -283,6 +328,7 @@ uv run python scripts/lab_deploy.py status
 ## 目前邊界
 
 目前交付到 M6.6、M7 的 GPU 配置（整張獨占）、uv 模式、實體機部署工具、M8 的排程策略，
-以及 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身）。
-故障驗證（M6.7）缺少實際 VM 關機；vLLM 與搶占依後續階段加入。
+M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身），
+以及 M11 的搶占（被搶占的工作從頭重跑；checkpoint 與模型服務相關的部分之後加入）。
+故障驗證（M6.7）缺少實際 VM 關機；vLLM 依後續階段加入。
 已知限制見 [docs/verification.md](docs/verification.md)。
