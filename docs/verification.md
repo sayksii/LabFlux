@@ -938,7 +938,7 @@ gemma 的設定沿用原本 compose 的參數（`vllm/vllm-openai:v0.30.0`、ten
 
 ## M11：終止後重跑的搶占（kayle，2026-11-16）
 
-在 `feat/m11` 分支、kayle 上執行，用單元測試、本機 Docker 容器與 kayle 的一張實體 GPU；分支尚未部署到實驗室節點。
+在 `feat/m11` 分支、kayle 上執行，用單元測試、本機 Docker 容器與 kayle 的一張實體 GPU；之後部署到實驗室三台節點實測（見「實驗室實測」）。
 規則見 `docs/architecture.md` 4.4（PE1～PE10）。
 
 **接到 M10 之上。** M11 原本建在 `main`（1504cdd）上，之後 rebase 到 M10 的 commit 17b1486（M10 與它的審查修正，
@@ -1037,7 +1037,7 @@ API 測試在 `tests/test_preemption.py`（以 HTTP API 操作，Worker 的命�
 - 被搶占的工作 `SUCCEEDED`，attempt 為 [PREEMPTED, SUCCEEDED]，`preempted_by` 為優先權 8 的工作，兩次都在同一張卡；
   重跑在優先權 8 的工作結束之後才建立；被搶占那次的日誌沒有 `done`（被停止，不是自己結束）。
 
-**命令與結果。** 全部在合併後的 a4021b1 執行。
+**命令與結果。** 前五項在接上 M10 後的 a4021b1 執行；rebase 到 main `29f66ce` 之後（bead7f4）程式與測試內容相同。
 
 - `uv run pytest -q -m "not docker and not vm and not gpu"`：404 passed、1 skipped（`tests/test_fastlane.py:230`，沒有 zsh）、32 deselected。
   M10 的 17b1486 為 343 passed；接到 M10 之前，M11 在 main 上為 348 passed（main 為 301 passed）。
@@ -1080,11 +1080,32 @@ API 測試在 `tests/test_preemption.py`（以 HTTP API 操作，Worker 的命�
 用法見 `docs/lab-deploy.md`。`tests/test_lab_deploy.py`：25 passed（三種策略產生的 TOML 都能被 `Settings` 載入並帶有該策略、
 錯誤的值被拒絕、沒有設定時只少這一行）。
 
+**實驗室實測（2026-11-16）。** 以 commit `2e6685d`（main `29f66ce` 加上 M11）執行 `lab_deploy.py deploy`，三台一起升級。
+部署前以 SQLite backup API 備份 Scheduler 資料庫（schema 版本 5、24 個工作）；新版 Scheduler 啟動時升級到版本 6，24 個工作都保留。
+kindred 的 Worker 重新啟動時，常駐的 gemma4-31b 沒有被重啟：`labflux models` 顯示同一個工作與 attempt，卡 3、4 各用約 41 GB，
+`/v1/chat/completions` 0.27 秒回應 HTTP 200。這是第一次在實驗室驗證「常駐模型執行中重新啟動 Worker 與 Scheduler」，M10 只在 Docker 測過。
+
+測試工作只用 kayle 與 karma 的卡，每個情境送出前確認要用的卡沒有運算程序、VRAM 用量低於 1 GiB；kindred 的 A40 沒有使用。
+先以實驗室平常的 `fcfs` 測 F1、F2；再在節點清單加上 `policy = "priority"`，只重新部署 kayle（Scheduler）測 P1、P2；
+最後拿掉這個設定、再部署 kayle 一次，回到 `fcfs`。每次重新部署後 gemma 都還是同一個 attempt。
+
+| 情境 | 策略 | 檢查 | 結果 |
+|---|---|---|---|
+| F1 session 搶占批次工作 | `fcfs` | 可搶占的批次工作在 karma 的 4090 上跑 6 秒後，要求同一張卡的 session（`labflux run -- nvidia-smi -L`）讓它停止：attempt 變成 `PREEMPTED`、`preempted_by` 是 session，工作回到 `QUEUED`（`preemption 1 of 3`）；session 在確認終止的同一個交易內派送到同一張卡；接下來 10 秒批次工作沒有反過來搶 session；被搶占那次的 `/outputs` 可以取回；session 關閉後批次工作在同一張卡重跑成功 | 24 項全部通過 |
+| F2 `fcfs` 下批次工作不搶占 | `fcfs` | 優先權 8 的工作等優先權 1 的可搶占工作 20 秒，沒有停止它；之後取消，結果是 `CANCELLED`，不是 `PREEMPTED` | 14 項全部通過 |
+| P1 搶占實際的 MNIST 訓練 | `priority` | 優先權 1 的 MNIST 在 4090 上訓練到第 5 個 epoch 時，優先權 8 的 GPU 工作讓它停止，拿到同一張卡（UUID 相同）並完成；MNIST 之後在同一張卡重跑，準確率 99.26%；被搶占那次寫到一半的訓練日誌可以取回；`labflux logs --follow` 先印第一次的日誌，接著是 `--- attempt … (rerun) ---` 與重跑的開頭 | 24 項全部通過 |
+| P2 跨節點選擇被搶占的工作 | `priority` | kayle 的 3090 與 karma 的 4090 各有一個優先權 1 的可搶占工作（當時各已跑約 66 秒與 5 秒），A5000 被不可搶占的工作占用；要一張 24000 MiB 以上的卡的優先權 8 工作只停止損失較少的 4090 那個，3090 上的工作繼續執行；優先權 8 的工作完成後，被搶占的工作在同一張卡重跑 | 31 項全部通過 |
+
+- 從送出停止到確認終止為 0.2～0.8 秒；搶占者都在確認終止的同一個交易內派送，時間相差約 1 毫秒。
+- 每個情境結束後都沒有留下工作或容器，三張卡都回到閒置。
+- P1 的重跑花了 661 秒（時限 900 秒），其中約 10 分鐘在從外部網站下載 MNIST 資料集（第一次只花約 80 秒），與 LabFlux 無關；
+  之後重複這個測試時，可以把 MNIST 登錄為 karma 的資料集。
+- 實測用的腳本沒有放進 repo。
+
 **尚未驗證。**
 
-- 實驗室的實體節點：本分支尚未部署，沒有在 kayle、karma、kindred 的 Worker 上執行搶占。Docker 與 GPU 測試的 Scheduler 與 Worker
-  在 kayle 的同一個程序裡；實體 GPU 的搶占只用一張卡，容器只執行 `nvidia-smi -L` 與 sleep。多節點的選擇、`backfill`、session
-  與模型服務的搶占只有單元測試。
+- 實驗室的實體節點上驗證了 session 與 `priority` 下批次工作的搶占、跨節點的選擇與 GPU（見上）。`backfill` 與模型服務當搶占者
+  只有單元測試：實驗室唯一的模型 gemma 是常駐的，一直占住 kindred 的兩張 A40，沒有拿來測。
 - 模型服務的搶占（模型當搶占者、等待閒置模型回收）只在 Scheduler API 層級測試，沒有以實際的模型容器或 vLLM 測試。
 - 「session 與模型服務不作為搶占對象」測到的組合：批次工作不停執行中的 session；session 與優先權較高的批次工作不停可服務的模型。
   session 或模型服務當搶占者時遇到執行中的 session、模型服務遇到另一個模型服務，沒有個別測試；被搶占對象的查詢只取 `kind = BATCH`
