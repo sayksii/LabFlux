@@ -250,6 +250,21 @@ def test_giving_both_retry_field_names_is_rejected(client):
     assert response.status_code == 422
 
 
+def test_checkpoint_is_a_path_relative_to_the_workspace(client):
+    for path in ("ckpt/", "ckpt/model.pt", "./runs/ckpt"):
+        response = post_job(client, checkpoint=path)
+        assert response.status_code == 201, response.text
+        assert response.json()["spec"]["checkpoint"] == path
+    assert post_job(client).json()["spec"]["checkpoint"] is None
+
+
+@pytest.mark.parametrize("path", ["/workspace/ckpt", "../ckpt", "ckpt/../../etc", ".", ""])
+def test_checkpoint_outside_the_workspace_is_rejected(client, path):
+    response = post_job(client, checkpoint=path)
+    assert response.status_code == 422
+    assert "checkpoint" in messages(response)
+
+
 # 2. The whole round under the priority policy --------------------------------------------------
 
 
@@ -419,6 +434,52 @@ def test_of_two_candidates_the_one_with_less_lost_work_is_stopped(make_client, c
     advance(client, clock, 60, nodes)
     high(client, cpu=1)  # One victim is enough.
     assert stops(client, instance) == [newer["current_attempt_id"]]
+    assert job(client, older)["state"] == "RUNNING"
+
+
+def saved(client, value, instance, at, name="kayle"):
+    """The Worker's heartbeat reports the newest file time under the job's checkpoint path."""
+    response = client.post(
+        f"/internal/workers/{name}/heartbeat",
+        headers=worker_headers(),
+        json={"instance_id": instance, "checkpoints": {value["current_attempt_id"]: at}},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_a_job_that_saved_a_checkpoint_recently_is_stopped_first(make_client, clock):
+    """11.9: lost work counts from the last checkpoint. The job that started ten minutes
+    earlier but saved 10 seconds ago loses less than the one that never saved."""
+    client = make_client("priority")
+    instance = register(client, "kayle", cpu=2)
+    nodes = {"kayle": instance}
+    saving = run(client, low(client, cpu=1, checkpoint="ckpt/"), instance)
+    advance(client, clock, 600, nodes)
+    never = run(client, low(client, cpu=1), instance)
+    advance(client, clock, 60, nodes)
+    saved(client, saving, instance, clock[0] - 10)
+    high(client, cpu=1)  # One victim is enough.
+    assert stops(client, instance) == [saving["current_attempt_id"]]
+    assert job(client, never)["state"] == "RUNNING"
+    # labflux status shows when the stopped attempt last saved.
+    assert job(client, saving)["attempts"][0]["checkpoint_at"] == clock[0] - 10
+    assert job(client, never)["attempts"][0]["checkpoint_at"] is None
+
+
+def test_a_checkpoint_older_than_the_attempt_saves_nothing_of_it(make_client, clock):
+    """A file copied from an earlier attempt keeps its time (6.1 P3). It is older than this
+    attempt's start, so lost work counts from the start, as without a checkpoint: 60 seconds,
+    not the 960 since the copied file was written."""
+    client = make_client("priority")
+    instance = register(client, "kayle", cpu=2)
+    nodes = {"kayle": instance}
+    older = run(client, low(client, cpu=1), instance)
+    advance(client, clock, 600, nodes)
+    copied = run(client, low(client, cpu=1, checkpoint="ckpt/"), instance)
+    saved(client, copied, instance, clock[0] - 900)
+    advance(client, clock, 60, nodes)
+    high(client, cpu=1)
+    assert stops(client, instance) == [copied["current_attempt_id"]]
     assert job(client, older)["state"] == "RUNNING"
 
 

@@ -1126,9 +1126,9 @@ kindred 的 Worker 重新啟動時，常駐的 gemma4-31b 沒有被重啟：`lab
   session 或模型服務當搶占者時遇到執行中的 session、模型服務遇到另一個模型服務，沒有個別測試；被搶占對象的查詢只取 `kind = BATCH`
   的工作，與搶占者是誰無關。
 - PE10 列出的停止原因中，模型從設定移除而停止中的情況沒有個別測試；它與其他停止走同一個查詢（停止中、`preempted_by` 為空）。
-- 11.9 的 checkpoint：損失目前以這次執行已經跑了多久計算（`lost_seconds`）。
+- 11.9 的 checkpoint：當時損失以這次執行已經跑了多久計算（`lost_seconds`）；之後完成，見下方「11.9」。
 
-**Checklist。** 勾選 11.1～11.8；11.9 等 checkpoint 的儲存方式。
+**Checklist。** 勾選 11.1～11.8；11.9 等 checkpoint 的儲存方式（6.1 完成後實作，見下方「11.9」）。
 
 **M11 已知限制**
 
@@ -1150,6 +1150,78 @@ kindred 的 Worker 重新啟動時，常駐的 gemma4-31b 沒有被重啟：`lab
   能搶占的隊首（session、模型服務，或 `priority`、`backfill` 的批次工作）才列出。`preemption_enabled = false` 時都不列出。
 - 隊首被擋住的每一輪排程（約每 0.25 秒及每次心跳）都查詢一次執行中的批次工作並驗證它們的 JobSpec，再查詢一次停止中的 attempt
   與執行中的模型服務；`fcfs`、`priority` 下排在最前面的模型服務被擋住時也會查詢。成本隨執行中的工作數增加；在實驗室規模下可接受。
+
+### 11.9 依最後一次 checkpoint 計算損失（kayle，2026-11-16）
+
+在 `feat/m11-checkpoint` 分支（從 main `bf86074` 切出）、kayle 上執行，用單元測試與本機 Docker 容器；沒有部署到實驗室。
+規則見 `docs/architecture.md` 4.4 的 PE4。6.1 已經讓被搶占的專案工作重跑時（排回同一台）從停止的 attempt 的目錄開始，
+程式自己讀 checkpoint 就能接著跑；11.9 補上的是選擇被搶占的工作時把 checkpoint 算進損失。
+
+**實作。**
+
+- `JobSpec` 加入選填欄位 `checkpoint`：`/workspace` 裡的相對路徑，檔案或資料夾（例如 `"ckpt/"`）。絕對路徑、含 `..`、
+  空字串與 `.`（整個 `/workspace`）由 `field_validator` 拒絕，API 回傳 422，訊息含 `checkpoint must be a path inside /workspace`。
+  不和其他欄位綁在一起，任何批次工作都可以設。
+- Worker：`_launch` 把 `checkpoint` 記在 attempt 的 handle（接收 START 與 Worker 重啟後接手都經過這裡）。`heartbeat_payload`
+  對每個執行中、有 `checkpoint` 的 attempt 呼叫 `workspace.newest_mtime`，把最新的一般檔案修改時間放在心跳的
+  `checkpoints`（`{attempt_id: Unix 秒}`）；路徑不存在或沒有檔案時不放。`newest_mtime` 以 6.1 的 `_open_directory`
+  逐層用 `O_NOFOLLOW` 走到路徑的上層，資料夾用 `os.fwalk`（不進入 symbolic link），link 本身不算；最多看 10000 個目錄項目
+  （`CHECKPOINT_SCAN_LIMIT`），超過時回傳已經看到的最新時間。掃描失敗時記 warning、略過這個 attempt，心跳照常送出。
+- Scheduler：`Heartbeat` 多一個 `checkpoints` 欄位（舊 Worker 不送就是空的）；`heartbeat` 把每個時間寫進同一個節點上、
+  還沒釋放的 attempt 的 `checkpoint_at`（migration 9），值沒變時不寫。其他節點的 attempt 不受影響。
+  `_victims` 多讀 `checkpoint_at`，`policy.lost_seconds(started_at, now, checkpoint_at)` = 現在 − max(STARTED, checkpoint)，
+  其餘選擇規則不變。`scheduler.py` 只改了 `heartbeat` 與 `_victims` 兩處。
+- 顯示：`labflux status JOB_ID` 的 attempt 列出 `checkpoint_at`（attempt 的欄位原本就整列輸出，不需要改 CLI）。
+  被搶占工作的停止原因與隊首的 `schedule_note` 沒有改：停止原因在停止期間心跳中斷又恢復時會由 `stop_reason` 重新產生，
+  要一致地寫出損失的依據不只改一行；而且 PR #11（M12）正在改寫搶占的說明（`_preempt` 的 decision），留給它。
+
+測試：純函式在 `tests/test_preemption_policy.py`，欄位驗證在 `tests/test_models.py` 與 `tests/test_preemption.py`，
+Scheduler API 層級的選擇在 `tests/test_preemption.py`，Worker 的掃描與心跳、migration 在 `tests/test_checkpoint.py`，
+Docker 端到端在 `tests/test_preemption_docker.py`。
+
+| 行為 | 驗證 |
+|---|---|
+| 損失 = 現在 − max(STARTED, checkpoint)；沒有 checkpoint 時同 11.5；比 STARTED 早的 checkpoint（複製來的檔案）不算；還沒 STARTED 為 0；節點時鐘較快時不會變負 | `test_lost_work_counts_from_the_last_checkpoint_saved_by_this_attempt` |
+| `checkpoint` 預設為空，`ckpt/`、`ckpt/model.pt`、`./ckpt` 照原樣保存；`/workspace/ckpt`、`/ckpt`、`../ckpt`、`ckpt/../../x`、`.`、`./`、空字串與 NUL 被拒絕，API 回傳 422 | `tests/test_models.py` 的 `test_reject_a_checkpoint_outside_the_workspace`（8 組）、`test_checkpoint_is_optional_and_kept_as_given`；`test_checkpoint_is_a_path_relative_to_the_workspace`、`test_checkpoint_outside_the_workspace_is_rejected`（5 組） |
+| 10 分鐘前開始、10 秒前存過 checkpoint 的工作，比 1 分鐘前開始、沒存過的工作先被停（損失 10 秒對 60 秒）；`labflux status` 的 attempt 顯示 `checkpoint_at`，沒存過的為空 | `test_a_job_that_saved_a_checkpoint_recently_is_stopped_first`；改回只看 STARTED 時這個測試失敗 |
+| 1 分鐘前開始、checkpoint 是開始前 15 分鐘（從上一次執行複製來）的工作，損失算 60 秒而不是 960 秒，所以比 11 分鐘前開始的工作先被停 | `test_a_checkpoint_older_than_the_attempt_saves_nothing_of_it`；改成只看 checkpoint（不取 max）時這個測試失敗 |
+| 掃描：檔案回報自己的修改時間；資料夾回報任何深度裡最新的檔案，路徑外的檔案不算；路徑不存在、上層不存在或資料夾是空的回傳空 | `tests/test_checkpoint.py` 的 `test_a_checkpoint_file_reports_its_modification_time`、`test_a_checkpoint_directory_reports_its_newest_file_at_any_depth`、`test_a_missing_or_empty_checkpoint_path_is_unknown` |
+| 掃描不跟隨 symbolic link：指向外面的檔案與資料夾都不算；路徑本身是 link、或要經過 link 才到得了時回傳空 | `tests/test_checkpoint.py` 的 `test_links_are_neither_followed_nor_counted` |
+| 掃描有上限：上限內回報最新的時間；第一個資料夾就超過上限時回傳空 | `tests/test_checkpoint.py` 的 `test_the_scan_looks_at_a_bounded_number_of_entries` |
+| 以 `copy_generated`（6.1 P3）複製上一次的 `ckpt/model.pt`，修改時間不變，損失從這次開始算；這次存檔後從存檔時間算 | `tests/test_checkpoint.py` 的 `test_a_checkpoint_copied_from_an_earlier_attempt_keeps_its_old_time` |
+| Worker：兩個執行中的 attempt，只有設了 `checkpoint` 的那個回報；沒設的即使有 `ckpt/` 也不回報；心跳送到 Scheduler 後 attempt 的 `checkpoint_at` 為回報的時間；attempt 結束後不再掃描 | `tests/test_checkpoint.py` 的 `test_the_worker_reports_checkpoints_with_its_heartbeat` |
+| 另一個節點的心跳不能改這個節點上 attempt 的 `checkpoint_at` | `tests/test_checkpoint.py` 的 `test_a_heartbeat_does_not_set_the_checkpoint_of_another_nodes_attempt` |
+| migration：版本 8 的資料庫升級到 9，多出 `attempts.checkpoint_at`，原本的工作保留；模擬更舊版本的 4 個 migration 測試也先刪掉這個欄位 | `tests/test_checkpoint.py` 的 `test_a_version_8_database_gains_checkpoint_at` |
+| Docker：真的容器（以 Worker 的 UID 執行）在 `/workspace/ckpt/model.pt` 寫檔後，Worker 的心跳讓 attempt 的 `checkpoint_at` 出現，時間在 STARTED 之後；取消後沒有留下容器 | `tests/test_preemption_docker.py` 的 `test_the_worker_reports_the_checkpoint_a_real_container_saved` |
+
+**命令與結果。**
+
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：474 passed、1 skipped（`tests/test_fastlane.py:230`，沒有 zsh）、34 deselected。
+  main `bf86074` 為 447 passed；新增 27 個測試。
+- `uv run pytest -q -m "docker and not gpu and not vm"`：30 passed（新增 1 個）。執行前後 kayle 上只有實驗室 Worker 自己的容器
+  （`labflux.worker_id=kayle`），測試只刪自己唯一標籤的容器。
+- `uv run ruff check`：通過；`uv run ruff format --check`：87 個檔案都已格式化。
+- 沒有執行 `-m gpu` 與 `-m vm`；改動不碰 GPU 的配置與容器設定。
+- 驗證測試真的會抓到錯：以 pytest plugin 暫時把 `scheduler.lost_seconds` 換成只看 STARTED，
+  `test_a_job_that_saved_a_checkpoint_recently_is_stopped_first` 失敗；換成只看 checkpoint（不取 max），
+  `test_a_checkpoint_older_than_the_attempt_saves_nothing_of_it` 失敗。
+
+**尚未驗證。** 沒有在實驗室實測，也沒有以實際的訓練程式（例如 MNIST 每個 epoch 存一次）在搶占時比較兩個工作。
+
+**11.9 已知限制**
+
+- 只看修改時間：寫到一半的檔案也算已經存好；程式改了資料夾裡其他檔案（例如寫 log 到 checkpoint 資料夾）也會被當成剛存過。
+- 修改時間是節點的時鐘，STARTED 是 Scheduler 收到事件的時間；兩邊時鐘差很多時損失會算偏。容器一開始就寫的檔案可能比
+  Scheduler 記下的 STARTED 早一點點，這時不算，損失從 STARTED 算起（偏向多算損失）。
+- 沒有 `project` 的工作，checkpoint 隨 `/workspace` 一起刪除；有 `project` 但重跑排到別台節點時（P0c 只是偏好，E3 的同步還沒做），
+  新的目錄裡也沒有 checkpoint。這兩種情況實際損失是整次執行，Scheduler 選擇時仍以距離 checkpoint 的較小損失計算。
+- 掃描最多看 10000 個目錄項目；超過時只用已經看到的部分，可能漏掉較新的檔案（損失算多，接近沒有 checkpoint 的行為）。
+  掃描隨每次心跳（預設 2 秒）執行。
+- Scheduler 保留最後一次回報的時間：路徑後來被刪掉或變成空的，`checkpoint_at` 不會清掉。
+- 新的 `checkpoint` 欄位會出現在每個 START 的工作內容裡（值為空也一樣），舊版 Worker 會拒絕（`extra="forbid"`），
+  Scheduler 與 Worker 要一起升級，與 6.1 的 `project` 相同。資料庫升級到版本 9 後，不能再部署沒有 migration 9 的版本。
+- 被搶占工作的停止原因與 `schedule_note` 沒有寫出損失是從開始還是從 checkpoint 算起；要看時用 `labflux status JOB_ID`
+  比較 attempt 的 `started_at` 與 `checkpoint_at`。
 
 ## 6.1 專案目錄保留在節點、下一次接著開始（kayle，2026-11-16）
 

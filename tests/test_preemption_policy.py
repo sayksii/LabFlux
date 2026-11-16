@@ -46,6 +46,15 @@ def test_lost_work_counts_from_the_reported_start():
     assert lost_seconds(6000, 5000) == 0  # Clock skew never yields negative lost work.
 
 
+def test_lost_work_counts_from_the_last_checkpoint_saved_by_this_attempt():
+    assert lost_seconds(4000, 5000, None) == 1000  # Nothing saved yet.
+    assert lost_seconds(4000, 5000, 4900) == 100
+    # Copied from an earlier attempt with its time kept: older than this start, saves nothing.
+    assert lost_seconds(4000, 5000, 3000) == 1000
+    assert lost_seconds(None, 5000, 4900) == 0  # Not started: nothing to lose.
+    assert lost_seconds(4000, 5000, 5100) == 0  # A node clock ahead never goes negative.
+
+
 def test_order_is_lost_work_then_priority_then_job_id():
     ordered = sorted(
         [

@@ -76,6 +76,9 @@ attempts = Table(
     Column("oom_killed", Boolean, nullable=False, default=False),
     # The job this attempt is being stopped for (M11 preemption); None otherwise.
     Column("preempted_by", String),
+    # The newest modification time under the job's checkpoint path, as the Worker last
+    # reported it (11.9, the node's clock); None when it has none or reported none yet.
+    Column("checkpoint_at", Float),
 )
 commands = Table(
     "commands",
@@ -182,6 +185,10 @@ def add_preempted_by(connection) -> None:
     connection.exec_driver_sql("ALTER TABLE attempts ADD COLUMN preempted_by TEXT")
 
 
+def add_checkpoint_at(connection) -> None:
+    connection.exec_driver_sql("ALTER TABLE attempts ADD COLUMN checkpoint_at REAL")
+
+
 # Migration N upgrades a database at version N - 1; version 1 is the original bootstrap.
 MIGRATIONS = {
     2: lambda connection: attempt_gpus.create(connection),
@@ -192,6 +199,7 @@ MIGRATIONS = {
     # checkfirst: tests simulate older databases from a current one that already has it.
     7: lambda connection: project_results.create(connection, checkfirst=True),
     8: lambda connection: user_tokens.create(connection, checkfirst=True),
+    9: add_checkpoint_at,
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

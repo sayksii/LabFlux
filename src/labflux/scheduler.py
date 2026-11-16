@@ -693,6 +693,18 @@ class Scheduler:
                     status=status,
                 )
             )
+            # Lost work for preemption counts from the newest checkpoint (11.9).
+            for attempt_id, checkpoint_at in payload.checkpoints.items():
+                connection.execute(
+                    attempts.update()
+                    .where(
+                        attempts.c.id == attempt_id,
+                        attempts.c.node_id == node_id,
+                        attempts.c.released.is_(False),
+                        attempts.c.checkpoint_at.is_distinct_from(checkpoint_at),
+                    )
+                    .values(checkpoint_at=checkpoint_at)
+                )
             self._schedule(connection)
         return {"status": status}
 
@@ -1085,6 +1097,7 @@ class Scheduler:
                 attempts.c.node_id,
                 attempts.c.resources,
                 attempts.c.started_at,
+                attempts.c.checkpoint_at,
                 jobs.c.id.label("job_id"),
                 jobs.c.owner,
                 jobs.c.spec,
@@ -1150,7 +1163,7 @@ class Scheduler:
                     attempt_id=row.attempt_id,
                     job_id=row.job_id,
                     priority=priority,
-                    lost_s=lost_seconds(row.started_at, now),
+                    lost_s=lost_seconds(row.started_at, now, row.checkpoint_at),
                     cpu=row.resources["cpu"],
                     memory_mib=row.resources["memory_mib"],
                     cards=frozenset(cards.get(row.attempt_id, ())),

@@ -231,6 +231,7 @@ def test_v1_database_upgrades_to_current_and_keeps_jobs(settings):
         connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN preempted_by")  # Version 6.
         project_results.drop(connection)  # Added by version 7.
         user_tokens.drop(connection)  # Added by version 8.
+        connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN checkpoint_at")  # 9.
         connection.execute(update(schema_version).values(version=1))
     first.db.close()
     database = Database(settings.data_dir)

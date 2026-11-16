@@ -82,6 +82,7 @@ backfill 隊首的保留時段標在節點欄頭，session、模型服務與 bac
 | `preemptible` | `false` | 允許 Scheduler 為了更重要的工作停止它並重新排隊；需要 `"safe_to_rerun": true`，見下方「搶占」 |
 | `retries_on_node_failure` | 0 | 執行遺失（節點失聯且確認容器已不存在）時最多重跑幾次，上限 10；大於 0 時需要 `"safe_to_rerun": true`。舊名稱 `max_retries` 仍可使用；見下方「故障與重跑」 |
 | `project` | `--source` 目錄的專案名稱 | 專案名稱（與擁有者一起識別專案）；有它的工作保留專案目錄，見下方「專案目錄與接續」 |
+| `checkpoint` | 無 | 程式存 checkpoint 的位置，相對於 `/workspace` 的檔案或資料夾（例如 `"ckpt/"`）；不能是絕對路徑，也不能含 `..`。被搶占時，損失從最後一次寫 checkpoint 算起，見下方「搶占」 |
 
 `--source` 上傳可重現的程式快照，預設排除 Git、虛擬環境、資料集、輸出與 `.env`，
 並讀取來源根目錄的 `.gitignore` 與 `.labfluxignore`。來源與輸出封存檔都拒絕路徑跳脫、
@@ -227,7 +228,7 @@ Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir
 ## 搶占
 
 叢集滿載時，Scheduler 可以停掉擁有者允許中止的批次工作，把資源讓給更重要的工作。工作預設不會被搶占；
-要允許時，在工作 JSON 加上兩個欄位：
+要允許時，在工作 JSON 加上兩個欄位（`checkpoint` 選填）：
 
 ```json
 {
@@ -235,18 +236,23 @@ Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir
   "resources": {"cpu": 4, "memory_mib": 8192, "gpu": 1},
   "priority": 3,
   "safe_to_rerun": true,
-  "preemptible": true
+  "preemptible": true,
+  "checkpoint": "ckpt/"
 }
 ```
 
 `safe_to_rerun` 表示程式從頭再跑一次不會造成傷害；`preemptible` 必須搭配它，否則提交時回傳 422，訊息指出缺少的欄位。
+`checkpoint` 告訴 Scheduler 程式把 checkpoint 存在哪裡（相對於 `/workspace`），用來估計被停掉時損失多少，見下方「選誰」。
 
 被搶占時：
 
 - 容器照取消的流程停止，工作先變成 `STOPPING`，原因寫 `preempted by job ...`；確認容器終止後才釋放資源，搶占它的工作才開始執行。
 - 那次 attempt 變成 `PREEMPTED`，`/outputs` 照常上傳；`labflux status JOB_ID` 列出所有 attempt，
   `labflux fetch JOB_ID --attempt-id ATTEMPT_ID` 取回被搶占那次的輸出。
-- 工作以原本的提交順序回到 `QUEUED`，之後以新的 attempt 從頭執行（還不支援從 checkpoint 接續）。
+- 工作以原本的提交順序回到 `QUEUED`，之後以新的 attempt 再執行一次，程式從進入點重新開始。有 `project` 的工作
+  （`submit --source` 會自動填）重跑時優先排回原本的節點（只在放得下的節點中挑選，不會等待）；排回同一台時，新的 `/workspace`
+  從被停掉那次的目錄開始（見上方「專案目錄與接續」），程式自己讀取停止前存的 checkpoint 就能接著跑。
+  排到別台節點、或沒有 `project` 時，新的目錄裡沒有這些檔案，只能從頭跑。
   `labflux logs JOB_ID --follow` 追蹤時，重跑開始後在 stderr 印出 `--- attempt <id> (rerun) ---`，接著從頭印出新 attempt 的輸出。
 - 每個工作最多被搶占 `max_preemptions_per_job` 次（預設 3），之後不再被選中，照常排隊與執行，不會因此失敗。
   被搶占不消耗 `retries_on_node_failure`。
@@ -263,7 +269,12 @@ Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir
 - 已經在釋放的資源先算成空的：同一台節點上有工作正在停止（例如剛被取消、session 剛結束），或有閒置的自動釋放模型
   馬上會被回收時，只要等它們釋放就放得下，就不搶占，`schedule_note`（`labflux status JOB_ID`）寫出在等哪個工作或模型；
   不夠時，以它們已經空出來計算，只停補足差額所需的工作。
-- 有多個可停的工作時，先停這次執行跑得最短的（從頭重跑損失最少），一樣時停優先權較低的，只停到放得下為止。
+- 選誰：有多個可停的工作時，先停損失最少的，一樣時停優先權較低的，只停到放得下為止。損失是這次執行已經跑了多久；
+  工作設了 `checkpoint` 時，改成距離最後一次寫 checkpoint 多久。Worker 每次心跳找出這個路徑下最新的檔案修改時間
+  （不跟隨 symbolic link），回報給 Scheduler；`labflux status JOB_ID` 的 attempt 顯示為 `checkpoint_at`（Unix 時間）。
+  早於這次開始執行的時間不算，例如從上一次執行複製過來、保留原本修改時間的檔案：等於這次還沒存過。
+  限制：只看修改時間，寫到一半的檔案也算存好了；沒有 `project`、或重跑排到別台節點時，實際損失是整次執行，
+  但 Scheduler 選擇時仍以距離 checkpoint 的較小損失計算。
 
 Scheduler TOML 的相關設定：
 
@@ -390,7 +401,7 @@ uv run python scripts/lab_deploy.py status                 # 各台服務、版�
 
 目前交付到 M6.6、M7 的 GPU 配置（整張獨占）、uv 模式、實體機部署工具、M8 的排程策略，
 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身），
-M10 的共享模型服務與推論 Gateway（`docs/architecture.md` 第 9 節）、M11 的搶占，
+M10 的共享模型服務與推論 Gateway（`docs/architecture.md` 第 9 節）、M11 的搶占（依最後一次 checkpoint 計算損失），
 以及專案目錄保留在節點、下一次同專案的工作接著開始（`docs/architecture.md` 6.1；被搶占的專案工作重跑時也從這裡接著跑）、
 以 Linux 帳號登入（`labflux login`），與 M14 的安裝說明、範例和乾淨環境的驗收（14.1、14.2、14.4）。
 M12 的監控與決策說明（排隊順序、分數、等待原因、backfill 保留時段與最近的排程決定由 Scheduler 的 `/api/queue` 提供，

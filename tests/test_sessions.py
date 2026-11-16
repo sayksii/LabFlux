@@ -345,6 +345,7 @@ def test_a_version_3_database_migrates_and_existing_jobs_are_batch(settings):
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN lease_expires_at")
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN service")  # Version 5 (M10).
         connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN preempted_by")  # Version 6.
+        connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN checkpoint_at")  # 9.
         connection.execute(update(schema_version).values(version=3))
     first.db.close()
     database = Database(settings.data_dir)

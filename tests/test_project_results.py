@@ -742,6 +742,7 @@ def test_a_version_6_database_gains_the_results_table(settings):
     first = Scheduler(settings)
     with first.db.transaction() as connection:
         project_results.drop(connection)
+        connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN checkpoint_at")  # 9.
         connection.execute(update(schema_version).values(version=6))
     first.db.close()
     database = Database(settings.data_dir)
