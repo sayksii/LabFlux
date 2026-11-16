@@ -283,6 +283,18 @@ curl -s $OPENAI_BASE_URL/models -H "Authorization: Bearer $OPENAI_API_KEY"
 ```
 
 8770 只放行 LabFlux 節點；其他機器先建立上一節的 SSH 轉送，再改用 `http://localhost:8770/v1`。
+命令列客戶端見 `examples/gateway/chat.py`（只用標準函式庫）。
+
+**常駐與自動釋放。** `mode = "persistent"` 的模型在資源足夠時自己啟動、不因閒置停止；預設的 `on_demand` 由第一個請求啟動，
+閒置 `idle_stop_s` 後停止（範例見 `configs/lab.example.toml` 的 `small-chat`）。改模式要修改清單後 `deploy --node kayle`：
+
+- 只改 `mode` 與時間設定（`cold_wait_s`、`idle_stop_s`、`reclaim_idle_s`、`retry_after_failure_s`）不算設定改變，執行中的模型不會重啟；
+  改成 `on_demand` 後，它沒有請求超過 `idle_stop_s` 才停止，之後由下一個請求冷啟動。
+- 改了 `image`、`argv`、`env`、`resources`、`datasets`、`startup_timeout_s`、`port`、`health_path`、`shm_mib` 或 `pids_limit` 時，
+  執行中的模型立刻停止（進行中的請求中斷）並套用新設定：常駐的重新啟動，自動釋放的等下一個請求。
+- gemma4-31b 的冷啟動約 4～5 分鐘，`on_demand` 時 `cold_wait_s` 與 `startup_timeout_s` 要給 600 秒左右，否則第一個請求先得到 503。
+- 以上依程式（`Scheduler._model_changed`）整理，模式切換沒有在實驗室實測；`on_demand` 的欄位在本機以 `examples/fake-model` 驗證過
+  （`examples/README.md`）。
 `labflux --config .labflux/lab/cli.toml models` 列出每個模型的模式、狀態（`waiting`、`starting`、`serving`、
 `stopping`、`failed`、`stopped`）、所在節點與進行中的請求數。
 

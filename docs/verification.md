@@ -1355,17 +1355,22 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
 
 ### 14.2 範例
 
-新增 9 個工作 JSON、`examples/gateway/chat.py`、`examples/fast-lane-gpu/`，`examples/uv-gpu/main.py` 改為列出並測試每張分到的卡；
-每個範例都在實驗室實際提交或執行一次（`fcfs`），結果與指令見 [examples/README.md](../examples/README.md)。重點：
+新增 10 個工作 JSON、`examples/gateway/chat.py`、`examples/fast-lane-gpu/`、`configs/lab.example.toml` 的自動釋放模型設定，
+`examples/uv-gpu/main.py` 改為列出並測試每張分到的卡；工作與快速測試都在實驗室實際提交或執行一次（`fcfs`），
+結果與指令見 [examples/README.md](../examples/README.md)。重點：
 
 - GPU：`gpu_model = "4090"` 分到 karma 的 4090；`min_vram_mib` 的工作在卡都被占用時依 FCFS 等待後分到 4090；`gpu: 2` 分到 kayle 的兩張卡，
-  兩張都算過矩陣乘法；可搶占的 MNIST（10 epoch）在 3090 上 99.18%；故障重跑的範例占著 A5000 120 秒完成。
+  兩張都算過矩陣乘法；可搶占的 MNIST（10 epoch）在 3090 上 99.18%；優先權 8 的 GPU 工作在 3090 上 5.6 秒；故障重跑的範例占著 A5000 120 秒完成。
+- 自動釋放模型：實驗室只有常駐的 gemma，改模式要重新部署，所以同樣的欄位在本機 loopback 以臨時 Scheduler、Worker 與 `examples/fake-model` 驗證：
+  `stopped` → 第一個請求冷啟動 6.6 秒 → `serving` → 閒置 20 秒（`idle_stop_s`）後停止；`cold_wait_s = 0` 時請求立即得到 503、`Retry-After: 10`，
+  稍後重送成功。結束後移除了 Worker 停止時留下的模型容器（Worker 停止不會停容器，M6.4）。
+  `docs/lab-deploy.md` 另依 `Scheduler._model_changed` 寫明：只改 `mode` 與時間設定時執行中的模型不會重啟。
 - 快速測試：`fast-lane-gpu` 的 session 排到 karma 的 4090，第一個指令（租用、從快取 `uv sync`、pytest 3 passed）8.3 秒，
   `python train.py --smoke` 2.4 秒並寫回結果檔。
 - Gateway：`chat.py` 對 gemma 一般回應 0.73 秒、串流第一段 0.05 秒；兩個串流同時送出時進行中 2，都在約 2.3 秒完成。
   `chat.py` 只用標準函式庫，也能用節點上的 Python 3.10（kayle 的系統 Python 沒有 `tomllib`，所以不用它）。
 - 同專案的 MNIST 第二次執行從上一個工作留下的檔案開始，沒有重新下載資料（6.1）。
-- examples/README.md 另列出展示分鏡各幕會用到的工作類型，給 14.3 改用；各幕的實際大小與順序以 `tests/test_storyboard.py` 與 14.3 為準。
+- examples/README.md 另列出展示分鏡各幕會用到的工作類型，給 14.3 改用；展示以 GPU 為主；各幕的實際大小與順序以 feat/m12 的 `tests/test_storyboard.py`、`tests/test_storyboard_gpu.py` 與 14.3 為準。
 
 ### 14.4 乾淨環境
 
@@ -1419,7 +1424,8 @@ FCFS 檢查原本比較容器的開始時間，但隊首與後面的工作在同
   這兩者見 M6.5～M6.7 與 M11 的實驗室實測。只用閒置的卡：kindred 的 A40 被 gemma 占用，smoke 沒有在 A40 上跑工作。
 - smoke 有其他人的工作時拒絕開始，但只看得到節點上的配置與自己的工作，看不到別人排隊中的工作。FCFS 檢查讓整個佇列被擋約 10 秒。
 - 範例在 `fcfs` 下執行：`priority`、`estimated_runtime_s` 沒有排序效果；可搶占的範例這次沒有被搶（session 搶占由 smoke 驗證）；
-  故障重跑的範例只跑完一次，節點故障的路徑沒有觸發。實驗室沒有自動釋放（on_demand）的模型，冷啟動沒有範例（分鏡決策 6 未定）。
+  故障重跑的範例只跑完一次，節點故障的路徑沒有觸發。自動釋放模型只在本機以假模型驗證；使用者決定展示時把 gemma 改成 `on_demand`，
+  那需要重新部署 kayle，實驗室的 gemma 冷啟動與模式切換這次沒有實測。
 - Gateway 的「多人同時使用」以同一個帳號的兩個客戶端驗證，沒有用兩個不同的帳號。
 - `check` 看的是整台機器的卡，所以 kindred 會一直有 `GPUs idle` 的 `WARN`。
 - 範例與 smoke 留下的專案目錄（`hello`、`mnist`、`uv-gpu`）保留在節點上，每個專案每台最多 3 份，之後自動刪除。

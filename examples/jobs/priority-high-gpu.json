@@ -1,0 +1,7 @@
+{
+  "argv": ["uv", "run", "--locked", "python", "main.py"],
+  "resources": {"cpu": 4, "memory_mib": 8192, "gpu": 1, "min_vram_mib": 20480},
+  "time_limit_s": 1800,
+  "estimated_runtime_s": 60,
+  "priority": 8
+}

@@ -20,6 +20,7 @@ torch 2.6.0（cu124）從節點的 uv 快取安裝；節點第一次執行要下
 | `jobs/uv-gpu.json` | 最小的 GPU 工作，不指定型號（依小卡優先選卡） | 同上，換成 `uv-gpu.json` | 由 `scripts/lab_smoke.py` 經 CLI 提交：karma 的 4090，提交到完成 6.1 秒 |
 | `jobs/mnist.json` | MNIST 訓練 3 個 epoch，模型與 `metrics.json` 寫到 `/outputs` | `labflux submit examples/jobs/mnist.json --source examples/mnist --wait --wait-timeout 1800` | 見下方「其他範例的實測」 |
 | `jobs/preemptible-gpu.json` | 允許被搶占的 GPU 訓練：優先權 2、`safe_to_rerun` + `preemptible`、`estimated_runtime_s` | `labflux submit examples/jobs/preemptible-gpu.json --source examples/mnist` | kayle 的 3090，10 個 epoch 128 秒，準確率 99.18%（沒有人搶，跑完一次） |
+| `jobs/priority-high-gpu.json` | 優先權 8、至少 20 GiB 的 GPU 工作；在 `priority`／`backfill` 下可以搶占優先權較低的可搶占 GPU 工作 | `labflux submit examples/jobs/priority-high-gpu.json --source examples/uv-gpu --wait --wait-timeout 1800` | kayle 的 3090，5.6 秒（`fcfs`，沒有搶占） |
 | `jobs/retry-on-node-failure.json` | 節點失聯且容器確認不存在時自動重跑一次（`retries_on_node_failure` + `safe_to_rerun`），占著一張 ≥ 20 GiB 的卡 120 秒 | `labflux submit examples/jobs/retry-on-node-failure.json` | kayle 的 A5000，120 秒完成；節點故障的重跑要停掉 Worker 才看得到，見 `docs/verification.md` M6.5～M6.7 |
 
 - `examples/uv-gpu/main.py` 印出 torch／CUDA 版本、看得到的卡（`devices`）並在每張卡上做一次矩陣乘法，結果寫到 `/outputs/result.json`。
@@ -59,6 +60,7 @@ torch 2.6.0（cu124）從節點的 uv 快取安裝；節點第一次執行要下
 | 範例 | 示範 | 執行 | 實測 |
 |---|---|---|---|
 | `gateway/chat.py` | 只用標準函式庫（Python 3.8 以上）送到 `/v1` Gateway：列出模型、一般回應、串流 | `python3 examples/gateway/chat.py --list`；`python3 examples/gateway/chat.py "問題"`；`python3 examples/gateway/chat.py --stream "問題"` | gemma4-31b（kindred，常駐）：一般回應 0.73 秒；串流第一段 0.05 秒、完成 0.46 秒；兩個串流同時送出時 `labflux models` 顯示進行中 2，兩個都在約 2.3 秒完成 |
+| `configs/lab.example.toml` 的 `[models."small-chat"]` | 自動釋放（`on_demand`）的模型設定：`cold_wait_s`、`startup_timeout_s`、`idle_stop_s`、`reclaim_idle_s`、`retry_after_failure_s`；同一檔案的 `[models."qwen2.5-14b"]` 是常駐（`persistent`） | 放進自己的 `configs/local-lab.toml` 後 `lab_deploy.py deploy --node kayle`（見 `docs/lab-deploy.md`「模型服務」） | 同樣的欄位以 `fake-model` 在本機 loopback 實測，見下方 |
 | `fake-model/server.py` | 只用標準函式庫的 CPU 假模型（OpenAI 相容），供測試或沒有 GPU 時登錄成模型服務 | 見檔案開頭的說明；設定方式見 `docs/lab-deploy.md`「模型服務」 | `tests/test_model_docker.py` |
 
 `chat.py` 的位址與金鑰取自 `OPENAI_BASE_URL`、`OPENAI_API_KEY`，沒有設定時取自 `labflux login` 存的 `~/.config/labflux/login.toml`。
@@ -72,7 +74,15 @@ curl -sN $OPENAI_BASE_URL/chat/completions -H "Authorization: Bearer $OPENAI_API
   -d '{"model": "gemma4-31b", "stream": true, "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
-模型還在啟動時回 503 與 `Retry-After`；`chat.py` 印出要等幾秒。實驗室目前只有常駐的 gemma，沒有自動釋放（on_demand）的模型。
+**自動釋放模型的實測（本機，2026-11-16）。** 實驗室目前只有常駐的 gemma，改模式要重新部署 kayle，所以 `on_demand` 的欄位改在本機
+loopback 以臨時的 Scheduler、Worker 與 `fake-model`（`python:3.12-slim`，假裝啟動 5 秒）驗證，設定 `cold_wait_s = 30`、`idle_stop_s = 20`：
+
+- 一開始 `labflux models` 顯示 `stopped`；第一個 `chat.py` 請求觸發冷啟動，等模型通過健康檢查後回應，共 6.6 秒；狀態變成 `serving`。
+- 之後的串流請求 0.16 秒完成；最後一個請求結束 20 秒後模型自己停止，回到 `stopped`。
+- 把 `cold_wait_s` 改成 0：請求立即得到 `HTTP 503 (retry after 10 s)`，模型照樣開始啟動；8 秒後再送就成功。
+
+實際模型的冷啟動要算上權重載入：gemma4-31b 在 kindred 兩張 A40 上量到約 240～306 秒（`docs/verification.md` 10.10），
+所以 `cold_wait_s`、`startup_timeout_s` 至少要給 300 秒以上；`chat.py` 預設等 900 秒。
 
 ## 其他範例的實測
 
@@ -88,18 +98,18 @@ curl -sN $OPENAI_BASE_URL/chat/completions -H "Authorization: Bearer $OPENAI_API
 
 ## 展示分鏡各幕會用到的工作類型（給 14.3）
 
-M14 的展示分鏡（M12 設計提案，9 幕）用到的工作類型與可以拿來改的範例。這裡只列通用的類型：
+M14 的展示分鏡（M12 設計提案，9 幕）用到的工作類型與可以拿來改的範例。展示以 GPU 為主（使用者決定）。這裡只列通用的類型：
 排程是 best fit、同分時依節點名稱，各幕實際的大小、時限與送出順序要先預演，
-以 `tests/test_storyboard.py`（feat/m12）與 14.3 的展示檔為準。
+以 feat/m12 的 `tests/test_storyboard.py`、`tests/test_storyboard_gpu.py`（第 2、3 幕的 GPU 版）與 14.3 的展示檔為準。
 
 | 幕 | 需要的工作類型 | 可以改的範例 | 前提或依賴 |
 |---|---|---|---|
-| 0 開場 | 不送工作；看三台節點與常駐模型 | `labflux nodes`、`labflux models`、`gateway/chat.py --list` | Dashboard（M12） |
-| 1 工作抵達與異質配置 | 指定型號的 GPU 工作、VRAM 下限的 GPU 工作、大 RAM 工作、數個 8 核 CPU 工作 | `gpu-model.json`、`gpu-vram.json`、`sleep-memory.json`、`sleep-cpu.json` | 配置說明（M12） |
-| 2 優先權插隊與公平性 | 高優先權的大 CPU 工作；兩位使用者各一個現在放不下的普通優先權工作 | `priority-high.json`（改核數）、`sleep-cpu.json`（改核數） | `priority` 或 `backfill` 策略（要重新部署 kayle）；兩個使用者身分 |
-| 3 backfill | 不同核數與硬性時限（例如 2 分、5 分、30 分）的 CPU 工作，加一個高優先權的大工作 | `sleep-cpu.json`（改 `cpu`、`time_limit_s`）、`priority-high.json` | `backfill` 策略；保留時段的顯示（M12） |
-| 4 搶占 | 低優先權、可搶占的 GPU 工作占滿卡；高優先權、VRAM 下限的 GPU 工作 | `preemptible-gpu.json`（或改成 sleep 的 GPU 工作）、`gpu-vram.json` 加 `priority` | 批次搶占要 `priority` 或 `backfill` |
-| 5 fast lane | 開發機在 `labflux shell` 裡跑測試與煙霧訓練；叢集上有小的可搶占批次工作 | `fast-lane-gpu/`、`preemptible.json`（或 `preemptible-gpu.json`） | `fcfs` 下 session 也能搶占（已實測） |
-| 6 模型服務 | (a) 兩位使用者同時對常駐模型發串流請求 (b) 自動釋放模型的冷啟動 | (a) 兩個 `gateway/chat.py --stream` (b) 沒有現成模型 | (b) 要先決定用哪個模型並部署（分鏡決策 6，未定） |
+| 0 開場 | 不送工作；看三台節點、GPU 卡與模型 | `labflux nodes`、`labflux models`、`gateway/chat.py --list` | Dashboard 的 GPU 卡課表（M12） |
+| 1 工作抵達與異質配置 | 指定型號的 GPU 工作、VRAM 下限的 GPU 工作、兩張卡的工作；CPU／RAM 工作為輔 | `gpu-model.json`、`gpu-vram.json`、`gpu-2.json`、`sleep-memory.json`、`sleep-cpu.json` | 配置說明（M12） |
+| 2 優先權插隊與公平性 | 高優先權的 GPU 工作；兩位使用者各一個現在拿不到卡的普通優先權 GPU 工作 | `priority-high-gpu.json`、`gpu-vram.json`（加 `priority`）或 sleep 的 GPU 工作（同 `retry-on-node-failure.json` 的寫法） | `priority` 或 `backfill` 策略（要重新部署 kayle）；兩個使用者身分；`tests/test_storyboard_gpu.py` |
+| 3 backfill | 硬性時限不同（例如 2 分、30 分）的 GPU 工作，加一個要等卡的高優先權隊首 | sleep 的 GPU 工作（改 `time_limit_s`）、`priority-high-gpu.json` | `backfill` 策略；保留時段的顯示（M12）；`tests/test_storyboard_gpu.py` |
+| 4 搶占 | 低優先權、可搶占的 GPU 工作占滿卡；高優先權、VRAM 下限的 GPU 工作 | `preemptible-gpu.json`（或 sleep 的可搶占 GPU 工作）、`priority-high-gpu.json` | 批次搶占要 `priority` 或 `backfill` |
+| 5 fast lane | 開發機在 `labflux shell` 裡跑測試與煙霧訓練，session 拿一張卡；叢集上有可搶占的 GPU 工作 | `fast-lane-gpu/`、`preemptible-gpu.json` | `fcfs` 下 session 也能搶占（已實測，`scripts/lab_smoke.py`） |
+| 6 模型服務 | (a) 兩位使用者同時發串流請求 (b) 自動釋放模型的冷啟動、閒置停止與交還 GPU | (a) 兩個 `gateway/chat.py --stream` (b) gemma 改成 `on_demand`（設定寫法見 `configs/lab.example.toml` 的 `small-chat`），用 `chat.py` 發第一個請求 | (b) 改模式要重新部署 kayle（使用者決定時機）；gemma 冷啟動約 5 分鐘，`cold_wait_s` 要夠長 |
 | 7 Worker 故障與恢復 | (a) 任何執行中的工作 (b) 可在別台重跑的 GPU 工作 | (a) 任一個 `sleep-*` (b) `retry-on-node-failure.json` | 要停止 karma 的 Worker，需使用者同意 |
 | 8 和 FCFS 比較 | 不送工作 | — | M13 的對照結果 |
