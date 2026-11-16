@@ -10,7 +10,7 @@ OS 課程專案：以中央 Scheduler 與多個 Docker Worker 管理 CPU／RAM�
 ```bash
 uv sync --locked
 uv run labflux version
-uv run pytest -m 'not docker and not vm'
+uv run pytest -m 'not docker and not vm and not gpu'
 uv run ruff check .
 ```
 
@@ -36,7 +36,7 @@ uv run labflux --config configs/demo.toml worker
 
 Worker 需要 Docker socket 權限；剛加入 docker 群組但尚未重新登入時，可使用
 `sg docker -c 'uv run labflux --config configs/demo.toml worker'`。
-範例設定的 Token 僅供本機開發；三台 VM 的部署腳本會產生獨立隨機 Token。
+範例設定的 Token 僅供本機開發；VM 與實驗室的部署腳本各自產生隨機 Token。
 
 ```bash
 uv run labflux --config configs/demo.toml submit examples/jobs/hello.json --source examples/workloads/hello
@@ -64,6 +64,9 @@ backfill 隊首的保留時段標在節點欄頭，session、模型服務與 bac
 點選自己的工作可看執行紀錄、即時日誌及取消。設計脈絡與設計系統見 `PRODUCT.md`、`DESIGN.md`。
 
 ## 工作與資料
+
+可直接提交的範例（CPU、RAM、GPU 型號／VRAM／多卡、優先權、可搶占、故障重跑、快速測試與 Gateway 請求）
+與實驗室實測結果見 [examples/README.md](examples/README.md)。
 
 工作 JSON 至少包含指令參數陣列 `argv`；`image` 可省略，見下方的 uv 模式。`resources.cpu` 表示 CPU 時間配額，
 `resources.memory_mib` 使用 MiB，`time_limit_s` 表示容器啟動後的執行時限。
@@ -341,24 +344,30 @@ Scheduler TOML 的相關設定：
 | `session_sync_timeout_s` | 900 | 指令前 `uv sync` 的時限 |
 | `session_writeback_bytes` | 104857600 | 每個指令寫回的檔案總量上限 |
 
-## 三台 VM 與驗證
-
-建置、啟動與停止方式見 [docs/vm-lab.md](docs/vm-lab.md)。
-VM 磁碟、SSH 私鑰、Token、執行日誌及 Scheduler 資料庫都放在被 Git 忽略的 `.labflux/vms/`。
+## 測試與驗收
 
 ```bash
-uv run pytest -m 'not docker and not vm'
-sg docker -c 'uv run pytest -m docker'
-uv run python scripts/smoke.py --config .labflux/vms/scheduler.toml --faults
+uv run pytest -m 'not docker and not vm and not gpu'          # 單元測試
+sg docker -c 'uv run pytest -m "docker and not gpu"'           # 真實容器
+sg docker -c 'uv run pytest -m gpu'                            # 只在 GPU 閒置的節點執行
+uv run python scripts/lab_smoke.py --config .labflux/lab/cli.toml   # 實驗室三台，見 docs/lab-deploy.md
 ```
 
 Docker 測試會啟動真實容器，直接驗證 cgroups、OOM、超時、串流及整個 HTTP 流程。
-VM smoke test 使用三個不同 CPU／RAM 配置的 VM，驗證 CLI、實際並行、FCFS、
-資源限制、取消，以及暫停 Worker 後的心跳逾時；完成或失敗時都寫出 JSON 紀錄。
+GPU 測試直接使用本機的卡（只執行 `nvidia-smi -L`），實驗室的 kayle 上這兩張卡同時在 Worker 的資源池裡，
+請在沒有工作排隊、卡閒置時執行。實驗室 smoke 以 GPU 為主，檢查卡的隔離、不重複配置、排隊、多卡、
+真實 CUDA、session 搶占、FCFS、資源限制與 Gateway，結果寫成 JSON（例：[docs/evidence/](docs/evidence/)）。
+
+### 三台 VM（期中）
+
+期中驗收用的三台 VM（KVM／libvirt）已經移除，建置、啟動與停止方式保留在 [docs/vm-lab.md](docs/vm-lab.md)。
+VM 磁碟、SSH 私鑰、Token、執行日誌及 Scheduler 資料庫都放在被 Git 忽略的 `.labflux/vms/`。
+`uv run python scripts/smoke.py --config .labflux/vms/scheduler.toml --faults` 只適用於這三台 VM，
+驗證 CLI、實際並行、FCFS、資源限制、取消，以及暫停 Worker 後的心跳逾時（紀錄：[docs/evidence/midterm-smoke.json](docs/evidence/midterm-smoke.json)）。
 
 ## 實體機部署
 
-kayle 執行 Scheduler 與 Worker，karma 執行 Worker，都以專屬帳號 `labflux` 的 systemd user service 執行。
+kayle 執行 Scheduler 與 Worker，karma 與 kindred 執行 Worker，都以專屬帳號 `labflux` 的 systemd user service 執行。
 步驟、防火牆與日誌見 [docs/lab-deploy.md](docs/lab-deploy.md)。節點清單放在被 Git 忽略的
 `configs/local-lab.toml`（格式見 `configs/lab.example.toml`），產生的 Token 與設定放在 `.labflux/lab/`。
 
@@ -371,15 +380,19 @@ kayle 執行 Scheduler 與 Worker，karma 執行 Worker，都以專屬帳號 `la
 uv run python scripts/lab_deploy.py check                  # 前置檢查，唯讀
 uv run python scripts/lab_deploy.py firewall-instructions  # 管理員要執行的防火牆指令
 uv run python scripts/lab_deploy.py deploy --dry-run       # 印出部署步驟，不執行
-uv run python scripts/lab_deploy.py status
+uv run python scripts/lab_deploy.py status                 # 各台服務、版本與 Scheduler 看到的預約量
 ```
+
+啟動、停止、更新與移除見 [docs/lab-deploy.md](docs/lab-deploy.md)；排程策略（清單的 `[scheduler] policy`）與
+模型服務（清單的 `[models.<名稱>]`）也在同一份文件。
 
 ## 目前邊界
 
 目前交付到 M6.6、M7 的 GPU 配置（整張獨占）、uv 模式、實體機部署工具、M8 的排程策略，
 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身），
 M10 的共享模型服務與推論 Gateway（`docs/architecture.md` 第 9 節）、M11 的搶占，
-以及專案目錄保留在節點、下一次同專案的工作接著開始（`docs/architecture.md` 6.1；被搶占的專案工作重跑時也從這裡接著跑）。
+以及專案目錄保留在節點、下一次同專案的工作接著開始（`docs/architecture.md` 6.1；被搶占的專案工作重跑時也從這裡接著跑）、
+以 Linux 帳號登入（`labflux login`），與 M14 的安裝說明、範例和乾淨環境的驗收（14.1、14.2、14.4）。
 M12 的監控與決策說明（排隊順序、分數、等待原因、backfill 保留時段與最近的排程決定由 Scheduler 的 `/api/queue` 提供，
 Dashboard 與 CLI 呈現）已以單元測試、展示分鏡測試與 headless Chromium 驗證，實驗室實測尚未進行。
 展示腳本（M14.3）的操作手冊見 [docs/demo.md](docs/demo.md)，各幕的工作檔在 `examples/demo/`，以 `scripts/demo.py` 執行；
