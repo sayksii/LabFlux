@@ -12,6 +12,10 @@ GPU_UUID = r"^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 MODEL_KIND = "MODEL"
 MODEL_OWNER = "@models"
 MODEL_NAME = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$"
+ATTEMPT_ID = r"^[a-f0-9]{32}$"
+WORKER_ID = r"^[a-zA-Z0-9_.-]{1,64}$"
+# A project name (P1): only a database key, never a path, so any printable text is allowed.
+PROJECT_NAME = r"^[^\x00-\x1f\x7f]{1,128}$"
 
 
 class ResourceRequest(BaseModel):
@@ -51,6 +55,11 @@ class JobSpec(BaseModel):
     # New attempts allowed after an infrastructure loss (the node or its container was lost);
     # cancellation, time limits and program exits are never retried. Formerly max_retries.
     retries_on_node_failure: int = Field(default=0, ge=0, le=10)
+
+    # Owner + project identify a project (6.1 P1). The job's project directory is kept on its
+    # node afterwards, and the next run of the project on that node starts from its files.
+    # None keeps the old behavior: the directory is deleted and nothing is copied.
+    project: str | None = Field(default=None, pattern=PROJECT_NAME)
 
     @model_validator(mode="before")
     @classmethod
@@ -132,6 +141,9 @@ class ExecutionSpec(BaseModel):
     session: bool = False
     # A model server container (M10): no time limit; STARTED is reported once it is healthy.
     service: ServiceSpec | None = None
+    # A kept project directory on this node to start from (6.1 P0b): its generated files are
+    # copied into the new workspace before the snapshot is applied.
+    previous_attempt_id: str | None = Field(default=None, pattern=ATTEMPT_ID)
 
 
 class GpuDevice(BaseModel):
@@ -161,10 +173,6 @@ class Capacity(BaseModel):
         ):
             raise ValueError("GPU UUIDs and indexes must be distinct")
         return values
-
-
-ATTEMPT_ID = r"^[a-f0-9]{32}$"
-WORKER_ID = r"^[a-zA-Z0-9_.-]{1,64}$"
 
 
 class InventoryAttempt(BaseModel):
@@ -231,6 +239,9 @@ class WorkerEvent(BaseModel):
     reason: str = Field(default="", max_length=2048)
     termination_confirmed: bool = False
     oom_killed: bool = False
+    # FINISHED of a project job only: the attempt's directory stays on the node (6.1 P0a) and
+    # holds this many bytes; None means it was deleted.
+    kept_bytes: int | None = Field(default=None, ge=0)
 
 
 class LogUpload(BaseModel):

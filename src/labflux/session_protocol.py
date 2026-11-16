@@ -24,7 +24,7 @@ from typing import Annotated, BinaryIO, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
-from labflux.models import ResourceRequest
+from labflux.models import PROJECT_NAME, ResourceRequest
 
 PROTOCOL_VERSION = 1
 
@@ -171,6 +171,9 @@ class SessionRequest(Message):
     image: str | None = Field(default=None, min_length=1, max_length=512)
     # Mounted read-only at /datasets/<name>; the Scheduler validates names as for JobSpec.
     datasets: list[str] = Field(default_factory=list, max_length=32)
+    # The client's project ([project] name, else its root folder name): a new session starts
+    # from the project's latest kept result on its node (architecture 6.1 P5).
+    project: str | None = Field(default=None, pattern=PROJECT_NAME)
 
 
 class SessionView(BaseModel):

@@ -22,6 +22,7 @@ from labflux.database import (
     jobs,
     logs,
     nodes,
+    project_results,
 )
 from labflux.models import (
     MODEL_KIND,
@@ -392,6 +393,7 @@ class Scheduler:
                 continue  # Never delivered; normal command polling hands it to the new instance.
             else:
                 # The node lost the execution (crash, reboot, removed container): retryable.
+                # The Worker keeps the directory of a launched run, so a retry continues there.
                 self._finish(
                     connection,
                     attempt,
@@ -399,6 +401,7 @@ class Scheduler:
                     "FAILED",
                     "container missing after worker restart",
                     lost=True,
+                    kept=bool(record and record.launched),
                 )
                 result["closed"].append(attempt["id"])
         for item in inventory.containers:
@@ -417,12 +420,16 @@ class Scheduler:
         exit_code: int | None = None,
         oom_killed: bool = False,
         lost: bool = False,
+        kept: bool = False,
+        size: int | None = None,
     ) -> None:
         """Record confirmed termination; CPU, RAM and GPUs are released together.
 
         `lost` marks an infrastructure loss; a job with retries left is queued again. An attempt
         stopped for a preemption whose stop took effect, or whose execution was lost, becomes
         PREEMPTED and its job is queued again; an outcome it reached on its own is kept.
+        `kept` means the Worker keeps the attempt's directory (`size` bytes, None when
+        unknown).
         """
         preempted_by = attempt.get("preempted_by")
         if job["cancel_requested"]:
@@ -447,6 +454,8 @@ class Scheduler:
             .where(attempt_gpus.c.attempt_id == attempt["id"])
             .values(released=True)
         )
+        if kept:
+            self._keep_result(connection, attempt, job, size)
         if job["current_attempt_id"] == attempt["id"]:
             state = outcome
             if outcome == PREEMPTED:
@@ -485,6 +494,84 @@ class Scheduler:
         connection.execute(
             commands.update().where(commands.c.attempt_id == attempt["id"]).values(acked=True)
         )
+        # After the job's new state: a job queued for retry keeps its directories (P2).
+        self._prune_results(connection, job)
+
+    def _keep_result(self, connection, attempt: dict, job: dict, size: int | None) -> None:
+        """Record a project directory kept on its node (6.1 P0a)."""
+        project = job["spec"].get("project")
+        if not project or job["kind"] in (SESSION_KIND, MODEL_KIND):
+            return  # A session never counts as a previous run (P5); a model service has none.
+        connection.execute(
+            project_results.insert().values(
+                attempt_id=attempt["id"],
+                job_id=job["id"],
+                owner=job["owner"],
+                project=project,
+                node_id=attempt["node_id"],
+                size=size,
+                ended_at=self.clock(),
+            )
+        )
+
+    def _prune_results(self, connection, job: dict) -> None:
+        """Delete the job's project's directories beyond the newest results_keep on each node
+        (P4) with durable PRUNE commands; a row goes when its PRUNE is queued, so the table lists
+        what remains. A directory of a job that can still run again (queued for a retry) stays,
+        since the retry continues from it (P2); it goes when that job ends or is cancelled,
+        which runs this again."""
+        project = job["spec"].get("project")
+        if not project or job["kind"] in (SESSION_KIND, MODEL_KIND):
+            return
+        rows = connection.execute(
+            select(
+                project_results.c.id,
+                project_results.c.attempt_id,
+                project_results.c.node_id,
+                jobs.c.state,
+            )
+            .select_from(project_results.join(jobs, jobs.c.id == project_results.c.job_id))
+            .where(project_results.c.owner == job["owner"], project_results.c.project == project)
+            .order_by(project_results.c.node_id, project_results.c.id.desc())
+        ).all()
+        newer: dict[str, int] = {}
+        pruned = set()
+        for row in rows:
+            position = newer.get(row.node_id, 0)
+            newer[row.node_id] = position + 1
+            if position < self.settings.results_keep or row.state not in TERMINAL:
+                continue
+            connection.execute(project_results.delete().where(project_results.c.id == row.id))
+            connection.execute(
+                commands.insert().values(
+                    id=f"prune-{row.attempt_id}",
+                    node_id=row.node_id,
+                    attempt_id=row.attempt_id,
+                    kind="PRUNE",
+                    payload={"attempt_id": row.attempt_id, "worker_id": row.node_id},
+                    acked=False,
+                    created_at=self.clock(),
+                )
+            )
+            pruned.add(row.node_id)
+        for node_id in sorted(pruned):
+            self._ring(node_id)
+
+    @staticmethod
+    def _project_results(connection, job: dict, spec: JobSpec) -> list:
+        """The project's kept directories, best source first: this job's own earlier attempts
+        (a retry continues from them, P2), then the most recently ended runs (P0c)."""
+        if not spec.project or job["kind"] == MODEL_KIND:
+            return []
+        return connection.execute(
+            select(
+                project_results.c.attempt_id, project_results.c.job_id, project_results.c.node_id
+            )
+            .where(
+                project_results.c.owner == job["owner"], project_results.c.project == spec.project
+            )
+            .order_by(project_results.c.job_id != job["id"], project_results.c.id.desc())
+        ).all()
 
     def heartbeat(self, node_id: str, payload: Heartbeat) -> dict:
         with self.db.transaction() as connection:
@@ -1093,9 +1180,17 @@ class Scheduler:
                     )
                 self._note(connection, job, note)
                 continue
+            # Nodes holding the project's files go first, the one with the best source first
+            # (a retry's own attempt, then the latest run): a preference among the nodes that
+            # fit now, never a wait (6.1 P0c).
+            results = self._project_results(connection, job, spec)
+            rank: dict[str, int] = {}
+            for position, row in enumerate(results):
+                rank.setdefault(row.node_id, position)
             node, cards = min(
                 candidates,
                 key=lambda c: (
+                    rank.get(c[0]["id"], len(results)),
                     len(c[1]) - request["gpu"],
                     c[0]["capacity"]["cpu"] - allocated[c[0]["id"]]["cpu"] - request["cpu"],
                     c[0]["capacity"]["cpu"],
@@ -1120,7 +1215,21 @@ class Scheduler:
                     f"{short(head['id'])} reserved on {reservation.node_id} at "
                     f"{clock_text(reservation.start)}; {safe} ({entry.why})"
                 )
-            self._dispatch(connection, job, spec, node["id"], gpu_uuids, now, note)
+            source = next((row for row in results if row.node_id == node["id"]), None)
+            if source is not None:
+                note += f"; starts from the files of job {short(source.job_id)}"
+            elif results:
+                note += f"; no node with the project's files ({', '.join(rank)}) can run it now"
+            self._dispatch(
+                connection,
+                job,
+                spec,
+                node["id"],
+                gpu_uuids,
+                now,
+                note,
+                source.attempt_id if source is not None else None,
+            )
             held.update(gpu_uuids)
             allocated[node["id"]]["cpu"] += request["cpu"]
             allocated[node["id"]]["memory_mib"] += request["memory_mib"]
@@ -1141,6 +1250,7 @@ class Scheduler:
         gpu_uuids: list[str],
         now: float,
         note: str,
+        previous_attempt_id: str | None = None,
     ) -> None:
         """Reserve the resources in a new attempt and queue its START command."""
         attempt_id = uuid.uuid4().hex
@@ -1177,6 +1287,8 @@ class Scheduler:
             payload["session"] = True
         if job.get("kind") == MODEL_KIND:
             payload["service"] = self._service_spec(job["service"]).model_dump()
+        if previous_attempt_id:
+            payload["previous_attempt_id"] = previous_attempt_id
         connection.execute(
             commands.insert().values(
                 id=f"start-{attempt_id}",
@@ -1336,6 +1448,42 @@ class Scheduler:
                 result.append(value)
             return result
 
+    def list_results(self, owner: str) -> list[dict]:
+        """The owner's kept project directories, newest first per project and node (P4)."""
+        with self.db.transaction() as connection:
+            rows = connection.execute(
+                select(
+                    project_results,
+                    attempts.c.state.label("outcome"),
+                    jobs.c.state.label("job_state"),
+                )
+                .select_from(
+                    project_results.join(
+                        attempts, attempts.c.id == project_results.c.attempt_id
+                    ).join(jobs, jobs.c.id == project_results.c.job_id)
+                )
+                .where(project_results.c.owner == owner)
+                .order_by(
+                    project_results.c.project,
+                    project_results.c.node_id,
+                    project_results.c.id.desc(),
+                )
+            ).all()
+        result, counts = [], {}
+        for row in rows:
+            value = row_dict(row)
+            del value["id"], value["owner"]
+            job_state = value.pop("job_state")
+            key = (value["project"], value["node_id"])
+            counts[key] = counts.get(key, 0) + 1
+            # The oldest of a full set: the next run of the project there deletes it, unless
+            # its job waits for a retry (_prune_results).
+            value["deleted_by_next_run"] = (
+                counts[key] >= self.settings.results_keep and job_state in TERMINAL
+            )
+            result.append(value)
+        return result
+
     def check_instance(self, node_id: str, instance_id: str) -> None:
         """Raise unless instance_id is the node's current registered instance."""
         with self.db.transaction() as connection:
@@ -1377,7 +1525,10 @@ class Scheduler:
             ).first()
             payload = event.model_dump()
             if existing:
-                if existing.attempt_id != attempt_id or existing.payload != payload:
+                # Normalized, so a payload stored before a field was added (kept_bytes) still
+                # matches its resent event.
+                stored = WorkerEvent.model_validate(existing.payload).model_dump()
+                if existing.attempt_id != attempt_id or stored != payload:
                     raise ServiceError(409, "event ID was reused with different contents")
                 return {"duplicate": True}
             connection.execute(
@@ -1445,6 +1596,8 @@ class Scheduler:
                     event.reason,
                     event.exit_code,
                     event.oom_killed,
+                    kept=event.kept_bytes is not None,
+                    size=event.kept_bytes,
                 )
                 self._schedule(connection)
         return {"accepted": True}
@@ -1465,6 +1618,7 @@ class Scheduler:
                             updated_at=self.clock(),
                         )
                     )
+                    self._prune_results(connection, job)  # A retry's kept directories.
                     self._schedule(connection)
                 else:
                     self._request_stop(connection, job, STOP_WAIT)
@@ -1650,6 +1804,8 @@ class Scheduler:
                 time_limit_s=self.settings.session_lease_s,
                 priority=self.settings.default_priority,
                 retries_on_node_failure=0,
+                # Starts from the project's latest result on its node (6.1 P5); never kept.
+                project=request.project,
             )
         except ValidationError as exc:
             raise ServiceError(422, str(exc)) from exc
@@ -1758,6 +1914,9 @@ class Scheduler:
             time_limit_s=config.startup_timeout_s,
             priority=self.settings.default_priority,
             retries_on_node_failure=0,
+            # A model server keeps no project directory, starts from no earlier run and gets no
+            # placement preference (6.1).
+            project=None,
         )
 
     def _service_spec(self, name: str) -> ServiceSpec:

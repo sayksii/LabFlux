@@ -13,8 +13,10 @@ import tarfile
 import threading
 import time
 import uuid
+from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from socket import SHUT_RDWR
@@ -56,7 +58,15 @@ from labflux.session_protocol import (
     iter_chunks,
     parse_worker_command,
 )
-from labflux.workspace import apply_snapshot, dependency_hash, is_directory, pack_files, scan
+from labflux.workspace import (
+    apply_snapshot,
+    copy_generated,
+    dependency_hash,
+    is_directory,
+    pack_files,
+    scan,
+    tree_size,
+)
 
 log = logging.getLogger("labflux.worker")
 ATTEMPT_ID = re.compile(r"[a-f0-9]{32}")
@@ -67,6 +77,9 @@ RETRY_S = 0.5
 # How long a finished session attempt waits for its in-flight command to send its result.
 COMMAND_JOIN_S = 30
 CANCELLED = "command cancelled by the client"
+# Beside a project job's workspace: its snapshot's file list, so that the project's next run
+# can tell which files this run generated (architecture 6.1 P3).
+SNAPSHOT_FILES = "snapshot-files.json"
 
 
 class Unaddressed(Exception):
@@ -80,6 +93,10 @@ class Invalid(Exception):
         super().__init__(reason)
         self.attempt_id = attempt_id
         self.reason = reason
+
+
+class Deferred(Exception):
+    """A command that cannot run yet; it stays unacked, so a later poll runs it."""
 
 
 class StopEvent(threading.Event):
@@ -199,6 +216,11 @@ class Worker:
         self.local = httpx.Client(trust_env=False)
         self.socket = None
         self.lock = threading.RLock()
+        # Kept project directories being copied from, with their copy counts, and those whose
+        # PRUNE has arrived (6.1); see _reading.
+        self.results_lock = threading.Lock()
+        self.results_readers: Counter[str] = Counter()
+        self.results_pruning: set[str] = set()
         self.pool = ThreadPoolExecutor(
             max_workers=settings.max_parallel_jobs, thread_name_prefix="job"
         )
@@ -262,6 +284,8 @@ class Worker:
             "node_id", self.settings.worker_id
         ) != self.settings.worker_id:
             raise Unaddressed("command is addressed to another worker")
+        if command.get("kind") == "PRUNE":
+            return  # Names only a kept project directory: the checks above cover it.
         if command.get("kind") not in {"START", "STOP"}:
             raise Invalid(attempt_id, f"unknown command kind {command.get('kind')!r}")
         try:
@@ -287,6 +311,8 @@ class Worker:
                 continue
             try:
                 self.accept(command)
+            except Deferred:
+                continue  # Unacked: a later poll runs it.
             except Exception:
                 # Unacked, so the next poll retries it; the remaining commands still run.
                 log.exception(
@@ -326,6 +352,9 @@ class Worker:
         self.outbox_ready.set()
 
     def accept(self, command: dict) -> None:
+        if command["kind"] == "PRUNE":
+            self._prune(command["payload"]["attempt_id"])
+            return
         spec = self._spec(command["payload"])
         with self.lock:
             handle = self.handles.get(spec.attempt_id)
@@ -534,7 +563,7 @@ class Worker:
                     "result_sent": True,
                 },
             )
-        self._remove_workspace(attempt_id)
+        self._settle_workspace(attempt_id)
 
     def _adopt(self, entry: dict) -> None:
         """Resume an attempt the scheduler still holds for this worker."""
@@ -625,6 +654,8 @@ class Worker:
 
     def _prepare(self, spec: ExecutionSpec, workspace: Path) -> None:
         workspace.mkdir(parents=True, exist_ok=True)
+        if spec.previous_attempt_id and spec.previous_attempt_id != spec.attempt_id:
+            self._continue_from(spec, workspace)
         if spec.job.source_id:
             archive = workspace.parent / "source.tar.gz"
             digest = hashlib.sha256()
@@ -644,12 +675,41 @@ class Worker:
                         target.write(chunk)
                 if digest.hexdigest() != response.headers["X-Content-SHA256"]:
                     raise ValueError("source checksum mismatch")
-            extract_archive(
-                archive,
-                workspace,
-                max_bytes=self.settings.max_extracted_bytes,
-                max_members=self.settings.max_archive_members,
-            )
+            if spec.job.project:
+                # Over the copied files, replacing any of the same name (D4).
+                files = apply_snapshot(
+                    workspace,
+                    archive,
+                    [],
+                    self.settings.max_extracted_bytes,
+                    self.settings.max_archive_members,
+                )
+                write_json(workspace.parent / SNAPSHOT_FILES, {"files": files})
+            else:
+                extract_archive(
+                    archive,
+                    workspace,
+                    max_bytes=self.settings.max_extracted_bytes,
+                    max_members=self.settings.max_archive_members,
+                )
+
+    def _continue_from(self, spec: ExecutionSpec, workspace: Path) -> None:
+        """Copy the files the project's previous run on this node generated (6.1 P0b)."""
+        previous = self.root / spec.previous_attempt_id
+        context = {"job_id": spec.job_id, "attempt_id": spec.attempt_id}
+        with self._reading(previous.name) as available:
+            if not available or not is_directory(previous, "workspace"):
+                log.warning(
+                    "previous project directory is gone or being pruned; starting without it",
+                    extra=context,
+                )
+                return
+            try:
+                files = json.loads((previous / SNAPSHOT_FILES).read_text())["files"]
+            except FileNotFoundError:
+                files = []  # A run without a snapshot generated everything in its directory.
+            copied = copy_generated(previous / "workspace", workspace, files)
+        log.info("started from %d files of attempt %s", len(copied), previous.name, extra=context)
 
     def _execute(
         self,
@@ -783,7 +843,8 @@ class Worker:
                 self._send_output(attempt_id, state)
                 state = self._read(attempt_id)
                 if state["output_sent"] and state["result"]["termination_confirmed"]:
-                    self._remove_workspace(attempt_id)
+                    self._settle_workspace(attempt_id)
+                    state = self._read(attempt_id)
                 result = state["result"]
                 reason = result["reason"]
                 if state["logs_truncated"]:
@@ -796,6 +857,7 @@ class Worker:
                         "kind": "FINISHED",
                         **result,
                         "reason": reason,
+                        "kept_bytes": state.get("kept_bytes"),
                     },
                 )
                 with self.lock:
@@ -854,6 +916,66 @@ class Worker:
             "gpus": [gpu.model_dump() for gpu in self.gpus.observe(assigned)],
             "active_attempts": active,
         }
+
+    def _settle_workspace(self, attempt_id: str) -> None:
+        """Once nothing can run in it any more: keep a launched project run's directory on this
+        node and record its size (6.1 P0a), or drop the job's files as before. Repeated calls
+        agree, so a resent FINISHED event carries the same kept_bytes."""
+        state = self._read(attempt_id)
+        if state.get("kept_bytes") is not None:
+            return
+        spec = state.get("spec") or {}
+        workspace = self.root / attempt_id / "workspace"
+        if not (
+            spec.get("job", {}).get("project")
+            and not spec.get("session")  # A session's files end with it (P5).
+            and not spec.get("service")  # A model server's are only its caches (M10).
+            and state.get("launched", True)  # Nothing ran: the previous result is still newer.
+            and is_directory(workspace.parent, "workspace")
+        ):
+            self._remove_workspace(attempt_id)
+            return
+        # Never copied to the next run (P3), and a uv environment can be several GB.
+        shutil.rmtree(workspace / ".venv", ignore_errors=True)
+        self._change(attempt_id, kept_bytes=tree_size(workspace))
+
+    def _prune(self, attempt_id: str) -> None:
+        """Delete a kept project directory the Scheduler no longer keeps (6.1 P4). Copies from
+        it that already run finish first: until then the PRUNE is deferred, so the command
+        loop never waits for them, and copies that would start now go without the files."""
+        if not ATTEMPT_ID.fullmatch(attempt_id):
+            raise ValueError("invalid attempt ID")
+        with self.lock:
+            if attempt_id in self.active:
+                log.error("refused to prune a running attempt", extra={"attempt_id": attempt_id})
+                return
+        with self.results_lock:
+            self.results_pruning.add(attempt_id)
+            if self.results_readers[attempt_id]:
+                raise Deferred(f"attempt {attempt_id} is being copied")
+        self._remove_workspace(attempt_id)
+        with self.results_lock:
+            self.results_pruning.discard(attempt_id)
+
+    @contextmanager
+    def _reading(self, attempt_id: str):
+        """Copy from one kept project directory; any number of copies share it. Yields False
+        once its PRUNE has arrived. The last copy to finish wakes the command loop, so the
+        deferred PRUNE runs at once."""
+        with self.results_lock:
+            available = attempt_id not in self.results_pruning
+            if available:
+                self.results_readers[attempt_id] += 1
+        try:
+            yield available
+        finally:
+            if available:
+                with self.results_lock:
+                    self.results_readers[attempt_id] -= 1
+                    if not self.results_readers[attempt_id]:
+                        del self.results_readers[attempt_id]
+                        if attempt_id in self.results_pruning:
+                            self.commands_ready.set()
 
     def _remove_workspace(self, attempt_id: str) -> None:
         """Drop the job's files (a uv .venv can be several GB) once nothing can still run in

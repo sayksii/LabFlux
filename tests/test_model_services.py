@@ -10,13 +10,13 @@ import pytest
 import uvicorn
 from conftest import finish, heartbeat, register, submit, user_headers, worker_headers
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from test_doorbell import socket_url, wait_for
 from websockets.sync.client import connect
 
 from labflux.api import create_app
 from labflux.config import ModelConfig, Settings
-from labflux.database import commands, jobs
+from labflux.database import commands, jobs, project_results
 from labflux.inference import RELAYED_PATHS, TruncatedResponse
 from labflux.models import MODEL_KIND, MODEL_OWNER
 from labflux.scheduler import PERSISTENT_LEASE_S, ServiceError
@@ -425,6 +425,32 @@ def test_an_adopted_model_serves_only_after_its_started_event(make_client):
     assert service.list_models()[0]["state"] == "starting"
     report(client, service, view["job_id"], new)
     assert service.list_models()[0]["state"] == "serving"
+
+
+def test_a_model_service_is_not_a_project_job(make_client):
+    """No kept directory, no earlier run to start from (architecture 6.1)."""
+    client = make_client()
+    service = client.app.state.scheduler
+    instance, view = serving(client, service)
+    assert model_jobs(service)[0]["spec"]["project"] is None
+    with service.db.transaction() as connection:
+        start = connection.execute(
+            select(commands.c.payload).where(commands.c.id == f"start-{view['attempt_id']}")
+        ).scalar_one()
+    assert "previous_attempt_id" not in start
+    report(
+        client,
+        service,
+        view["job_id"],
+        instance,
+        kind="FINISHED",
+        outcome="FAILED",
+        termination_confirmed=True,
+        reason="exited",
+        kept_bytes=10,
+    )
+    with service.db.transaction() as connection:
+        assert connection.execute(select(func.count()).select_from(project_results)).scalar() == 0
 
 
 # Gateway -------------------------------------------------------------------------------------

@@ -132,6 +132,28 @@ Index(
     sqlite_where=attempt_gpus.c.released.is_(False),
 )
 
+# Project directories kept on their node after a job of a project ended (6.1 P0a); a row is
+# deleted when its directory is pruned (P4). The id is the order in which runs ended.
+project_results = Table(
+    "project_results",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("attempt_id", String, ForeignKey("attempts.id"), nullable=False, unique=True),
+    Column("job_id", String, ForeignKey("jobs.id"), nullable=False),
+    Column("owner", String, nullable=False),
+    Column("project", String, nullable=False),
+    Column("node_id", String, ForeignKey("nodes.id"), nullable=False),
+    # None: unknown, for a run closed while its Worker restarted.
+    Column("size", Integer),
+    Column("ended_at", Float, nullable=False),
+)
+Index(
+    "project_results_lookup",
+    project_results.c.owner,
+    project_results.c.project,
+    project_results.c.node_id,
+)
+
 
 def add_schedule_note(connection) -> None:
     connection.exec_driver_sql("ALTER TABLE jobs ADD COLUMN schedule_note TEXT NOT NULL DEFAULT ''")
@@ -157,6 +179,8 @@ MIGRATIONS = {
     4: add_sessions,
     5: add_services,
     6: add_preempted_by,
+    # checkfirst: tests simulate older databases from a current one that already has it.
+    7: lambda connection: project_results.create(connection, checkfirst=True),
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

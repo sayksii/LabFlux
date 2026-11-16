@@ -136,6 +136,10 @@ def create_app(
             return
         await relay.serve(websocket, owner, session_id, service, hub)
 
+    @app.get("/api/results")
+    def list_results(owner: str = Depends(user)):
+        return service.list_results(owner)
+
     @app.get("/api/nodes")
     def list_nodes(owner: str = Depends(user)):
         return service.list_nodes()

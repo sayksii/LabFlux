@@ -1,4 +1,5 @@
-"""Host-side session workspace operations for the fast lane (D4b snapshot, D12 write-back).
+"""Host-side workspace operations: the fast lane's snapshot and write-back (D4b, D12), and
+starting a project's next run from its kept directory (6.1).
 
 Commands in the session container can create symbolic links anywhere in the bind-mounted
 workspace, and a background process may still be running while the Worker works on it. Every
@@ -208,3 +209,48 @@ def dependency_hash(workspace: Path, snapshot_files: list[str]) -> str | None:
             data = stream.read()
         digest.update(f"{name}\0{len(data)}\0".encode() + data)
     return digest.hexdigest() if found else None
+
+
+def copy_generated(previous: Path, workspace: Path, snapshot_files: list[str]) -> list[str]:
+    """Copy the files a previous run of the project generated into a new workspace (6.1 P0b).
+
+    Generated means not in that run's own snapshot; caches and links are left out as in the
+    write-back (P3, D12). Modification times are kept, so "the newest checkpoint" stays the
+    same. Returns the copied paths. The new snapshot is applied afterwards and always wins.
+    """
+    copied = []
+    for relative in sorted(scan(previous).keys() - set(snapshot_files)):
+        opened = _open_file(previous, relative)
+        if opened is None:
+            continue
+        fd, info = opened
+        with os.fdopen(fd, "rb") as source:
+            *parents, name = PurePosixPath(relative).parts
+            directory = _open_directory(workspace, tuple(parents), create=True)
+            try:
+                target = os.open(
+                    name,
+                    os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                    info.st_mode & 0o777,
+                    dir_fd=directory,
+                )
+            finally:
+                os.close(directory)
+            with os.fdopen(target, "wb") as stream:
+                shutil.copyfileobj(source, stream, length=1024**2)
+                stream.flush()
+                os.utime(stream.fileno(), ns=(info.st_atime_ns, info.st_mtime_ns))
+        copied.append(relative)
+    return copied
+
+
+def tree_size(root: Path) -> int:
+    """Bytes of the regular files under root, without following links."""
+    total = 0
+    for directory, _, files in os.walk(root):
+        for name in files:
+            with suppress(FileNotFoundError):
+                info = os.lstat(os.path.join(directory, name))
+                if stat.S_ISREG(info.st_mode):
+                    total += info.st_size
+    return total

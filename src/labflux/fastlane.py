@@ -32,7 +32,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from labflux.archives import extract_archive, pack_directory
-from labflux.models import ResourceRequest
+from labflux.models import PROJECT_NAME, ResourceRequest
 from labflux.session_protocol import (
     DEFAULT_ROUTED_COMMANDS,
     EXIT_CANCELLED,
@@ -113,8 +113,17 @@ class RouteConfig(BaseModel):
         return values
 
 
+class ProjectInfo(BaseModel):
+    """[project] in .labflux.toml: the name that, with the owner, identifies the project whose
+    kept results a job or session starts from (architecture 6.1 P1)."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, pattern=PROJECT_NAME)
+
+
 class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    project: ProjectInfo = Field(default_factory=ProjectInfo)
     session: SessionDefaults = Field(default_factory=SessionDefaults)
     route: RouteConfig = Field(default_factory=RouteConfig)
 
@@ -141,14 +150,21 @@ def load_project(root: Path) -> ProjectConfig:
         raise ProjectError(f"invalid {path}: {exc}") from exc
 
 
+def project_name(root: Path, project: ProjectConfig | None) -> str | None:
+    """[project] name, else the name of the project root folder (6.1 P1); None for /."""
+    return (project.project.name if project else None) or root.resolve().name or None
+
+
 def session_request(
     project: ProjectConfig,
     *,
+    name: str | None = None,
     cpu: float | None = None,
     memory_mib: int | None = None,
     gpu: int | None = None,
 ) -> SessionRequest:
-    """Flags first, then [session], then the ResourceRequest defaults; raises ValueError."""
+    """Flags first, then [session], then the ResourceRequest defaults; raises ValueError.
+    `name` is the project name a new session starts from (6.1 P5)."""
     values = project.session.model_dump(
         include={"cpu", "memory_mib", "gpu", "gpu_model", "min_vram_mib"}, exclude_none=True
     )
@@ -158,6 +174,7 @@ def session_request(
         resources=ResourceRequest(**values),
         image=project.session.image,
         datasets=project.session.datasets,
+        project=name,
     )
 
 
@@ -573,7 +590,9 @@ def run_command(
     logging.getLogger("websockets").setLevel(logging.WARNING)
     root = root.absolute()
     try:
-        request = session_request(project, cpu=cpu, memory_mib=memory_mib, gpu=gpu)
+        request = session_request(
+            project, name=project_name(root, project), cpu=cpu, memory_mib=memory_mib, gpu=gpu
+        )
         relative = cwd.absolute().relative_to(root).as_posix()
     except ValueError as exc:
         say(str(exc))

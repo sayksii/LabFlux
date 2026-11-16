@@ -45,6 +45,7 @@ uv run labflux --config configs/demo.toml logs JOB_ID --follow
 uv run labflux --config configs/demo.toml fetch JOB_ID --directory outputs/JOB_ID
 uv run labflux --config configs/demo.toml nodes
 uv run labflux --config configs/demo.toml cancel JOB_ID
+uv run labflux --config configs/demo.toml results ls
 ```
 
 `submit --wait` 等到工作完成；失敗、取消或等待逾時（預設 120 秒，可用 `--wait-timeout` 調整）會以非零狀態退出。
@@ -70,6 +71,7 @@ Scheduler 在 `/dashboard` 提供監控頁（例如 `http://127.0.0.1:8000/dashb
 | `safe_to_rerun` | `false` | 程式從頭再跑一次不會造成傷害（例如不會重複寫入外部資料庫）；`preemptible` 與 `retries_on_node_failure` 都需要它 |
 | `preemptible` | `false` | 允許 Scheduler 為了更重要的工作停止它並重新排隊；需要 `"safe_to_rerun": true`，見下方「搶占」 |
 | `retries_on_node_failure` | 0 | 執行遺失（節點失聯且確認容器已不存在）時最多重跑幾次，上限 10；大於 0 時需要 `"safe_to_rerun": true`。舊名稱 `max_retries` 仍可使用；見下方「故障與重跑」 |
+| `project` | `--source` 目錄的專案名稱 | 專案名稱（與擁有者一起識別專案）；有它的工作保留專案目錄，見下方「專案目錄與接續」 |
 
 `--source` 上傳可重現的程式快照，預設排除 Git、虛擬環境、資料集、輸出與 `.env`，
 並讀取來源根目錄的 `.gitignore` 與 `.labfluxignore`。來源與輸出封存檔都拒絕路徑跳脫、
@@ -84,6 +86,22 @@ images = "/srv/datasets/images"
 
 工作設定 `"datasets": ["images"]`，Scheduler 只選擇具有該資料集的節點，
 容器中以唯讀方式掛載於 `/datasets/images`。
+
+### 專案目錄與接續
+
+程式照常把 checkpoint 寫在專案目錄下（例如 `ckpt/model.pt`），下一次同專案的工作就從這裡接著開始，程式不用改路徑
+（設計見 `docs/architecture.md` 6.1）：
+
+- `submit --source DIR` 自動填入 `project`：`DIR/.labflux.toml` 的 `[project] name`，沒有時用 `DIR` 的資料夾名稱；
+  工作 JSON 自己寫的 `project` 優先。沒有 `project` 的工作照舊：結束後刪除 `/workspace`，也不複製任何檔案。
+- 有 `project` 的工作結束後（成功、失敗或取消），它的 `/workspace` 留在執行的節點上（刪除 `.venv`）。
+- 同一位使用者同一個專案的下一個工作排到同一台時，Worker 先把上一次執行「產生」的檔案（不在它程式快照裡的檔案，
+  不含 `.venv`、`__pycache__` 等快取與 symbolic link）複製到新的 `/workspace`，再放上這次的快照，同名時以這次送出的程式為準。
+  同時執行的工作各有一份目錄。重跑的 attempt 從同一個工作上一個 attempt 的目錄接著開始。
+- 排程優先選有這個專案最近結果的節點，只在放得下的節點中挑選、不會等待；排到別台時就從頭開始，`schedule_note` 會說明。
+- 每個專案在每台節點保留最近 3 份（Scheduler 設定 `results_keep`），更舊的自動刪除。要長期保存的結果寫到 `/outputs`。
+- `labflux results ls` 列出保留的目錄：專案、節點、工作、大小、結束時間；`deleted_by_next_run` 表示下一次執行就會刪除它。
+- 節點永久故障時，那台保留的結果跟著遺失。
 
 ## uv 模式
 
@@ -102,7 +120,8 @@ docker build -t localhost/labflux/python-uv:3.12-uv0.11.8 images/python-uv
 Worker TOML 設定 `uv_cache_dir` 後，這個本機目錄以讀寫方式掛載於容器的 `/uv-cache`，
 並設定 `UV_CACHE_DIR=/uv-cache`、`UV_LINK_MODE=copy`（快取與工作目錄是不同的 bind mount，無法 hardlink）。
 虛擬環境建立在 Worker 本機該 attempt 的 `/workspace/.venv`；確認容器停止且輸出已回傳後，
-Worker 刪除這個 workspace，保留狀態、日誌與輸出封存檔。同一台 Worker 上的工作共用這份可寫的快取。
+Worker 刪除這個 workspace（有 `project` 的工作只刪除 `.venv`，其餘保留，見上方「專案目錄與接續」），保留狀態、日誌與輸出封存檔。
+同一台 Worker 上的工作共用這份可寫的快取。
 
 ```toml
 uv_cache_dir = "~/labflux/uv-cache"
@@ -182,11 +201,11 @@ Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼�
   超過 `offline_timeout_s` 仍未出現則照常變成 `OFFLINE`，工作 `UNKNOWN`。
 - 網路中斷期間 Worker 的結果留在本機 outbox，恢復連線後送出，不會重複執行。
 
-使用者 API 為 `/api/jobs`、`/api/nodes`、`/api/artifacts`、`/api/sessions`，以使用者 Bearer Token 驗證；
+使用者 API 為 `/api/jobs`、`/api/nodes`、`/api/artifacts`、`/api/sessions`、`/api/results`，以使用者 Bearer Token 驗證；
 內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
 `/health` 不需認證，`/docs` 提供 API 規格。
 
-SQLite schema 在啟動時依序套用編號 migration（目前為版本 6）；也可執行 `uv run labflux db-upgrade`。
+SQLite schema 在啟動時依序套用編號 migration（目前為版本 7）；也可執行 `uv run labflux db-upgrade`。
 Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir`。
 新增的工作欄位與 WebSocket 介面需要 Scheduler、Worker 與 CLI 同時升級。
 
@@ -245,6 +264,9 @@ AI coding 工具與 `git` 留在開發機；只有執行程式的指令送到遠
 CLI 從目前目錄往上找到的那一層就是專案根目錄與快照範圍：
 
 ```toml
+[project]          # 選填；省略時用專案根目錄的資料夾名稱
+name = "vqa"       # 新的 session 從這個專案最近保留的結果開始；submit --source 也用這個名稱
+
 [session]          # 全部選填；命令列的 --cpu、--memory-mib、--gpu 優先
 cpu = 2
 memory_mib = 4096
@@ -284,6 +306,9 @@ uv run labflux session close           # 關閉 session，停止容器並釋放�
 - 超過寫回上限的檔案（例如 checkpoint）只留在遠端 session：累計列在專案的 `.labflux/remote-files.txt`
   （`labflux session files` 可印出），清單變動時終端機印一行提示。之後送到遠端的指令以同一個路徑讀得到這些檔案；
   session 結束時它們跟著刪除，要保留請寫到 `/outputs`（session 結束時上傳，之後以 session 的工作 ID 用 `labflux fetch` 取回）。
+- 新開的 session 若排在保留著這個專案最近結果的節點（見「專案目錄與接續」），先複製那次執行產生的檔案，
+  所以可以直接讀上一個批次工作的 checkpoint；這些檔案沒被指令改過就不寫回。session 自己的檔案仍在結束時刪除，不算一次執行。
+  已經開著的 session 不會因為換了專案目錄而重新複製。
 - 同一個 session 一次執行一個指令；同時送出的第二個指令會等前一個結束再執行（`busy_wait_s`，預設最多 120 秒）。
 - exit code：遠端程式的 exit code；124 為指令超時，130 為 Ctrl-C 取消，125 為 LabFlux 錯誤，
   127 為替身找不到本機指令。
@@ -336,6 +361,7 @@ uv run python scripts/lab_deploy.py status
 
 目前交付到 M6.6、M7 的 GPU 配置（整張獨占）、uv 模式、實體機部署工具、M8 的排程策略，
 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身），
-以及 M11 的搶占（被搶占的工作從頭重跑，checkpoint 之後加入）。
-故障驗證（M6.7）缺少實際 VM 關機；vLLM 依後續階段加入。
+M10 的共享模型服務與推論 Gateway（`docs/architecture.md` 第 9 節）、M11 的搶占，
+以及專案目錄保留在節點、下一次同專案的工作接著開始（`docs/architecture.md` 6.1；被搶占的專案工作重跑時也從這裡接著跑）。
+故障驗證（M6.7）缺少實際 VM 關機。
 已知限制見 [docs/verification.md](docs/verification.md)。
