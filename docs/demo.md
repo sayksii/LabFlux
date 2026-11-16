@@ -167,6 +167,28 @@ mtime，避免節點時鐘偏差影響比較；每次都先寫入實際進度，
 2026-11-17 實測：Job1 距 checkpoint 約 3.6 秒、Job2 已執行約 20.7 秒，高優先權工作搶占 Job1；
 Job1 回到 queue，Job2 與 Urgent 各占一張 A40。第二次 Enter 清場成功。
 
+第 12 頁使用 `bash demo/7_worker_recovery.sh`，在 **kayle** 的 repo 執行，Dashboard 看 kayle 的 GPU 卡。
+這個版本暫停本機 Worker 程序，讓 Docker 容器持續執行；不用部署 SSH 金鑰或更新服務。
+開始時會要求一次 sudo 密碼，因為 Worker 由 `labflux` 帳號執行。控制助手會在建立 Job 前就完成授權。
+
+1. 腳本先用一個極短工作建立本機專案，再讓正式 Job 沿用該專案檔案，優先落在 kayle。
+   正式 Job 沒有指定 GPU 型號，也允許節點故障後重跑；其他有空卡的節點仍符合它的資源需求。
+2. 第一幕顯示 Job 正在執行；**第一次 Enter** 暫停 Worker 程序。預設約 10 秒未回報心跳後，
+   kayle 顯示 `OFFLINE`、Job 顯示 `UNKNOWN`，原 CPU／RAM／GPU 配置繼續保留。
+3. 從確認 `OFFLINE / UNKNOWN` 起，維持完整 **10 秒**；終端機逐秒列出仍在增加的容器進度。
+   腳本持續確認沒有新增 attempt、沒有釋放資源，也沒有其他節點接走這個 Job。
+4. 自動恢復 Worker，原 instance 的心跳確認 attempt 還在執行，狀態回到 `ONLINE / RUNNING`。
+   這是同一個 Worker 程序恢復，不是重啟程序；不必刻意等待短暫的 `RECONCILING` 畫面。
+   終端機會確認 node、attempt、容器 ID 與容器程序 PID 都相同，進度持續累積。
+5. **第二次 Enter** 結束，只取消本次腳本建立的工作並等待資源釋放。
+
+`--dry-run` 可預覽流程。Ctrl-C、展示程序意外退出時，助手會先恢復 Worker；另外有 60 秒保底恢復。
+開始前及暫停前都會確認 kayle 沒有其他工作配置，避免暫停別人的 Worker 控制流程。
+驗證使用獨立 Scheduler、兩個真正的 Worker 程序與 Docker 容器，確認即使另一個 Worker 有空閒資源，
+失聯期間仍保留原工作；預設 10 秒失聯門檻與之後 10 秒展示等待都按真實時間執行。
+2026-11-17 另在實驗室驗證準備工作與正式 GPU Job 均落在 kayle，容器持續印出進度，
+最後清場成功；此項定位檢查沒有暫停部署中的 Worker。部署中的 Worker 暫停由主講執行腳本時授權。
+
 順序是由 gemma 決定的：
 
 - 第 2 幕需要五張卡都空著，第 3、4 幕使用 kindred 的兩張 A40；gemma 停著、沒有人呼叫它，這幾幕排在前面。第 2 幕另外需要 bob 還沒有用量，所以排第一個。
@@ -186,8 +208,8 @@ Job1 回到 queue，Job2 與 Urgent 各占一張 A40。第二次 Enter 清場成
 | 10:00 | Shared Models | A：`$D scene 6c`；PAUSE 時到 B 按 Enter（keepalive 會一直等，這是正常的），回 A 按 Enter | 排隊表 MODEL「隊首。搶占 kindred 的 …,等它們停止後開始。」；alice 的 A40 區塊「被 gemma4-31b 搶占」；約 10 秒後 MODEL 區塊占兩張 A40，模型服務表開始計時。這一幕跑完自己結束 |
 | 11:15 | Fast Lane | A：`demo/5_fastlane.sh`（以主講自己的帳號進入 `labflux shell`），打 `time python hello.py` 兩次，再 `exit`（腳本接著收掉 session） | karma 的 4090 出現 SESSION 區塊；第一次約 0.8 秒印出 `assigned to karma` 與 `GPU: NVIDIA GeForce RTX 4090`，第二次約 0.3 秒、容器 ID 相同；`exit` 後 SESSION 區塊消失 |
 | 約 12:35 | | C：`exit`；A：`$D reset` | |
-| 12:45 | When a Machine Fails | A：`$D scene 7`；PAUSE 時到 C：`$SSH $KARMA systemctl --user stop labflux-worker.service` | 約 10 秒後 karma 欄紅色斜線「失聯」；bob 的區塊「UNKNOWN · 資源保留中」；alice 的工作「沒有在線的節點放得下」。**指著講完這一句再啟動**：啟動後約 1 秒就回到 ONLINE |
-| | | C：`$SSH $KARMA systemctl --user start labflux-worker.service`；A：按 Ctrl-C（不做 (b)）；`$D reset` | RECONCILING → ONLINE，bob 的工作回到 RUNNING |
+| 第 12 頁講完 | When a Machine Fails | A：`bash demo/7_worker_recovery.sh`；第一次 Enter | kayle 的 Worker 暫停回報；約 10 秒後 OFFLINE、Job UNKNOWN，資源保留；該畫面再維持 10 秒 |
+| | | 自動恢復；講完後第二次 Enter | kayle ONLINE、同一個 Job／attempt／容器繼續跑；最後清場 |
 | 約 14:15 | | 看 B：已經印出 `200` → A：`$D scene 6a`。還沒有 → 先講 Results，講完（約 16:00）再做 6a | 模型服務表「處理中 2 個請求」、已服務 +2；kindred 上只有一個 MODEL 區塊 |
 | 6a 之後 | One GPU Pool | B：Ctrl-C；A：`$D reset` | |
 
