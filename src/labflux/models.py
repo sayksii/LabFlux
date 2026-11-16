@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -60,6 +61,10 @@ class JobSpec(BaseModel):
     # node afterwards, and the next run of the project on that node starts from its files.
     # None keeps the old behavior: the directory is deleted and nothing is copied.
     project: str | None = Field(default=None, pattern=PROJECT_NAME)
+    # Where the program saves its checkpoints, relative to /workspace: a file or a directory
+    # (11.9). The Worker reports the newest modification time under it, and a stop then counts
+    # as losing only the work since that time.
+    checkpoint: str | None = Field(default=None, max_length=1024)
 
     @model_validator(mode="before")
     @classmethod
@@ -116,6 +121,19 @@ class JobSpec(BaseModel):
         ):
             raise ValueError("datasets require distinct, safe names")
         return values
+
+    @field_validator("checkpoint")
+    @classmethod
+    def valid_checkpoint(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        path = PurePosixPath(value)
+        if "\x00" in value or path.is_absolute() or ".." in path.parts or not path.parts:
+            raise ValueError(
+                'checkpoint must be a path inside /workspace, relative to it (e.g. "ckpt/"), '
+                'without ".."'
+            )
+        return value
 
 
 class ServiceSpec(BaseModel):
@@ -240,6 +258,11 @@ class Heartbeat(BaseModel):
     active_attempts: list[Annotated[str, Field(pattern=ATTEMPT_ID)]] = Field(
         default_factory=list, max_length=10000
     )
+    # Per running attempt whose job names a checkpoint: the newest modification time (Unix
+    # seconds, the node's clock) of the files under it; left out while there is none (11.9).
+    checkpoints: dict[
+        Annotated[str, Field(pattern=ATTEMPT_ID)], Annotated[float, Field(allow_inf_nan=False)]
+    ] = Field(default_factory=dict, max_length=10000)
 
 
 class WorkerEvent(BaseModel):

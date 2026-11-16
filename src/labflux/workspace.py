@@ -29,6 +29,8 @@ from labflux.session_protocol import (
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 # Raised when a path component is missing, a link, or not a directory.
 NOT_A_DIRECTORY = (errno.ENOENT, errno.ENOTDIR, errno.ELOOP)
+# Directory entries one checkpoint scan looks at, at most; it runs with every heartbeat.
+CHECKPOINT_SCAN_LIMIT = 10_000
 
 
 def _open_directory(root: Path, parts: tuple[str, ...], *, create: bool = False) -> int:
@@ -242,6 +244,45 @@ def copy_generated(previous: Path, workspace: Path, snapshot_files: list[str]) -
                 os.utime(stream.fileno(), ns=(info.st_atime_ns, info.st_mtime_ns))
         copied.append(relative)
     return copied
+
+
+def newest_mtime(root: Path, relative: str, limit: int = CHECKPOINT_SCAN_LIMIT) -> float | None:
+    """The newest modification time (Unix seconds) of the regular files at root/relative: the
+    file itself, or the files anywhere under the directory (11.9). Links are neither followed
+    nor counted. The walk stops at the directory whose entries take the count past `limit` and
+    returns the newest time seen before it. None when there is no such file or directory, or
+    no file in it."""
+    *parents, name = PurePosixPath(relative).parts
+    try:
+        directory = _open_directory(root, tuple(parents))
+    except FileNotFoundError:
+        return None
+    walk = None
+    try:
+        info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+        if stat.S_ISREG(info.st_mode):
+            return info.st_mtime
+        if not stat.S_ISDIR(info.st_mode):
+            return None
+        newest, seen = None, 0
+        # fwalk never descends into a link, even one swapped in during the walk.
+        walk = os.fwalk(name, dir_fd=directory)
+        for _, subdirs, files, fd in walk:
+            seen += len(subdirs) + len(files)
+            if seen > limit:
+                return newest
+            for file in files:
+                with suppress(FileNotFoundError):
+                    info = os.stat(file, dir_fd=fd, follow_symlinks=False)
+                    if stat.S_ISREG(info.st_mode) and (newest is None or info.st_mtime > newest):
+                        newest = info.st_mtime
+        return newest
+    except FileNotFoundError:
+        return None
+    finally:
+        if walk is not None:
+            walk.close()
+        os.close(directory)
 
 
 def tree_size(root: Path) -> int:

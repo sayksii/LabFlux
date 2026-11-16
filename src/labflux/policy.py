@@ -131,10 +131,15 @@ class Release:
     job_id: str = ""  # the job whose attempt frees them, for the queue view (M12)
 
 
-def lost_seconds(started_at: float | None, now: float) -> float:
-    """Work a stop now throws away. Without checkpoints that is everything since the attempt
-    reported STARTED; a later step can measure from its last checkpoint instead."""
-    return 0.0 if started_at is None else max(0.0, now - started_at)
+def lost_seconds(started_at: float | None, now: float, checkpoint_at: float | None = None) -> float:
+    """Work a stop now throws away: everything since the attempt reported STARTED, or since
+    its last checkpoint when that is later (11.9). A checkpoint older than the start, such as a
+    file copied from an earlier attempt with its modification time kept, saved nothing of this
+    attempt's work. An attempt that has not started loses nothing."""
+    if started_at is None:
+        return 0.0
+    since = started_at if checkpoint_at is None else max(started_at, checkpoint_at)
+    return max(0.0, now - since)
 
 
 def victim_key(victim: Victim) -> tuple:

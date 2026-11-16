@@ -65,6 +65,7 @@ from labflux.workspace import (
     copy_generated,
     dependency_hash,
     is_directory,
+    newest_mtime,
     pack_files,
     scan,
     tree_size,
@@ -422,7 +423,7 @@ class Worker:
         adopt: bool = False,
         skip: dict[str, int] | None = None,
     ) -> None:
-        self.handles[spec.attempt_id] = {"cancel": cancel}
+        self.handles[spec.attempt_id] = {"cancel": cancel, "checkpoint": spec.job.checkpoint}
         self.active.add(spec.attempt_id)
         if spec.gpu_uuids:
             self.assigned_gpus[spec.attempt_id] = spec.gpu_uuids
@@ -909,6 +910,11 @@ class Worker:
         with self.lock:
             assigned = {uuid for uuids in self.assigned_gpus.values() for uuid in uuids}
             active = sorted(self.active)
+            watched = {
+                attempt_id: self.handles[attempt_id].get("checkpoint")
+                for attempt_id in active
+                if attempt_id in self.handles
+            }
         return {
             "instance_id": self.instance_id,
             "observed": {
@@ -917,7 +923,24 @@ class Worker:
             },
             "gpus": [gpu.model_dump() for gpu in self.gpus.observe(assigned)],
             "active_attempts": active,
+            "checkpoints": self._checkpoints(watched),
         }
+
+    def _checkpoints(self, watched: dict[str, str | None]) -> dict[str, float]:
+        """The newest modification time under each running job's checkpoint path (11.9); jobs
+        without one, or with nothing saved there yet, are left out."""
+        found = {}
+        for attempt_id, path in watched.items():
+            if not path:
+                continue
+            try:
+                newest = newest_mtime(self.root / attempt_id / "workspace", path)
+            except (OSError, ValueError) as exc:  # Never stops the heartbeats.
+                log.warning("checkpoint scan failed: %s", exc, extra={"attempt_id": attempt_id})
+                continue
+            if newest is not None:
+                found[attempt_id] = newest
+        return found
 
     def _settle_workspace(self, attempt_id: str) -> None:
         """Once nothing can run in it any more: keep a launched project run's directory on this

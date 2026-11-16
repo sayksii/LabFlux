@@ -26,6 +26,20 @@ def test_reject_unsafe_execution_inputs(values):
         JobSpec(**data)
 
 
+@pytest.mark.parametrize(
+    "path", ["/workspace/ckpt", "/ckpt", "../ckpt", "ckpt/../../x", ".", "./", "", "a\x00b"]
+)
+def test_reject_a_checkpoint_outside_the_workspace(path):
+    with pytest.raises(ValidationError, match="checkpoint"):
+        JobSpec(argv=["true"], checkpoint=path)
+
+
+def test_checkpoint_is_optional_and_kept_as_given():
+    assert JobSpec(argv=["true"]).checkpoint is None
+    for path in ("ckpt/", "ckpt/model.pt", "./ckpt", "runs/a..b"):
+        assert JobSpec(argv=["true"], checkpoint=path).checkpoint == path
+
+
 def test_rerun_flags_require_safe_to_rerun():
     for values, field in (
         ({"preemptible": True}, "preemptible requires safe_to_rerun: true"),

@@ -100,6 +100,7 @@ def test_a_v7_database_gains_the_token_table(settings):
     first = Scheduler(settings)
     with first.db.transaction() as connection:
         user_tokens.drop(connection)
+        connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN checkpoint_at")  # 9.
         connection.execute(update(schema_version).values(version=7))
     first.db.close()
     database = Database(settings.data_dir)

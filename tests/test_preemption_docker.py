@@ -4,6 +4,7 @@ higher-priority job preempts a running preemptible container, the preempted atte
 succeeds."""
 
 import threading
+import time
 import uuid
 from contextlib import closing, contextmanager
 
@@ -167,4 +168,29 @@ def test_higher_priority_job_preempts_a_real_container_which_then_reruns(tmp_pat
         assert "done" in log_text(client, low)
 
         assert client.get("/api/nodes").json()[0]["allocated"]["jobs"] == 0
+        wait_for(lambda: not containers())
+
+
+# Saves a checkpoint a moment after it starts, then keeps running until it is cancelled.
+SAVING = (
+    "from pathlib import Path\nimport time\n"
+    "time.sleep(1)\nPath('ckpt').mkdir()\nPath('ckpt/model.pt').write_bytes(b'weights')\n"
+    "print('saved')\ntime.sleep(60)\n"
+)
+
+
+def test_the_worker_reports_the_checkpoint_a_real_container_saved(tmp_path):
+    """11.9: the file the program writes under /workspace/ckpt reaches the attempt's
+    checkpoint_at through the Worker's heartbeat."""
+    with lab(tmp_path) as (client, containers):
+        wait_for(lambda: client.get("/api/nodes").json())
+        saving = submit(client, SAVING, checkpoint="ckpt/")
+        wait_for(lambda: "saved" in log_text(client, saving))
+        attempt = wait_for(
+            lambda: (value := job(client, saving)["attempts"][0])["checkpoint_at"] and value
+        )
+        # Written after the container started, by the same host's clock.
+        assert attempt["started_at"] - 1 < attempt["checkpoint_at"] < time.time() + 1
+        client.post(f"/api/jobs/{saving['id']}/cancel").raise_for_status()
+        assert wait_for(lambda: settled(client, saving), timeout=60)["state"] == "CANCELLED"
         wait_for(lambda: not containers())
