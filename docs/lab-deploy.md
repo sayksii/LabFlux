@@ -288,13 +288,16 @@ curl -s $OPENAI_BASE_URL/models -H "Authorization: Bearer $OPENAI_API_KEY"
 **常駐與自動釋放。** `mode = "persistent"` 的模型在資源足夠時自己啟動、不因閒置停止；預設的 `on_demand` 由第一個請求啟動，
 閒置 `idle_stop_s` 後停止（範例見 `configs/lab.example.toml` 的 `small-chat`）。改模式要修改清單後 `deploy --node kayle`：
 
-- 只改 `mode` 與時間設定（`cold_wait_s`、`idle_stop_s`、`reclaim_idle_s`、`retry_after_failure_s`）不算設定改變，執行中的模型不會重啟；
-  改成 `on_demand` 後，它沒有請求超過 `idle_stop_s` 才停止，之後由下一個請求冷啟動。
+- 只改 `mode` 與時間設定（`cold_wait_s`、`idle_stop_s`、`reclaim_idle_s`、`retry_after_failure_s`）不算設定改變，執行中的模型不會重啟。
+  它也保留常駐時的閒置期限（約一年後，存在資料庫裡，重新部署不會重設），所以改成 `on_demand` 後**不會因閒置停止**，
+  有工作在等它的卡時也不會提早回收；要等一個經 Gateway 的請求結束，期限才改成「現在 + `idle_stop_s`」。
+  要讓它進入冷的狀態：送一個請求、等它結束，再等 `idle_stop_s`（有工作在等資源時 `reclaim_idle_s`）；
+  或部署時同時改一個下一點列出的欄位（例如 `startup_timeout_s`），它會立刻停止，之後由下一個請求冷啟動。
 - 改了 `image`、`argv`、`env`、`resources`、`datasets`、`startup_timeout_s`、`port`、`health_path`、`shm_mib` 或 `pids_limit` 時，
   執行中的模型立刻停止（進行中的請求中斷）並套用新設定：常駐的重新啟動，自動釋放的等下一個請求。
 - gemma4-31b 的冷啟動約 4～5 分鐘，`on_demand` 時 `cold_wait_s` 與 `startup_timeout_s` 要給 600 秒左右，否則第一個請求先得到 503。
-- 以上依程式（`Scheduler._model_changed`）整理，模式切換沒有在實驗室實測；`on_demand` 的欄位在本機以 `examples/fake-model` 驗證過
-  （`examples/README.md`）。
+- 以上依程式（`Scheduler._model_changed`、`_model_lease`、`end_request`、`_idle_stop`）整理，模式切換沒有在實驗室實測；
+  `on_demand` 的欄位在本機以 `examples/fake-model` 驗證過（`examples/README.md`）。展示前讓 gemma 變冷的步驟見 14.3 的展示文件。
 `labflux --config .labflux/lab/cli.toml models` 列出每個模型的模式、狀態（`waiting`、`starting`、`serving`、
 `stopping`、`failed`、`stopped`）、所在節點與進行中的請求數。
 

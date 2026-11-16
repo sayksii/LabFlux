@@ -1367,7 +1367,8 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
 - 自動釋放模型：實驗室只有常駐的 gemma，改模式要重新部署，所以同樣的欄位在本機 loopback 以臨時 Scheduler、Worker 與 `examples/fake-model` 驗證：
   `stopped` → 第一個請求冷啟動 6.6 秒 → `serving` → 閒置 20 秒（`idle_stop_s`）後停止；`cold_wait_s = 0` 時請求立即得到 503、`Retry-After: 10`，
   稍後重送成功。結束後移除了 Worker 停止時留下的模型容器（Worker 停止不會停容器，M6.4）。
-  `docs/lab-deploy.md` 另依 `Scheduler._model_changed` 寫明：只改 `mode` 與時間設定時執行中的模型不會重啟。
+  `docs/lab-deploy.md` 另依程式寫明：只改 `mode` 與時間設定時執行中的模型不會重啟，而且保留常駐時約一年的閒置期限，
+  要等一個請求結束後才會因閒置停止（M12 的 session 指出並在 feat/m12 以程式內測試確認；本 PR 第一版寫錯成「閒置 `idle_stop_s` 後停止」）。
 - 快速測試：`fast-lane-gpu` 的 session 排到 karma 的 4090，第一個指令（租用、從快取 `uv sync`、pytest 3 passed）8.3 秒，
   `python train.py --smoke` 2.4 秒並寫回結果檔。
 - Gateway：`chat.py` 對 gemma 一般回應 0.73 秒、串流第一段 0.05 秒；兩個串流同時送出時進行中 2，都在約 2.3 秒完成。
