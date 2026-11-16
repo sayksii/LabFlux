@@ -1,6 +1,6 @@
 # Scene 6 (c): gemma4-31b (on_demand) cold-starts on kindred and preempts alice's two
 # preemptible A40 jobs. Verified in tests/test_storyboard_model.py and replayed from this file by
-# tests/test_demo_scenes.py. The 4-5 minute load then overlaps the fast lane (demo/5_fastlane.sh) and scene 7.
+# tests/test_demo_scenes.py. The 4-5 minute load then overlaps the fast lane (demo/4_fastlane.sh) and scene 7.
 title = "模型冷啟動，搶占 alice 的 A40 工作"
 run_order = 4
 axis = "GPU 卡"
@@ -34,4 +34,4 @@ alice 的區塊「被 gemma4-31b 搶占 · 停止中」；約 10 秒後 MODEL �
 cancel = "sweep"
 say = """
 取消 alice 重新排隊的兩個 sweep：留著的話它們會成為 backfill 隊首、保留 kindred，後面幾幕的畫面就變了。
-載入約 4–5 分鐘：不用等，接著做 fast lane（demo/5_fastlane.sh）和第 7 幕，keepalive 一直開著；B 印出 200 之後才做 6a。"""
+載入約 4–5 分鐘：不用等，接著做 fast lane（demo/4_fastlane.sh）和第 7 幕，keepalive 一直開著；B 印出 200 之後才做 6a。"""

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 第 2 段（Where a Job Runs → Who Goes First）：第 2 幕。畫面看 Dashboard（GPU 卡軸、排隊順序）。
+# Demo 1（第 6–7 頁 Where a Job Runs → Who Goes First）：demo.py 的第 2 幕。畫面看 Dashboard（GPU 卡軸、排隊順序）。
 #
-#   demo/2_priority.sh              （在 repo 根目錄執行）
-#   demo/2_priority.sh --dry-run    只印出步驟，不送任何東西
+#   demo/1_priority.sh              （在 repo 根目錄執行）
+#   demo/1_priority.sh --dry-run    只印出步驟，不送任何東西
 #
 # 階段 1：alice 送 5 個工作，系統決定每個放哪台，占滿五張卡。
 #   PAUSE → 按 Enter

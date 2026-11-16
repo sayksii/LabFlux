@@ -1,0 +1,7 @@
+# Demo 4 的快速測試：要一張 4090（只有 karma 有）。用完 exit，demo/4_fastlane.sh 會收掉 session。
+[session]
+cpu = 1
+memory_mib = 1024
+gpu = 1
+gpu_model = "4090"
+image = "python:3.12-slim"
