@@ -1521,10 +1521,11 @@ FCFS 檢查原本比較容器的開始時間，但隊首與後面的工作在同
 其他階段的已知限制分別記在本文件的「PR #2 審查」、「feat/m6-m8-m9 已知限制」、「驗證時另外發現的罕見情況」、
 M10、M11、6.1、Q14 各節，以及 `docs/lab-deploy.md` 的「目前限制」。
 
-### 實驗結果（M13，待補）
+### 實驗結果（M13）
 
-M13 的 FCFS／`priority`／`backfill` 對照實驗由另一個 session 進行中（2026-11-16 09:44 起在實驗室試跑），本 PR 沒有結果。
-完成後把 CSV 與圖放在 `docs/evidence/` 下（位置由 M13 決定），摘要與連結寫在這裡；展示分鏡第 8 幕使用這些結果。
+M13 已在實驗室三台完成 FCFS／`priority`／`backfill` 對照（39 輪）：報告見 `docs/experiments.md`，原始資料、CSV 與圖在
+`docs/evidence/m13/`，展示分鏡第 8 幕使用 `docs/evidence/m13/figures/summary_16x9.png`；驗證摘要見本文件的
+「M13：排程策略的實驗與比較」一節。
 
 ## 最後驗證與交付
 

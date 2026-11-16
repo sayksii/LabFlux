@@ -114,4 +114,4 @@ M14 的展示分鏡（9 幕）用到的工作類型與可以拿來改的範例�
 | 5 fast lane | 開發機在 `labflux shell` 裡跑測試與煙霧訓練，session 拿一張卡；叢集上有可搶占的 GPU 工作 | `fast-lane-gpu/`、`preemptible-gpu.json` | `fcfs` 下 session 也能搶占（已實測，`scripts/lab_smoke.py`） |
 | 6 模型服務 | (a) 兩位使用者同時發串流請求 (b) 自動釋放模型的冷啟動、閒置停止與交還 GPU | (a) 兩個 `gateway/chat.py --stream` (b) gemma 改成 `on_demand`（設定寫法見 `configs/lab.example.toml` 的 `small-chat`），用 `chat.py` 發第一個請求 | (b) 改模式要重新部署 kayle（使用者決定時機）；gemma 冷啟動約 5 分鐘，`cold_wait_s` 要夠長 |
 | 7 Worker 故障與恢復 | (a) 任何執行中的工作 (b) 可在別台重跑的 GPU 工作 | (a) 任一個 `sleep-*` (b) `retry-on-node-failure.json` | 要停止 karma 的 Worker，需使用者同意 |
-| 8 和 FCFS 比較 | 不送工作 | — | M13 的對照結果 |
+| 8 和 FCFS 比較 | 不送工作 | — | M13 的對照結果：[docs/experiments.md](../docs/experiments.md)、[總結圖](../docs/evidence/m13/figures/summary_16x9.png) |
