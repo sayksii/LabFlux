@@ -67,6 +67,15 @@ class Settings(BaseModel):
     users: dict[str, str] = Field(default_factory=lambda: {"demo": "dev-user-token"})
     user_token: str = "dev-user-token"
     worker_token: str = "dev-worker-token"
+    # `labflux login` (Q14): the CLI asks the local Worker on this abstract Unix socket, and the
+    # Worker answers only when worker_login is on.
+    login_socket: str = Field(default="labflux-login", pattern=r"^[A-Za-z0-9_.-]{1,100}$")
+    worker_login: bool = False
+    # The CLI trusts the socket only when root, the caller or this account (the deploy account
+    # that runs the Worker) listens on it; anyone else may be posing as the Worker.
+    login_worker_user: str = "labflux"
+    # The Scheduler keeps this many tokens per account; each login drops the oldest beyond it.
+    login_tokens_per_user: int = Field(default=20, ge=1)
     worker_id: str = Field(default_factory=socket.gethostname, pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
     heartbeat_interval_s: float = Field(default=2, gt=0)
     offline_timeout_s: float = Field(default=10, gt=0)
@@ -159,12 +168,25 @@ class Settings(BaseModel):
         return self
 
 
+def login_path() -> Path:
+    """Where `labflux login` saves this account's Scheduler URL and token (Q14)."""
+    base = os.getenv("XDG_CONFIG_HOME")
+    return (Path(base) if base else Path.home() / ".config") / "labflux" / "login.toml"
+
+
 def load_settings(path: Path | None = None) -> Settings:
+    """Defaults, then the saved login, then the configuration file, then the environment."""
     chosen = path or (Path(os.environ["LABFLUX_CONFIG"]) if os.getenv("LABFLUX_CONFIG") else None)
     values = {}
+    try:
+        with login_path().open("rb") as stream:
+            login = tomllib.load(stream)
+        values.update({k: v for k, v in login.items() if k in ("scheduler_url", "user_token")})
+    except (OSError, RuntimeError, tomllib.TOMLDecodeError):
+        pass  # Not logged in (or no home directory): the configuration and defaults apply.
     if chosen:
         with chosen.open("rb") as stream:
-            values = tomllib.load(stream)
+            values.update(tomllib.load(stream))
     for field in ("data_dir", "scheduler_url", "user_token", "worker_token", "worker_id"):
         override = os.getenv(f"LABFLUX_{field.upper()}")
         if override is not None:

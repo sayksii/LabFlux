@@ -1265,6 +1265,46 @@ M11（搶占）先合併，`attempts.preempted_by` 用了 migration 6，所以 `
 - `uv run ruff check src tests scripts`、`uv run ruff format --check src tests scripts`：通過。
 - Docker（只用 CPU）：`tests/test_project_results_docker.py`、`tests/test_end_to_end_docker.py` 2 passed；`tests/test_preemption_docker.py`（非 GPU）1 passed。
 
+## Q14 以 Linux 帳號登入（kayle，2026-11-16）
+
+使用者決定：採用「登入一次、之後用 token」，任何帳號都能登入（architecture 3.2）。
+
+- `tests/test_login.py`（11 個）：
+  - Worker 代為申請的 token 能識別帳號；同一帳號再登入會多一個 token，舊的仍有效；資料庫裡沒有 token 明文。
+  - 只有 Worker token 能申請；`@models`、空字串、含 `/` 或空白、超過 64 字元的名稱被拒絕。
+  - 設定檔裡的 `alice` 與登入的帳號 `alice` 看到同一批工作。
+  - Scheduler 重啟後 token 仍有效；舊版資料庫升級後有 `user_tokens`（rebase 到 project-results 之後為 migration 8）。
+  - 設定的優先順序：預設值 < 登入檔 < 設定檔 < 環境變數；登入檔損壞時忽略。
+  - CLI 經過真的 Worker socket 登入：檔案權限 600，`labflux whoami` 回傳目前的帳號。
+  - 沒有 Worker 時，提示到節點上登入再複製檔案；socket 上的回答不是給自己的帳號，或 Scheduler 拒絕時，不存檔。
+  - Worker 沒有開 `worker_login` 時不佔用 socket。
+- 全部單元測試：384 passed、1 skipped（zsh）；`test_end_to_end_docker.py`、`test_fast_lane_e2e_docker.py`：4 passed。
+- 實機操作（kayle，臨時 Scheduler 與 Worker，port 8791、socket `labflux-login-check`，不影響實驗室部署）：
+  `labflux login` 印出 `Logged in as <自己的帳號>`，登入檔權限 600；`labflux whoami` 回傳同一個帳號；
+  送出的工作 `owner` 是這個帳號，結果 SUCCEEDED。沒有 Worker 的 socket 名稱時，CLI 印出到節點登入的提示並以 1 結束。
+- 修正：最初 Worker 先註冊才開 socket，全套測試在負載下撞到這個空檔（節點已上線但登入被拒）；改為註冊前先開好 socket。
+- 尚未做：部署到實驗室、以其他帳號實際登入（Claude 無法切換成其他使用者）。
+
+### Q14 審查修正（2026-11-16）
+
+- 搶佔 socket：任何帳號都能先佔用 `labflux-login`，回答假的 `scheduler_url`；`/api/whoami` 也問同一個假位址，擋不住。
+  CLI 改為向 kernel 查開 socket 的帳號（client 端的 `SO_PEERCRED`），只接受 root、自己或新設定 `login_worker_user`
+  （預設 `labflux`），其他帳號拒絕、不存檔。Worker 開不了 socket 時改記 `error`，說明這台不能登入。
+- 一次例外結束登入執行緒，名稱隨之空出：改為每個連線各自接住例外、記錄並回覆 `{"error": ...}`，繼續服務。
+- `user_tokens` 無限增長：新設定 `login_tokens_per_user`（預設 20），發 token 時在同一個交易刪掉該帳號更舊的列，
+  提交後從記憶體移除。
+- docker 群組的成員能以任何 UID 連線，程式無法防止：在 lab-deploy 與 architecture 3.2 記為已知限制。
+- `tests/test_login.py` 增為 15 個：別的帳號開的 socket 被拒絕；`login_worker_user` 的帳號開的被接受；
+  一次登入出錯不影響下一次；上限 2 時登入 3 次，第一個 token 失效、後兩個有效，Scheduler 重啟後亦同。
+- 全部單元測試：388 passed、1 skipped（zsh）；`test_end_to_end_docker.py`：1 passed。
+
+### Q14 接在 M11 與 6.1 之後（rebase 到 main `c0ba149`，2026-11-16）
+
+`user_tokens` 改為 migration 8（M11 的 6、6.1 的 7 之後）；`test_a_v7_database_gains_the_token_table` 從版本 7 升級，
+版本 1 一路升級的測試也先刪掉 `user_tokens`。全部單元測試 480 passed、1 skipped（zsh）；
+Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_docker.py`、`test_preemption_docker.py`（非 GPU）、
+`test_fast_lane_e2e_docker.py` 共 6 passed。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。

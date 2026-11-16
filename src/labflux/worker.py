@@ -7,8 +7,11 @@ import hashlib
 import json
 import logging
 import os
+import pwd
 import re
 import shutil
+import socket
+import struct
 import tarfile
 import threading
 import time
@@ -19,7 +22,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from socket import SHUT_RDWR
 from typing import BinaryIO
 
 import httpx
@@ -988,6 +990,69 @@ class Worker:
         except OSError as exc:
             log.warning("workspace cleanup failed: %s", exc, extra={"attempt_id": attempt_id})
 
+    def _login_socket(self) -> socket.socket | None:
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            # Abstract namespace: no file to clean up, open to every local account, and out of
+            # reach of job containers, which have their own network namespace.
+            server.bind("\0" + self.settings.login_socket)
+        except OSError as exc:
+            log.error(
+                "login socket %s unavailable (%s); logins are disabled on this node",
+                self.settings.login_socket,
+                exc,
+            )
+            server.close()
+            return None
+        server.listen(16)
+        server.settimeout(1)  # To notice stop_event.
+        return server
+
+    def _logins(self, server: socket.socket) -> None:
+        """Answer `labflux login` on this host (Q14). The kernel reports the caller's UID, so the
+        account name cannot be forged; the Scheduler issues a token for that name."""
+        with server:
+            while not self.stop_event.is_set():
+                try:
+                    connection, _ = server.accept()
+                except TimeoutError:
+                    continue
+                except OSError:
+                    log.warning("login socket closed")
+                    return
+                with connection:
+                    connection.settimeout(self.settings.request_timeout_s + 2)
+                    try:
+                        reply = self._login(connection)
+                    except OSError:
+                        continue  # The client went away; it can run `labflux login` again.
+                    except Exception as exc:
+                        # Keep serving: a dead thread would free the name for a stand-in.
+                        log.exception("login failed")
+                        reply = {"error": f"the Worker failed ({type(exc).__name__})"}
+                    try:
+                        connection.sendall(json.dumps(reply).encode() + b"\n")
+                    except OSError:
+                        pass  # The client went away, as above.
+
+    def _login(self, connection: socket.socket) -> dict:
+        credentials = connection.getsockopt(
+            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+        )
+        _, uid, _ = struct.unpack("3i", credentials)
+        try:
+            user = pwd.getpwuid(uid).pw_name
+        except KeyError:
+            return {"error": f"UID {uid} has no account name on this machine"}
+        try:
+            response = self.client.post(self._url("logins"), json={"user": user})
+        except httpx.HTTPError as exc:
+            return {"error": f"the Scheduler is unreachable ({type(exc).__name__})"}
+        if response.status_code != 200:
+            return {"error": f"the Scheduler refused the login ({response.status_code})"}
+        log.info("issued a login token for %s", user)
+        return {**response.json(), "scheduler_url": self.settings.scheduler_url}
+
     def _heartbeats(self) -> None:
         with httpx.Client(
             base_url=self.settings.scheduler_url,
@@ -1035,13 +1100,13 @@ class Worker:
                     open_timeout=self.settings.request_timeout_s,
                     close_timeout=self.settings.request_timeout_s,
                     proxy=None,
-                ) as socket:
-                    self.socket = socket
+                ) as connection:
+                    self.socket = connection
                     delay = min(RETRY_S, self.settings.poll_interval_s)
                     self.commands_ready.set()  # Catch up on rings missed while disconnected.
                     while not self.stop_event.is_set():
                         try:
-                            message = socket.recv(timeout=1)
+                            message = connection.recv(timeout=1)
                         except TimeoutError:
                             continue  # Only to notice stop_event; nothing is sent.
                         self._on_message(message)
@@ -1084,11 +1149,11 @@ class Worker:
     def send(self, message: dict) -> bool:
         """Send a JSON message to the Scheduler over the doorbell connection; False when it is
         not connected. Delivery is best effort, like the relay it feeds (T6)."""
-        socket = self.socket
-        if socket is None:
+        connection = self.socket
+        if connection is None:
             return False
         try:
-            socket.send(json.dumps(message))
+            connection.send(json.dumps(message))
         except (OSError, WebSocketException):
             return False
         return True
@@ -1505,7 +1570,8 @@ class Worker:
             if response is None:
                 return
             try:
-                response.extensions["network_stream"].get_extra_info("socket").shutdown(SHUT_RDWR)
+                stream = response.extensions["network_stream"]
+                stream.get_extra_info("socket").shutdown(socket.SHUT_RDWR)
             except Exception:
                 try:
                     response.close()
@@ -1618,13 +1684,25 @@ class Worker:
 
     def run(self) -> None:
         self.executor.check()
-        self.register()
+        # Bound before registering, so a node that shows up online already accepts logins.
+        login_server = self._login_socket() if self.settings.worker_login else None
+        try:
+            self.register()
+        except BaseException:
+            if login_server is not None:
+                login_server.close()
+            raise
         heartbeat = threading.Thread(target=self._heartbeats, name="heartbeats", daemon=True)
         outbox = threading.Thread(target=self._outbox, name="outbox", daemon=True)
         doorbell = threading.Thread(target=self._doorbell, name="doorbell", daemon=True)
+        logins = threading.Thread(
+            target=self._logins, args=(login_server,), name="logins", daemon=True
+        )
         heartbeat.start()
         outbox.start()
         doorbell.start()
+        if login_server is not None:
+            logins.start()
         log.info("worker registered", extra={"job_id": None, "attempt_id": None})
         try:
             while not self.stop_event.is_set():
@@ -1650,6 +1728,8 @@ class Worker:
             heartbeat.join(timeout=self.settings.request_timeout_s + 1)
             outbox.join(timeout=self.settings.request_timeout_s + 1)
             doorbell.join(timeout=self.settings.request_timeout_s + 2)
+            if logins.is_alive():
+                logins.join(timeout=self.settings.request_timeout_s + 3)
             try:
                 self.flush()
             except httpx.HTTPError:

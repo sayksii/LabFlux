@@ -12,6 +12,7 @@ from labflux.database import (
     attempt_gpus,
     project_results,
     schema_version,
+    user_tokens,
 )
 from labflux.models import Capacity, GpuDevice, JobSpec, ResourceRequest
 from labflux.scheduler import Scheduler
@@ -229,6 +230,7 @@ def test_v1_database_upgrades_to_current_and_keeps_jobs(settings):
         connection.exec_driver_sql("ALTER TABLE jobs DROP COLUMN service")  # Added by version 5.
         connection.exec_driver_sql("ALTER TABLE attempts DROP COLUMN preempted_by")  # Version 6.
         project_results.drop(connection)  # Added by version 7.
+        user_tokens.drop(connection)  # Added by version 8.
         connection.execute(update(schema_version).values(version=1))
     first.db.close()
     database = Database(settings.data_dir)

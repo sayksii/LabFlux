@@ -71,6 +71,18 @@ Worker（每台機器）──────────────────�
 - 命令有唯一 ID，可安全重送；舊 attempt 的回報不會改寫目前狀態。
 - 事件、日誌與輸出先寫入 Worker 本機的 outbox，再上傳。
 - 使用者 API 以使用者 token 驗證；`/internal/workers` 使用獨立的 Worker token。
+- 使用者帳號（Q14，2026-11-16 決定並實作）：LabFlux 的使用者就是節點上的 Linux 帳號，任何帳號都能登入。
+  - `labflux login` 連到本機 Worker 的 Unix socket；kernel 回報連線者的 UID（`SO_PEERCRED`，無法偽造），
+    Worker 在那台機器把 UID 換成帳號名稱，再以 Worker token 向 Scheduler 申請這個名稱的 token。
+  - CLI 同樣向 kernel 查開 socket 的帳號，只接受 root、自己或部署帳號（`login_worker_user`），
+    其他帳號搶先佔用名稱冒充 Worker 時拒絕。
+  - 身分用帳號名稱：實驗室的帳號是每台各自建立的，同一個人在每台的 UID 不同。
+  - Scheduler 只存 token 的 SHA-256（`user_tokens` 表格），每個帳號保留最新的 `login_tokens_per_user`
+    （預設 20）個；CLI 存到 `~/.config/labflux/login.toml`（權限 600），之後的指令自動帶上。
+    設定檔的 `[users]` 保留，與同名帳號是同一個身分。
+  - 已知限制：同一個名稱在各台必須是同一個人；持有 Worker token 或節點 root 權限的人可以冒用任何名稱；
+    一般使用者若在 docker 群組（等同 root），登入無法防止他們互相冒用；
+    沒有撤銷指令（刪資料表的列後重啟 Scheduler）；不是節點的機器要複製登入檔。
 - M9 起，命令改由長連線通知、原本的 API 領取，輪詢只留作備援（見第 8 節 T4）。
 
 ### 3.3 部署（已實作）
@@ -248,9 +260,8 @@ plan 7.8 要求至少三個異質節點，目前只有兩台實體機，見 Q8�
 提議（待確認）：
 
 - **D1** 開發節點是寫程式的地方，不是直接使用 GPU 的地方；GPU 一律透過資源池取得。
-- **D2** 每台機器都可以當開發節點：裝好 CLI，每位使用者有自己的設定檔
-  `~/.config/labflux/config.toml`（權限 600，內含 Scheduler 位址與個人 token）。
-  CLI 目前已支援 `--config` 與 `LABFLUX_CONFIG`，預設路徑是新增項目。
+- **D2** 每台機器都可以當開發節點：裝好 CLI，執行 `labflux login`，每位使用者就有自己的登入檔
+  `~/.config/labflux/login.toml`（權限 600，內含 Scheduler 位址與個人 token；Q14 已實作）。
 - **D11** 補上快照的三個缺口：專案依賴目錄外的程式（例如 `path = "../mylib"`）會帶不到；
   專案裡的 `data/` 預設被排除；同一份快照送出多個工作時會重複上傳，可以先用 sha256 詢問 Scheduler。
 - **D5** 程式只從開發節點單向送到 Worker。批次工作的結果透過 stdout／stderr、exit code 與 `/outputs` 取回；
@@ -542,7 +553,7 @@ EuroSys 2010；Spark 的 `spark.locality.wait`。
 | Q11 | 長時間訓練：預設時限 1 小時，但訓練要跑好幾天，而 backfilling 與搶占都依賴硬性時限；公平分數只影響排隊順序，一個人的多天工作開始後就佔到結束 | 公平性、M8、M11 | 設每人同時可用的 GPU 上限與最長時限 |
 | Q12 | GPU 節點的 CPU、RAM 被只用 CPU 的工作用光：目前 CPU 工作會先排到 karma，4090 可能因此排不進 GPU 工作；karma 只交出 24 GiB RAM，大型訓練也可能不夠 | GPU 使用率、M8 | CPU 工作優先排到沒有空閒 GPU 的節點，或為每張 GPU 保留 CPU 與 RAM |
 | Q13 | 驅動與 CUDA 版本：Worker 已回報驅動版本，但配對沒有使用；需要較新 CUDA 的映像可能排到 kayle（驅動 535）而失敗 | 工作在錯的節點上失敗 | 工作可指定最低 CUDA 驅動版本，並納入配對 |
-| Q14 | 使用者帳號與 token：使用者寫死在 Scheduler 設定，新增一個人要改設定並重啟；每台都能開發後，開通帳號與發 token 的流程要定 | 開發節點（第 5 節） | 人數少時維持設定檔，另寫開通步驟 |
+| Q14 | 使用者帳號與 token：使用者寫死在 Scheduler 設定，新增一個人要改設定並重啟；每台都能開發後，開通帳號與發 token 的流程要定 | 開發節點（第 5 節） | 已決定（2026-11-16）：以節點上的 Linux 帳號登入（`labflux login`），見 3.2 |
 | Q15 | 密鑰：HF token、W&B key 目前只能放在工作的 `env`，會以明文存進資料庫 | 安全 | 改由使用者層級的密鑰設定提供，不寫進工作紀錄 |
 
 ## 11. 與 plan.md 的對應

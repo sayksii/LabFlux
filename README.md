@@ -15,7 +15,8 @@ uv run ruff check .
 ```
 
 Docker 與 VM 驗證需要另外安裝 Docker Engine、KVM／libvirt 與 cloud-init 工具。
-各服務使用 TOML 設定；CLI 可透過 `--config path.toml` 或 `LABFLUX_CONFIG` 指定。
+各服務使用 TOML 設定；CLI 可透過 `--config path.toml` 或 `LABFLUX_CONFIG` 指定，
+沒有指定的 `scheduler_url`、`user_token` 取自 `labflux login` 存的 `~/.config/labflux/login.toml`。
 環境變數 `LABFLUX_SCHEDULER_URL`、`LABFLUX_USER_TOKEN`、`LABFLUX_WORKER_TOKEN`、
 `LABFLUX_WORKER_ID`、`LABFLUX_DATA_DIR` 可覆蓋對應設定。
 
@@ -205,7 +206,7 @@ Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼�
 內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
 `/health` 不需認證，`/docs` 提供 API 規格。
 
-SQLite schema 在啟動時依序套用編號 migration（目前為版本 7）；也可執行 `uv run labflux db-upgrade`。
+SQLite schema 在啟動時依序套用編號 migration（目前為版本 8）；也可執行 `uv run labflux db-upgrade`。
 Scheduler 以單一程序執行，所有執行紀錄保存在設定的 `data_dir`。
 新增的工作欄位與 WebSocket 介面需要 Scheduler、Worker 與 CLI 同時升級。
 
@@ -349,6 +350,10 @@ VM smoke test 使用三個不同 CPU／RAM 配置的 VM，驗證 CLI、實際並
 kayle 執行 Scheduler 與 Worker，karma 執行 Worker，都以專屬帳號 `labflux` 的 systemd user service 執行。
 步驟、防火牆與日誌見 [docs/lab-deploy.md](docs/lab-deploy.md)。節點清單放在被 Git 忽略的
 `configs/local-lab.toml`（格式見 `configs/lab.example.toml`），產生的 Token 與設定放在 `.labflux/lab/`。
+
+使用者就是節點上的 Linux 帳號：在任一台 LabFlux 節點執行 `labflux login`，本機 Worker 透過 kernel 確認帳號後，
+向 Scheduler 申請個人 token，存到 `~/.config/labflux/login.toml`（權限 600），之後的指令自動帶上。
+細節見 [docs/lab-deploy.md](docs/lab-deploy.md) 的「使用者登入」。
 
 ```bash
 uv run python scripts/lab_deploy.py check                  # 前置檢查，唯讀

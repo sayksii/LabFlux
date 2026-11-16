@@ -175,6 +175,18 @@ class Capacity(BaseModel):
         return values
 
 
+# A Unix account name as a LabFlux identity (Q14). Never starts with "@", so no login can take
+# an internal owner such as MODEL_OWNER.
+USER_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$"
+
+
+class LoginRequest(BaseModel):
+    """A Worker vouching for a local account whose UID the kernel reported (labflux login)."""
+
+    model_config = ConfigDict(extra="forbid")
+    user: str = Field(pattern=USER_NAME)
+
+
 class InventoryAttempt(BaseModel):
     """A local attempt record that may still matter to the Scheduler."""
 

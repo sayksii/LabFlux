@@ -7,6 +7,12 @@ from labflux.api import create_app
 from labflux.config import Settings
 
 
+@pytest.fixture(autouse=True)
+def no_saved_login(tmp_path_factory, monkeypatch):
+    """The developer's own `labflux login` (Q14) never reaches a test."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg")))
+
+
 @pytest.fixture
 def settings(tmp_path):
     return Settings(data_dir=tmp_path, users={"alice": "alice-token", "bob": "bob-token"})

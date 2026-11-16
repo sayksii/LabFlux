@@ -745,7 +745,7 @@ def test_a_version_6_database_gains_the_results_table(settings):
         connection.execute(update(schema_version).values(version=6))
     first.db.close()
     database = Database(settings.data_dir)
-    assert database.version == SCHEMA_VERSION == 7
+    assert database.version == SCHEMA_VERSION
     with database.transaction() as connection:
         assert connection.execute(select(func.count()).select_from(project_results)).scalar() == 0
     database.close()
