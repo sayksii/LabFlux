@@ -1,0 +1,102 @@
+name = "ram"
+description = """RAM contention (simulation only). Two 40 GiB jobs only fit kayle; small 4-12 GiB jobs
+could use karma and kindred meanwhile."""
+
+[[jobs]]
+id = "r01"
+at = 0
+user = "alice"
+cpu = 2
+memory_mib = 40960
+run_s = 90
+time_limit_s = 150
+
+[[jobs]]
+id = "r02"
+at = 1
+user = "bob"
+cpu = 2
+memory_mib = 20480
+run_s = 75
+time_limit_s = 120
+
+[[jobs]]
+id = "r03"
+at = 2
+user = "carol"
+cpu = 2
+memory_mib = 40960
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "r04"
+at = 4
+user = "alice"
+cpu = 1
+memory_mib = 4096
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "r05"
+at = 8
+user = "bob"
+cpu = 1
+memory_mib = 8192
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "r06"
+at = 12
+user = "carol"
+cpu = 1
+memory_mib = 12288
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "r07"
+at = 16
+user = "alice"
+cpu = 1
+memory_mib = 4096
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "r08"
+at = 20
+user = "bob"
+cpu = 1
+memory_mib = 8192
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "r09"
+at = 24
+user = "carol"
+cpu = 1
+memory_mib = 12288
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "r10"
+at = 28
+user = "alice"
+cpu = 1
+memory_mib = 4096
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "r11"
+at = 32
+user = "bob"
+cpu = 1
+memory_mib = 8192
+run_s = 45
+time_limit_s = 90

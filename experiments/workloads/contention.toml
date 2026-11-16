@@ -1,0 +1,164 @@
+name = "contention"
+description = """CPU, RAM and GPU contention with big and small jobs (lab case). A 16-core job fills kayle,
+so a 2-GPU job (only kayle has two cards) blocks the head of the queue; a 40 GiB job (only kayle
+fits it) and a 24-core job (only kindred fits it) follow. Small jobs could run on karma and
+kindred meanwhile. CPU jobs burn their quota, GPU jobs run a matmul loop, RAM jobs sleep."""
+
+[defaults]
+priority = 5
+memory_mib = 2048
+
+[[jobs]]
+id = "k01"
+at = 0
+user = "alice"
+cpu = 4
+memory_mib = 8192
+gpu = 1
+load = "gpu"
+run_s = 90
+time_limit_s = 150
+
+[[jobs]]
+id = "k02"
+at = 1
+user = "bob"
+cpu = 16
+load = "cpu"
+run_s = 120
+time_limit_s = 180
+
+[[jobs]]
+id = "k03"
+at = 3
+user = "carol"
+cpu = 4
+memory_mib = 8192
+gpu = 2
+load = "gpu"
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "k04"
+at = 6
+user = "alice"
+cpu = 4
+load = "cpu"
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "k05"
+at = 9
+user = "bob"
+cpu = 2
+memory_mib = 4096
+load = "sleep"
+run_s = 60
+time_limit_s = 90
+
+[[jobs]]
+id = "k06"
+at = 12
+user = "carol"
+cpu = 4
+load = "cpu"
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "k07"
+at = 15
+user = "alice"
+cpu = 24
+load = "cpu"
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "k08"
+at = 18
+user = "bob"
+cpu = 2
+memory_mib = 4096
+load = "sleep"
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "k09"
+at = 21
+user = "carol"
+cpu = 2
+memory_mib = 40960
+load = "sleep"
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "k10"
+at = 24
+user = "alice"
+cpu = 4
+load = "cpu"
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "k11"
+at = 27
+user = "bob"
+cpu = 4
+memory_mib = 8192
+gpu = 1
+load = "gpu"
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "k12"
+at = 30
+user = "carol"
+cpu = 2
+memory_mib = 4096
+load = "sleep"
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "k13"
+at = 33
+user = "alice"
+cpu = 4
+load = "cpu"
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "k14"
+at = 36
+user = "bob"
+cpu = 4
+load = "cpu"
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "k15"
+at = 39
+user = "carol"
+cpu = 2
+memory_mib = 4096
+load = "sleep"
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "k16"
+at = 42
+user = "alice"
+cpu = 4
+load = "cpu"
+run_s = 30
+time_limit_s = 60
