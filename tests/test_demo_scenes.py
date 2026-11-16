@@ -215,12 +215,17 @@ def test_the_checked_lab_shape_is_the_storyboards():
 # The GPU scenes, gemma stopped ----------------------------------------------------------------
 
 
-def test_scene_2_priority_jump_and_fairness(gpu_lab, drive):
+def test_scene_2_placement_priority_and_fairness(gpu_lab, drive):
     lab, runner = gpu_lab, drive(gpu_lab)
     cards = (("beta", RTX4090), ("delta", A5000), ("delta", RTX3090), ("gamma", A40S[0]))
     cards += (("gamma", A40S[1]),)
+    pauses = []
 
     def on_step(step, labels):
+        if step["action"] == "pause":
+            pauses.append(step)
+            if len(pauses) == 1:  # The presenter talks about placement for a minute.
+                lab.advance(60)
         if step["action"] == "cancel":
             lab.service.tick()  # Before the Worker confirms the stop.
             want = {"decision": "waiting_for_release", "waiting_for": [labels["sweep"][1][1]]}
@@ -238,11 +243,12 @@ def test_scene_2_priority_jump_and_fairness(gpu_lab, drive):
                 "no_capacity",
                 "no_capacity",
             ]
-            assert [round(item["score"]) for item in queue["entries"]] == [901, 500, 498]
+            # alice's P5 went in 60 s after her jobs started, bob's P9 5 s later, his P5 5 s later.
+            assert [round(item["score"]) for item in queue["entries"]] == [900, 500, 499]
             assert entry(queue, urgent)["blocker"] == gpu_blocker(1, "beta", free=0, held=1)
             want = {"job_id": urgent["id"], "node_id": "beta", "start": T0 + 1800}
             assert pick(queue["reservation"], want) == want
-            assert queue["usage_min_by_user"] == {"alice": pytest.approx(2.25)}
+            assert queue["usage_min_by_user"] == {"alice": pytest.approx(70 / 60)}
         if step["action"] == "cancel":
             [urgent], [mine], [theirs] = (jobs(labels, k) for k in ("urgent", "alice-p5", "bob-p5"))
             assert_running(lab, urgent, "delta", [A5000])
