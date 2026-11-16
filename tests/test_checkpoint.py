@@ -112,6 +112,14 @@ def test_the_worker_reports_checkpoints_with_its_heartbeat(client, tmp_path):
         for job, expected in ((saving, 4000), (plain, None)):
             value = client.get(f"/api/jobs/{job['id']}", headers=user_headers()).json()
             assert value["attempts"][0]["checkpoint_at"] == expected
+            # The Dashboard can show checkpoint age for either viewer without a private spec.
+            for viewer in ("alice", "bob"):
+                nodes = client.get("/api/nodes", headers=user_headers(viewer)).json()
+                allocation = next(
+                    a for n in nodes for a in n["allocations"] if a["job_id"] == job["id"]
+                )
+                assert allocation["checkpoint_at"] == expected
+                assert "spec" not in allocation and "checkpoint" not in allocation
     finally:
         executor.release.set()
         worker.pool.shutdown(wait=True)

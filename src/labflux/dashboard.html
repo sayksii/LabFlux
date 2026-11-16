@@ -601,7 +601,8 @@ const summary = (id) => S.jobs.find((j) => j.id === id);
    Accepts the short ID that English reasons and notes carry. */
 function jobName(id) {
   const j = S.jobs.find((x) => x.id.startsWith(id));
-  return j && j.kind === "MODEL" && j.service ? j.service : short(id);
+  if (j && j.kind === "MODEL" && j.service) return j.service;
+  return j && j.project ? `${j.project} · ${short(id)}` : short(id);
 }
 const nodeOf = (j) => (S.alloc.get(j.id) || {}).node_id || j.node_id || "—";
 
@@ -685,6 +686,13 @@ function reservationChip(r) {
 
 /* A block's two secondary lines; the first one stays visible on tight blocks, so it carries the news.
    Under 所有人 the owner leads its line ({who, text}); a model names none, its MODEL tag says it. */
+function checkpointText(a) {
+  if (!a || !a.preemptible || a.state !== "RUNNING" || a.started_at == null) return "";
+  if (a.checkpoint_at != null && a.checkpoint_at >= a.started_at) {
+    return `距 checkpoint ${mss(now() - Math.max(a.started_at, a.checkpoint_at))}`;
+  }
+  return `未存 checkpoint · 已執行 ${mss(now() - a.started_at)}`;
+}
 function blockLines(a, res) {
   const who = S.scope === "all" && a.kind !== "MODEL" ? ownerName(a.owner) : "";
   const owned = (text) => (who ? { who, text } : text);
@@ -698,6 +706,8 @@ function blockLines(a, res) {
   else if (a.kind === "SESSION" && a.state === "RUNNING" && a.lease_expires_at) status = `閒置到期 ${mss(a.lease_expires_at - now())}`;
   else if (a.state === "RUNNING" && a.started_at) status = `執行 ${mss(now() - a.started_at)}${a.ends_at ? " · 時限到 " + hhmm(a.ends_at) : ""}`;
   if (preempted) return [status, owned(res)];
+  const checkpoint = checkpointText(a);
+  if (checkpoint) return [owned(checkpoint), `${res} · ${status}`];
   if (a.kind === "SESSION") return [owned(status), res];
   return [owned(res), status];
 }
@@ -718,7 +728,7 @@ function blockFor(a, h, style, lines, seen, scale) {
       title: [a.job_id, `${ownerName(a.owner)} · ${a.state}`, ...lines.map(lineText),
         a.state === "UNKNOWN" ? "無法確認容器已停止,所以不會重派" : null].filter(Boolean).join("\n") },
     el("b", {}, model ? tag("MODEL") : a.kind === "SESSION" ? tag("SESSION") : null,
-      el("span", { className: "nm", textContent: model && a.service ? a.service : short(a.job_id) }),
+      el("span", { className: "nm", textContent: model && a.service ? a.service : jobName(a.job_id) }),
       a.placement === "backfilled" ? tag("backfill") : null),
     ...lines.map(lineNode)), hueKey(a));
   b.addEventListener("click", () => openDetail(a.job_id));
@@ -985,7 +995,7 @@ function jobCell(id, x) {
   return el("button", { className: "job-id", type: "button",
       title: `${id}${x.created_at ? `\n提交於 ${dateTime(x.created_at)}(${ago(x.created_at)})` : ""}` },
     a && named(x) ? paint(el("i", { className: "sw" }), hueKey(x)) : el("i", { className: "sw none" }),
-    short(id),
+    jobName(id),
     x.kind === "SESSION" ? tag("SESSION") : x.kind === "MODEL" ? tag("MODEL") : null,
     a && a.placement === "backfilled" ? tag("backfill") : null);
 }
@@ -1198,7 +1208,7 @@ async function refreshDetail() {
   }
 }
 function detailHead(x) {
-  $("dTitle").textContent = short(x.id);
+  $("dTitle").textContent = jobName(x.id);
   $("dTitle").title = x.id;
   $("dSw").className = S.alloc.has(x.id) && named(x) ? "sw" : "sw none";
   paint($("dSw"), hueKey(x));
@@ -1231,6 +1241,7 @@ function renderFacts(x, d) {
     x.kind === "SESSION" && x.lease_expires_at && x.state === "RUNNING" ? ["閒置到期", `${span(now(), x.lease_expires_at)}後(每個指令結束後重新起算)`] : null,
     ["資料集", (x.datasets || []).join(", ") || "—"],
     x.project ? ["專案", x.project] : null,
+    checkpointText(a) ? ["未保存進度", checkpointText(a)] : null,
     x.kind === "BATCH" ? ["重跑", [x.safe_to_rerun ? "safe_to_rerun" : "不可重跑", x.preemptible ? "preemptible" : "不可搶占",
       preempted != null ? `被搶占 ${preempted} 次` : null].filter(Boolean).join(" · ")] : null,
     ["節點", (a && a.node_id) || x.node_id || "—"],

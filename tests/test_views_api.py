@@ -151,6 +151,8 @@ def test_allocations_show_every_users_work_with_kind_placement_and_end(make_clie
         "gpu_uuids": [A5000["uuid"]],  # The smaller matching card.
         "created_at": 1000.0,
         "started_at": 1005.0,
+        "checkpoint_at": None,
+        "preemptible": False,
         "ends_at": 1005.0 + 3600,  # Its time limit from the start.
         "lease_expires_at": None,
         "placement": "started",

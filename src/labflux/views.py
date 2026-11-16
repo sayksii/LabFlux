@@ -78,6 +78,7 @@ def _allocations(connection, viewer: str, default_limit: float) -> dict[str, lis
             attempts.c.resources,
             attempts.c.created_at,
             attempts.c.started_at,
+            attempts.c.checkpoint_at,
             attempts.c.preempted_by,
             jobs.c.owner,
             jobs.c.kind,
@@ -107,6 +108,8 @@ def _allocations(connection, viewer: str, default_limit: float) -> dict[str, lis
                 "gpu_uuids": cards.get(row.id, []),
                 "created_at": row.created_at,
                 "started_at": row.started_at,
+                "checkpoint_at": row.checkpoint_at,
+                "preemptible": row.spec.get("preemptible", False),
                 # Scheduler._bookings' rule: the lease of a started session or model, else the
                 # hard time limit from the start, or from dispatch before the start.
                 "ends_at": row.lease_expires_at or (row.started_at or row.created_at) + limit,

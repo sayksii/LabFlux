@@ -9,14 +9,16 @@ decision the scene exists to show, so the demo files cannot drift from the verif
 """
 
 import importlib.util
+import io
 import json
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from conftest import user_headers
+from conftest import user_headers, worker_headers
 from fastapi.testclient import TestClient
 from test_storyboard import (
     A40S,
@@ -82,14 +84,22 @@ class World:
 
     def __init__(self, lab):
         self.lab = lab
+        self.countdowns = {}
 
     def exits(self):
         for user in USERS:
-            for job in self.lab.client.get("/api/jobs", headers=user_headers(user)).json():
+            owned = self.lab.client.get("/api/jobs", headers=user_headers(user)).json()
+            signals = {j["spec"]["env"].get("LABFLUX_DEMO_SIGNAL") for j in owned}
+            for job in owned:
                 argv = job["spec"]["argv"]
+                gate = job["spec"]["env"].get("LABFLUX_DEMO_GATE")
+                if job["state"] == "RUNNING" and gate and gate in signals:
+                    self.countdowns.setdefault(job["id"], self.lab.clock[0] + 10)
                 if job["state"] == "RUNNING" and argv[0] == "sleep":
                     started = self.lab.job(job)["attempts"][-1]["started_at"]
                     yield started + float(argv[1]), job
+                elif job["state"] == "RUNNING" and job["id"] in self.countdowns:
+                    yield self.countdowns[job["id"]], job
 
     def sleep(self, seconds):
         lab = self.lab
@@ -104,6 +114,39 @@ class World:
         if target > lab.clock[0]:
             lab.advance(target - lab.clock[0])
         lab.settle()
+        self.checkpoints()
+
+    def checkpoints(self):
+        # Model the real workload's two-second saves, reported through Worker heartbeats.
+        for user in USERS:
+            for job in self.lab.client.get("/api/jobs", headers=user_headers(user)).json():
+                if job["state"] != "RUNNING" or not job["spec"].get("checkpoint"):
+                    continue
+                attempt = self.lab.job(job)["attempts"][-1]
+                saved = attempt["started_at"] + 2 * int(
+                    (self.lab.clock[0] - attempt["started_at"]) / 2
+                )
+                if saved <= attempt["started_at"]:
+                    continue
+                node = attempt["node_id"]
+                response = self.lab.client.post(
+                    f"/internal/workers/{node}/heartbeat",
+                    headers=worker_headers(),
+                    json={
+                        "instance_id": self.lab.instances[node],
+                        "checkpoints": {attempt["id"]: saved},
+                        "gpus": [
+                            {
+                                "uuid": gpu["uuid"],
+                                "memory_used_mib": 0,
+                                "utilization_percent": 0,
+                                "external_use": False,
+                            }
+                            for gpu in NODES[node]["gpus"]
+                        ],
+                    },
+                )
+                assert response.status_code == 200, response.text
 
 
 @pytest.fixture
@@ -173,9 +216,13 @@ def test_every_scene_and_job_file_loads():
             used.add(step["submit"])
             spec = JobSpec.model_validate(step["spec"])
             assert spec.image == "python:3.12-slim", step["submit"]
-            # Reserve, don't burn: the container sleeps, and exits by itself before its limit.
-            assert spec.argv[0] == "sleep" and len(spec.argv) == 2, step["submit"]
-            assert 0 < float(spec.argv[1]) < spec.time_limit_s, step["submit"]
+            # Gate steps replace this template with the API-watching Python workload.
+            if spec.checkpoint:
+                assert spec.argv[:3] == ["python", "-u", "-c"]
+                compile(spec.argv[3], step["submit"], "exec")
+            else:
+                assert spec.argv[0] == "sleep" and len(spec.argv) == 2, step["submit"]
+                assert 0 < float(spec.argv[1]) < spec.time_limit_s, step["submit"]
         files = {path.name for path in scene["path"].glob("*.json")}
         assert files == used, f"{scene['path'].name}: unused job files {files - used}"
         for path in scene["path"].glob("*.json"):
@@ -262,89 +309,199 @@ def test_scene_2_placement_priority_and_fairness(gpu_lab, drive):
 
 def test_scene_3_backfill_a_short_job_before_the_two_a40_reservation(gpu_lab, drive):
     lab, runner = gpu_lab, drive(gpu_lab)
+    pauses = []
 
     def on_step(step, labels):
         lab.settle()
-        label = step.get("label")
-        if label == "prep":
-            for value, gpu in zip(jobs(labels, "held"), (RTX4090, A5000, RTX3090)):
-                assert_running(lab, value, "beta" if gpu is RTX4090 else "delta", [gpu])
-            assert_running(lab, jobs(labels, "prep")[0], "gamma")
-        if label == "head":
+        if step["action"] == "pause":
+            pauses.append(step)
+            if len(pauses) == 1:
+                lab.advance(60)  # Explain the first screen before populating the queue.
+                for label in ("original-long", "original-short"):
+                    assert lab.job(jobs(labels, label)[0])["state"] == "RUNNING"
+        if step.get("wait_running") == ["original-short"]:
+            assert_running(lab, jobs(labels, "original-long")[0], "gamma", A40S[:1])
+            assert_running(lab, jobs(labels, "original-short")[0], "gamma", A40S[1:])
+            assert not lab.allocations("beta") and not lab.allocations("delta")
+        if step.get("label") == "head":
             queue = lab.queue()
-            want = {"job_id": jobs(labels, "head")[0]["id"], "node_id": "gamma", "start": T0 + 300}
+            want = {"job_id": jobs(labels, "head")[0]["id"], "node_id": "gamma", "start": T0 + 600}
             assert pick(queue["reservation"], want) == want
-            want = {"kind": "cpu", "need": 16, "best_free": 14, "best_node": "gamma"}
-            assert entry(queue, jobs(labels, "head")[0])["blocker"] == want
-        if label == "short":
-            [head], [long], [short] = (jobs(labels, k) for k in ("head", "long", "short"))
-            assert_running(lab, short, "gamma", [A40S[0]])
+            assert entry(queue, jobs(labels, "head")[0])["blocker"] == gpu_blocker(
+                2, "gamma", free=0, held=2, model="A40"
+            )
+        if step.get("label") == "short":
+            [head], [short] = (jobs(labels, k) for k in ("head", "short"))
+            queue = lab.queue()
+            assert [(item["job_id"], item["decision"]) for item in queue["entries"]] == [
+                (head["id"], "head_reserved"),
+                (short["id"], "no_capacity"),
+            ]
+            assert lab.job(head)["state"] == lab.job(short)["state"] == "QUEUED"
+            assert lab.clock[0] == T0 + 60  # Countdown starts after the queue is populated.
+        if step.get("wait_running") == ["short"]:
+            [head], [short] = (jobs(labels, k) for k in ("head", "short"))
+            finished = lab.job(jobs(labels, "original-short")[0])
+            assert finished["state"] == "SUCCEEDED"  # Natural exit, with no cancellation.
+            assert finished["attempts"][-1]["released"]
+            assert finished["attempts"][-1]["exit_code"] == 0
+            assert_running(lab, jobs(labels, "original-long")[0], "gamma", A40S[:1])
+            running = assert_running(lab, short, "gamma", A40S[1:])
+            assert running["attempts"][-1]["started_at"] == T0 + 70
             assert lab.job(short)["schedule_note"].startswith(
                 f"backfill: backfilled on gamma ahead of job {head['id'][:8]} reserved on gamma"
             )
             queue = lab.queue()
             assert [(item["job_id"], item["decision"]) for item in queue["entries"]] == [
-                (head["id"], "head_reserved"),
-                (long["id"], "would_delay_reservation"),
+                (head["id"], "head_reserved")
             ]
-            blocker = gpu_blocker(2, "gamma", free=1, held=1, model="A40")
+            blocker = gpu_blocker(2, "gamma", free=0, held=2, model="A40")
             assert entry(queue, head)["blocker"] == blocker
             assert (queue["reservation"]["node_id"], queue["reservation"]["start"]) == (
                 "gamma",
-                T0 + 300,
+                T0 + 600,
             )
+            assert lab.job(head)["state"] == "QUEUED" and lab.job(head)["attempts"] == []
             [told] = decisions(queue, "backfilled", short)
             assert told["detail"]["ahead_of"] == head["id"]
-        if step["action"] == "say":
-            # The countdown ran out: the 18-core job exited at 290 s, the head took both A40s.
-            [head], [long] = jobs(labels, "head"), jobs(labels, "long")
-            job = assert_running(lab, head, "gamma", A40S)
-            started = job["attempts"][-1]["started_at"]
-            assert started == T0 + 290
-            queue = lab.queue()
-            assert [(item["job_id"], item["decision"]) for item in queue["entries"]] == [
-                (long["id"], "head_reserved")
-            ]
-            assert queue["reservation"]["start"] == started + 600
 
-    play(runner, "3", on_step, checks=("prep", "head", "short", "say"))
+    play(runner, "3", on_step, checks=("original-long", "original-short", "head", "short", "pause"))
+    assert len(pauses) == 2
+    assert lab.clock[0] == T0 + 70
 
 
-def test_scene_4_preemption_stops_the_latest_started_job(gpu_lab, drive):
+def test_scene_3_confirms_setup_then_backfills_after_the_first_enter(gpu_lab, drive, monkeypatch):
     lab, runner = gpu_lab, drive(gpu_lab)
-    cards = (("beta", RTX4090), ("delta", A5000), ("delta", RTX3090), ("gamma", A40S[0]))
-    cards += (("gamma", A40S[1]),)
+    scene = demo.find_scene("3")
+    submitted = {}
+    entered = []
 
     def on_step(step, labels):
+        # No test-driven settling: the runner must synchronize with the actual job states.
+        submitted.update(labels)
+        if step.get("label") == "head":
+            for label in ("original-long", "original-short"):
+                assert lab.job(jobs(labels, label)[0])["state"] == "RUNNING"
+
+    def enter(prompt):
+        if not entered:
+            assert "head" not in submitted and "short" not in submitted
+            for label in ("original-long", "original-short"):
+                assert lab.job(jobs(submitted, label)[0])["state"] == "RUNNING"
+            demo.time.sleep(30)  # Holding the first screen keeps both original jobs alive.
+        else:
+            assert lab.job(jobs(submitted, "original-short")[0])["state"] == "SUCCEEDED"
+            assert lab.job(jobs(submitted, "original-long")[0])["state"] == "RUNNING"
+            assert lab.job(jobs(submitted, "short")[0])["state"] == "RUNNING"
+            assert lab.job(jobs(submitted, "head")[0])["state"] == "QUEUED"
+        entered.append(prompt)
+        return ""
+
+    monkeypatch.setattr("builtins.input", enter)
+    assert demo.run_scene(runner, scene, on_step=on_step) == 0
+    assert len(entered) == 2
+    assert 40 <= lab.clock[0] - T0 < 42
+
+
+def test_scene_4_preemption_stops_the_older_job_with_the_newer_checkpoint(
+    gpu_lab, drive, monkeypatch
+):
+    lab, runner = gpu_lab, drive(gpu_lab)
+    submitted, pauses = {}, []
+
+    def enter(prompt):
+        first, second = [lab.job(jobs(submitted, name)[0]) for name in ("job1", "job2")]
+        if not pauses:
+            assert "urgent" not in submitted
+            assert first["state"] == second["state"] == "RUNNING"
+            a, b = first["attempts"][-1], second["attempts"][-1]
+            assert b["started_at"] - a["started_at"] >= 5
+            assert a["checkpoint_at"] > b["started_at"] and b["checkpoint_at"] is None
+            demo.time.sleep(20)  # Holding the first screen keeps saving real progress.
+        else:
+            assert first["state"] == "QUEUED" and second["state"] == "RUNNING"
+            assert first["attempts"][-1]["state"] == "PREEMPTED"
+            assert first["attempts"][-1]["released"]
+            assert_running(lab, jobs(submitted, "urgent")[0], "gamma", A40S[:1])
+        pauses.append(prompt)
+        return ""
+
+    monkeypatch.setattr("builtins.input", enter)
+
+    def on_step(step, labels):
+        submitted.update(labels)
         if step.get("label") == "urgent":
-            [urgent], low = jobs(labels, "urgent"), jobs(labels, "low")
+            [urgent], [first] = jobs(labels, "urgent"), jobs(labels, "job1")
             lab.service.tick()  # Before the Worker confirms the stop.
-            victim = lab.job(low[4])
+            victim = lab.job(first)
             assert (victim["state"], victim["reason"]) == (
                 "STOPPING",
                 f"preempted by job {urgent['id'][:8]}; waiting for confirmed container termination",
             )
             queue = lab.queue()
-            want = {"decision": "waiting_for_release", "waiting_for": [low[4]["id"]]}
+            want = {"decision": "waiting_for_release", "waiting_for": [first["id"]]}
             assert pick(entry(queue, urgent), want) == want
             [preempting] = decisions(queue, "preempting", urgent)
-            assert preempting["detail"]["victims"] == [low[4]["id"]]
+            assert preempting["detail"]["victims"] == [first["id"]]
+            assert not victim["attempts"][-1]["released"]
+            assert len(lab.allocations("gamma")) == 2
         lab.settle()
-        if step.get("label") == "low":
-            for value, (node, gpu) in zip(jobs(labels, "low"), cards):
-                assert_running(lab, value, node, [gpu])
+        if step.get("label") in ("job1", "job2"):
+            index = 0 if step["label"] == "job1" else 1
+            assert_running(lab, jobs(labels, step["label"])[0], "gamma", [A40S[index]])
         if step.get("label") == "urgent":
-            [urgent], low = jobs(labels, "urgent"), jobs(labels, "low")
-            assert_running(lab, urgent, "gamma", [A40S[1]])
-            job = lab.job(low[4])
+            [urgent], [first] = jobs(labels, "urgent"), jobs(labels, "job1")
+            assert_running(lab, urgent, "gamma", A40S[:1])
+            assert_running(lab, jobs(labels, "job2")[0], "gamma", A40S[1:])
+            job = lab.job(first)
             assert job["reason"].endswith("queued to run again (preemption 1 of 3)")
             assert [attempt["state"] for attempt in job["attempts"]] == ["PREEMPTED"]
             queue = lab.queue()
             assert [(item["job_id"], item["decision"]) for item in queue["entries"]] == [
-                (low[4]["id"], "head_reserved")
+                (first["id"], "head_reserved")
             ]
 
-    play(runner, "4", on_step, checks=("low", "urgent"))
+    play(runner, "4", on_step, checks=("job1", "job2", "urgent", "pause", "wait_preempted"))
+    assert len(pauses) == 2
+
+
+def test_scene_4_workload_saves_progress_on_the_scheduler_clock(tmp_path, monkeypatch):
+    """A skewed Worker clock must not turn a newly saved file into a stale checkpoint."""
+    spec = json.loads((ROOT / "examples/demo/4-preemption/low.json").read_text())
+    checkpoint = tmp_path / spec["checkpoint"]
+    checkpoint.write_text('{"step": 7}')  # A retry can continue its saved counter.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LABFLUX_DEMO_URL", "http://scheduler")
+    response = io.BytesIO(b"{}")
+    response.headers = {"Date": "Thu, 01 Jan 1970 00:16:40 GMT"}  # Scheduler t=1000.
+    urls = []
+
+    def open_health(url, **kwargs):
+        urls.append(url)
+        return response
+
+    monkeypatch.setattr(
+        urllib.request, "build_opener", lambda *args: SimpleNamespace(open=open_health)
+    )
+    ticks = [50.0]
+    monkeypatch.setattr(time, "monotonic", lambda: ticks[0])
+    monkeypatch.setattr(time, "time", lambda: 800.0)  # Worker wall clock is behind.
+
+    class FinishedSample(Exception):
+        pass
+
+    def sleep(seconds):
+        if ticks[0] >= 54:
+            raise FinishedSample
+        ticks[0] += seconds
+
+    monkeypatch.setattr(time, "sleep", sleep)
+    with pytest.raises(FinishedSample):
+        exec(compile(spec["argv"][3], "checkpoint-workload", "exec"), {})
+    assert urls == ["http://scheduler/health"]
+    assert json.loads(checkpoint.read_text()) == {"step": 9}
+    assert checkpoint.stat().st_mtime == 1004.0
+    assert not checkpoint.with_suffix(".tmp").exists()
 
 
 # The model scenes, in the demo's run order ----------------------------------------------------
@@ -525,19 +682,19 @@ def test_dry_run_prints_the_steps_without_contacting_the_scheduler(monkeypatch, 
     assert out.startswith("Scene 3: EASY backfill")
     lines = [line for line in out.splitlines() if line.startswith("  [")]
     assert [line.split("] ", 1)[1].split(":")[0] for line in lines] == [
-        "alice submits held-4090.json",
-        "alice submits held-a5000.json",
-        "alice submits held-3090.json",
-        "bob submits prep.json",
-        "wait 20 s",
+        "alice submits held-long.json",
+        "wait until original-long is running",
+        "alice submits held-short.json",
+        "wait until original-short is running",
+        "PAUSE (do this by hand)",
         "bob submits head.json",
-        "alice submits long.json",
         "alice submits short.json",
-        "wait 275 s",
-        "note",
+        "wait until short is running",
+        "PAUSE (do this by hand)",
     ]
     assert "2 GPU (A40), priority 9, limit 600 s, runs sleep 590" in out
-    assert "would_delay_reservation" in out  # What the audience should see.
+    assert "10 秒完成倒數" in out
+    assert "小 Job 自動利用空出的卡先跑" in out
     assert demo.main(["scene"]) == 0
     listed = capsys.readouterr().out.splitlines()
     assert [line.split()[2] for line in listed] == ["2", "3", "4", "6c", "5", "7", "6a", "1", "6b"]

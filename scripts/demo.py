@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -27,6 +28,7 @@ from pathlib import Path
 import httpx
 
 from labflux.models import JobSpec
+from labflux.policy import lost_seconds
 
 ROOT = Path(__file__).resolve().parents[1]
 SCENES = ROOT / "examples" / "demo"
@@ -39,8 +41,31 @@ LAB = [
     (16.0, 49152, ("3090", "A5000")),
     (32.0, 65536, ("A40", "A40")),
 ]
-ACTIONS = ("submit", "wait", "cancel", "pause", "wait_model", "model_idle", "chat")
-STEP_KEYS = {*ACTIONS, "say", "user", "label", "count", "every", "index", "timeout"}
+ACTIONS = (
+    "submit",
+    "wait",
+    "cancel",
+    "pause",
+    "wait_running",
+    "wait_checkpoint",
+    "wait_preempted",
+    "wait_model",
+    "model_idle",
+    "chat",
+)
+STEP_KEYS = {
+    *ACTIONS,
+    "say",
+    "user",
+    "label",
+    "count",
+    "every",
+    "index",
+    "timeout",
+    "ready",
+    "gate",
+    "signal",
+}
 CHAT_PROMPT = "請用大約 300 字說明實驗室共用 GPU 叢集為什麼需要排程器。"
 
 
@@ -65,7 +90,7 @@ def load_scene(path: Path) -> dict:
     """A scene folder's scene.toml, checked, with each submit step's job file loaded."""
     scene = tomllib.loads((path / "scene.toml").read_text())
     scene["id"], scene["path"] = scene_id(path), path
-    labels = set()
+    labels, gates = set(), {}
     for number, step in enumerate(scene["steps"], 1):
         where = f"{path.name} step {number}"
         if unknown := set(step) - STEP_KEYS:
@@ -81,10 +106,30 @@ def load_scene(path: Path) -> dict:
             JobSpec.model_validate(step["spec"])
             step.setdefault("label", Path(step["submit"]).stem)
             labels.add(step["label"])
+            if step.get("gate"):
+                gates[step["label"]] = step["user"]
         elif step["action"] == "cancel" and step["cancel"] not in labels:
             raise ValueError(f"{where}: no earlier submit has the label {step['cancel']!r}")
         elif step["action"] == "chat" and not set(step["chat"]) <= set(USERS):
             raise ValueError(f"{where}: chat users must be among {USERS}")
+        if "signal" in step and (
+            step["action"] != "submit" or gates.get(step["signal"]) != step.get("user")
+        ):
+            raise ValueError(f"{where}: signal must name an earlier gated job of the same user")
+        if "wait_preempted" in step and step["wait_preempted"] not in labels:
+            raise ValueError(f"{where}: wait_preempted must name an earlier submit label")
+        for key in ("ready", "wait_running", "wait_checkpoint"):
+            if key not in step:
+                continue
+            ready = step[key]
+            if (
+                (key == "ready" and step["action"] != "pause")
+                or not isinstance(ready, list)
+                or not ready
+                or (key == "wait_checkpoint" and len(ready) != 2)
+                or any(not isinstance(label, str) or label not in labels for label in ready)
+            ):
+                raise ValueError(f"{where}: {key} must name earlier submit labels")
     return scene
 
 
@@ -115,7 +160,8 @@ def describe(spec: dict) -> str:
         parts.append("preemptible")
     if spec.get("retries_on_node_failure"):
         parts.append(f"{spec['retries_on_node_failure']} retry on node failure")
-    parts.append(f"limit {spec['time_limit_s']:g} s, runs {' '.join(spec['argv'])}")
+    command = "checkpoint workload" if spec.get("checkpoint") else " ".join(spec["argv"])
+    parts.append(f"limit {spec['time_limit_s']:g} s, runs {command}")
     return ", ".join(parts)
 
 
@@ -124,8 +170,11 @@ def describe_step(step: dict) -> str:
     if action == "submit":
         count = step.get("count", 1)
         times = f" x{count}" + (f", one every {step['every']} s" if step.get("every") else "")
-        return f"{step['user']} submits {step['submit']}{times if count > 1 else ''}: " + describe(
-            step["spec"]
+        description = describe(step["spec"])
+        if step.get("gate"):
+            description = description.split(", runs ")[0] + ", waits for queued job then runs 10 s"
+        return (
+            f"{step['user']} submits {step['submit']}{times if count > 1 else ''}: " + description
         )
     if action == "wait":
         return f"wait {step['wait']} s"
@@ -134,6 +183,13 @@ def describe_step(step: dict) -> str:
         return f"cancel {step['cancel']}{which} (its owner cancels it)"
     if action == "pause":
         return "PAUSE (do this by hand):"
+    if action == "wait_running":
+        return f"wait until {', '.join(step['wait_running'])} is running"
+    if action == "wait_checkpoint":
+        first, second = step["wait_checkpoint"]
+        return f"wait until {first}'s checkpoint makes it cheaper to stop than {second}"
+    if action == "wait_preempted":
+        return f"wait until {step['wait_preempted']} is preempted and back in queue"
     if action == "wait_model":
         states = " or ".join(step["wait_model"])
         return f"wait until {MODEL} is {states} (up to {step.get('timeout', 300)} s)"
@@ -413,6 +469,74 @@ def wait(seconds: float) -> None:
         time.sleep(min(30, left))
 
 
+def wait_running(demo: Demo, jobs: list[tuple[str, str]], timeout: float) -> None:
+    """Advance only once the requested on-screen jobs have actually started."""
+    deadline = time.monotonic() + timeout
+    pending = list(jobs)
+    while pending:
+        for user, job_id in pending.copy():
+            job = demo.call(user, "GET", f"/api/jobs/{job_id}")
+            if job["state"] == "RUNNING":
+                pending.remove((user, job_id))
+            elif job["state"] in TERMINAL:
+                raise SystemExit(f"demo: job {job_id[:8]} became {job['state']} before RUNNING")
+        if not pending:
+            return
+        if time.monotonic() >= deadline:
+            raise SystemExit(f"demo: jobs still starting after {timeout} s; check the Dashboard")
+        time.sleep(0.5)
+
+
+def wait_checkpoint(demo: Demo, jobs: list[tuple[str, str]], timeout: float) -> None:
+    """Wait for a real Worker report proving the first job loses less than the second."""
+    deadline = time.monotonic() + timeout
+    while True:
+        values = [demo.call(user, "GET", f"/api/jobs/{job_id}") for user, job_id in jobs]
+        if any(job["state"] in TERMINAL for job in values):
+            raise SystemExit("demo: an original job ended before the checkpoint comparison")
+        if all(job["state"] == "RUNNING" for job in values):
+            first, second = [job["attempts"][-1] for job in values]
+            saved = first.get("checkpoint_at")
+            other = max(second["started_at"], second.get("checkpoint_at") or 0)
+            if saved is not None and saved >= first["started_at"] and saved > other:
+                now = demo.call("alice", "GET", "/api/queue")["computed_at"]
+                for job, attempt in zip(values, (first, second)):
+                    loss = lost_seconds(attempt["started_at"], now, attempt.get("checkpoint_at"))
+                    source = (
+                        "距上次 checkpoint"
+                        if attempt.get("checkpoint_at")
+                        else "未存 checkpoint，已執行"
+                    )
+                    name = job["spec"].get("project") or job["id"][:8]
+                    print(f"     {name} ({job['id'][:8]}): {source} {loss:.1f} 秒", flush=True)
+                return
+        if time.monotonic() >= deadline:
+            raise SystemExit(
+                "demo: no newer checkpoint reported; check Job1 logs and Worker heartbeat"
+            )
+        time.sleep(0.5)
+
+
+def wait_preempted(demo: Demo, job: tuple[str, str], timeout: float) -> None:
+    """Do not show the final screen until the old container has stopped and requeued."""
+    deadline = time.monotonic() + timeout
+    user, job_id = job
+    while True:
+        value = demo.call(user, "GET", f"/api/jobs/{job_id}")
+        history = value.get("attempts", [])
+        if value["state"] == "QUEUED" and history:
+            if history[-1]["state"] == "PREEMPTED" and history[-1]["released"]:
+                print(
+                    f"     {job_id[:8]}: PREEMPTED → QUEUED，容器停止與資源釋放已確認", flush=True
+                )
+                return
+        if value["state"] in TERMINAL or time.monotonic() >= deadline:
+            raise SystemExit(
+                f"demo: expected {job_id[:8]} to requeue after preemption; got {value['state']}"
+            )
+        time.sleep(0.5)
+
+
 def wait_model(demo: Demo, states: list[str], timeout: float) -> None:
     deadline, seen = time.monotonic() + timeout, None
     while True:
@@ -476,16 +600,40 @@ def run_scene(demo: Demo, scene: dict, *, dry_run=False, force=False, on_step=No
             print("  Fix these first, or pass --force to play anyway.", flush=True)
             return 1
     labels: dict[str, list[tuple[str, str]]] = {}
+    gates: dict[str, str] = {}
     for number, step in enumerate(steps, 1):
         action = step["action"]
         print(f"  [{number}/{len(steps)}] {describe_step(step)}", flush=True)
-        if action in ("wait", "wait_model", "model_idle", "chat"):
+        waiting = action in (
+            "wait",
+            "wait_running",
+            "wait_checkpoint",
+            "wait_preempted",
+            "wait_model",
+            "model_idle",
+            "chat",
+        )
+        if waiting:
             say(step)  # What the audience sees meanwhile.
         if action == "submit":
+            spec = {**step["spec"], "env": dict(step["spec"].get("env", {}))}
+            if spec.get("checkpoint"):
+                spec["env"]["LABFLUX_DEMO_URL"] = demo.url
+            if step.get("gate"):
+                # The container watches this owner's API for a fresh, run-specific signal.
+                gates[step["label"]] = secrets.token_hex(16)
+                spec["argv"] = ["python", "-u", "-c", (ROOT / "scripts/demo_gate.py").read_text()]
+                spec["env"].update(
+                    LABFLUX_DEMO_URL=demo.url,
+                    LABFLUX_DEMO_TOKEN=demo.tokens[step["user"]],
+                    LABFLUX_DEMO_GATE=gates[step["label"]],
+                )
+            if step.get("signal"):
+                spec["env"]["LABFLUX_DEMO_SIGNAL"] = gates[step["signal"]]
             for index in range(step.get("count", 1)):
                 if index and step.get("every"):
                     time.sleep(step["every"])
-                job = demo.call(step["user"], "POST", "/api/jobs", json=step["spec"])
+                job = demo.call(step["user"], "POST", "/api/jobs", json=spec)
                 labels.setdefault(step["label"], []).append((step["user"], job["id"]))
                 print(
                     f"     {step['label']} #{index + 1}: job {job['id'][:8]} {job['state']}",
@@ -493,6 +641,17 @@ def run_scene(demo: Demo, scene: dict, *, dry_run=False, force=False, on_step=No
                 )
         elif action == "wait":
             wait(step["wait"])
+        elif action == "wait_running":
+            pending = [job for label in step["wait_running"] for job in labels[label]]
+            wait_running(demo, pending, step.get("timeout", 60))
+        elif action == "wait_checkpoint":
+            wait_checkpoint(
+                demo,
+                [labels[label][0] for label in step["wait_checkpoint"]],
+                step.get("timeout", 30),
+            )
+        elif action == "wait_preempted":
+            wait_preempted(demo, labels[step["wait_preempted"]][0], step.get("timeout", 30))
         elif action == "cancel":
             chosen = labels[step["cancel"]]
             if "index" in step:
@@ -502,6 +661,10 @@ def run_scene(demo: Demo, scene: dict, *, dry_run=False, force=False, on_step=No
                 state = demo.call(user, "POST", f"/api/jobs/{job_id}/cancel")["state"]
                 print(f"     {user} cancelled {job_id[:8]} ({place}): {state}", flush=True)
         elif action == "pause":
+            if step.get("ready"):
+                pending = [job for label in step["ready"] for job in labels[label]]
+                print("     Confirming containers are running before the next Enter...", flush=True)
+                wait_running(demo, pending, step.get("timeout", 60))
             text = step["pause"]
             for label, jobs in labels.items():
                 text = text.replace("{" + label + "}", jobs[0][1])
@@ -516,7 +679,7 @@ def run_scene(demo: Demo, scene: dict, *, dry_run=False, force=False, on_step=No
             model_idle(demo, step["model_idle"])
         elif action == "chat":
             chat(demo, step["chat"])
-        if action not in ("wait", "wait_model", "model_idle", "chat"):
+        if not waiting:
             say(step)
         if on_step:
             on_step(step, labels)

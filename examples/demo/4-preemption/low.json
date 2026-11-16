@@ -1,1 +1,11 @@
-{"image": "python:3.12-slim", "argv": ["sleep", "3590"], "resources": {"cpu": 4, "memory_mib": 8192, "gpu": 1}, "time_limit_s": 3600, "priority": 2, "safe_to_rerun": true, "preemptible": true}
+{
+  "image": "python:3.12-slim",
+  "argv": ["python","-u","-c","import json,os,time\nfrom pathlib import Path\nfrom email.utils import parsedate_to_datetime\nfrom urllib.request import ProxyHandler,build_opener\n# Use the Scheduler's clock for checkpoint metadata, matching its attempt timestamps.\nwith build_opener(ProxyHandler({})).open(os.environ['LABFLUX_DEMO_URL'].rstrip('/')+'/health',timeout=10) as response:\n server_time=parsedate_to_datetime(response.headers['Date']).timestamp()\norigin=time.monotonic()\np=Path('checkpoint.json')\nstep=json.loads(p.read_text())['step'] if p.exists() else 0\nfor _ in range(295):\n time.sleep(2)\n step+=1\n tmp=p.with_suffix('.tmp')\n tmp.write_text(json.dumps({'step':step}))\n saved=server_time+time.monotonic()-origin\n os.utime(tmp,(saved,saved))\n tmp.replace(p)\n print(f'checkpoint step={step}',flush=True)"],
+  "resources": {"cpu": 2, "memory_mib": 2048, "gpu": 1, "gpu_model": "A40"},
+  "time_limit_s": 600,
+  "priority": 2,
+  "safe_to_rerun": true,
+  "preemptible": true,
+  "project": "Job1",
+  "checkpoint": "checkpoint.json"
+}

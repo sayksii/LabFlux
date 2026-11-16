@@ -1,1 +1,1 @@
-{"image": "python:3.12-slim", "argv": ["sleep", "1790"], "resources": {"cpu": 4, "memory_mib": 8192, "gpu": 1, "min_vram_mib": 20480}, "time_limit_s": 1800, "priority": 8}
+{"image": "python:3.12-slim", "argv": ["sleep", "290"], "resources": {"cpu": 2, "memory_mib": 2048, "gpu": 1, "gpu_model": "A40"}, "time_limit_s": 300, "priority": 8, "project": "Urgent"}

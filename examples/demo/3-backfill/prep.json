@@ -1,1 +1,0 @@
-{"image": "python:3.12-slim", "argv": ["sleep", "290"], "resources": {"cpu": 18, "memory_mib": 8192}, "time_limit_s": 300}

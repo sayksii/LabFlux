@@ -6,7 +6,7 @@ gemma4-31b 改成 `on_demand`，讓觀眾看到冷啟動。M13 的比較結果�
 「優先權改變」以「高優先權工作抵達」呈現，因為目前沒有修改排隊中工作優先權的指令（決策 7）。
 
 - 各幕的工作與步驟在 `examples/demo/<幕>/`：每個 `scene.toml` 依序列出誰送出哪個工作檔、要等多久，以及每一步觀眾該看到什麼。
-  工作都用 `python:3.12-slim` 執行 `sleep`：只占住 CPU、RAM 與 GPU 的預約，不真的消耗共用機器的運算，而且會在時限前自己結束。
+  工作都用 `python:3.12-slim` 執行等待程式：只占住 CPU、RAM 與 GPU 的預約，不真的消耗共用機器的運算，而且會在時限前自己結束。
 - `scripts/demo.py` 以 alice、bob 的身分執行各幕，也負責檢查環境、清場與 bob 的 keepalive。
 - `tests/test_demo_scenes.py` 讓 `demo.py` 在測試環境裡，依同一批檔案和分鏡測試（`tests/test_storyboard*.py`）的假節點，把每一幕跑一遍。
   它會檢查每一幕要展示的決定：head_reserved、would_delay_reservation、backfilled、公平性排序、模型搶占、閒置回收。
@@ -138,9 +138,38 @@ $D scene 2 --dry-run | grep wait                  # wait 60 s、wait 60 s、wait
 
 時間是簡報的時間。每一幕結束後在 A 執行 `$D reset`（約 10 秒）。「說」的重點在簡報的講者備註，完整台詞在 `demo.py` 每一步印出的 `>` 行。
 
+第 8 頁講完後執行 `bash demo/3_backfill.sh`：腳本先清掉上一幕的 alice、bob 工作，再讓 kindred 的兩張 A40 各跑一個原始工作。
+上方原始長工作的時限為 10 分鐘，下方原始短工作的時限為 3 分鐘，Dashboard 的「時限到」會顯示下方較早結束。
+第一次 Enter 才送出指定兩張 A40 的大 Job 與指定一張 A40 的小 Job；送出後啟動原始短工作的 10 秒完成倒數。
+倒數後工作自然完成，小 Job 自動 backfill 到剛空出的卡，大 Job 繼續保有保留時段。
+最後停在「一個原始工作 + 小 Job」的畫面，第二次 Enter 清場；任何階段也可以按 Ctrl-C 結束並清場。
+`bash demo/3_backfill.sh --dry-run` 只列出步驟，不連 Scheduler，也不清場。
+
+2026-11-17 在 kindred 的兩張 A40 實測：第一個畫面停留超過 10 秒，兩個原始工作仍在執行；
+第一次 Enter 後兩個新工作進入佇列，約 11 秒後原始短工作以 exit code 0 完成，小 Job 在原卡上 backfill，
+大 Job 的保留時間沒有延後。第二次 Enter 後清場成功，alice、bob 沒有未結束工作，三個節點的配置資源均歸零。
+
+第 9 頁講完後執行 `bash demo/4_preemption.sh`：Job1 先占住 kindred 上方的 A40，每 2 秒將進度寫入
+`checkpoint.json`；Job1 開始後 5 秒才送入 Job2，占住下方的 A40。兩者都是優先權 2 且允許搶占重跑。
+Job2 沒有 checkpoint，所以它的未保存進度從開始執行時算起。腳本等 Worker 回報 Job1 的新 checkpoint
+後停在第一個 Enter，並印出兩者會損失的秒數。
+
+- 第一次 Enter：送入優先權 8、指定一張 A40 的 Urgent。Job1 雖然先開始，但 checkpoint 比較近，
+  因此成為損失較小的搶占對象。確認它的容器停止後，Urgent 才接手同一張卡。
+- 第二幕：Job2 繼續執行，Job1 的 attempt 標成 `PREEMPTED`，工作回到 queue；再次 Enter 清場。
+- 沿用現場的 Dashboard 即可操作：終端機會印出 Job1／Job2 對應的短 ID 與未保存進度秒數。
+  程式碼已備妥新版顯示：部署 `views.py` 與 `dashboard.html` 後，卡片可顯示名稱及
+  「距 checkpoint 0:02」或「未存 checkpoint · 已執行 0:20」。本次展示先使用終端機的比較數字。
+- `bash demo/4_preemption.sh --dry-run` 可預覽步驟。這個腳本不使用部署 SSH 金鑰。
+
+展示程式存檔時，以 Scheduler `/health` 的 HTTP Date 校準時間，再依 monotonic clock 記錄每次存檔的
+mtime，避免節點時鐘偏差影響比較；每次都先寫入實際進度，再以原子替換完成 checkpoint。
+2026-11-17 實測：Job1 距 checkpoint 約 3.6 秒、Job2 已執行約 20.7 秒，高優先權工作搶占 Job1；
+Job1 回到 queue，Job2 與 Urgent 各占一張 A40。第二次 Enter 清場成功。
+
 順序是由 gemma 決定的：
 
-- 第 2、3、4 幕需要五張卡都空著，也就是 gemma 停著、沒有人呼叫它，所以排在前面。第 2 幕另外需要 bob 還沒有用量，所以排第一個。
+- 第 2 幕需要五張卡都空著，第 3、4 幕使用 kindred 的兩張 A40；gemma 停著、沒有人呼叫它，這幾幕排在前面。第 2 幕另外需要 bob 還沒有用量，所以排第一個。
 - 接著第 6c 幕讓 gemma 冷啟動。它載入的 4–5 分鐘裡做第 5、7 幕：這兩幕本來就假設 gemma 占著 kindred 的兩張 A40、8 核與 48 GiB。
 - 等 gemma 開始服務（B 印出 200）才做第 6a 幕。
 
@@ -150,10 +179,10 @@ $D scene 2 --dry-run | grep wait                  # wait 60 s、wait 60 s、wait
 | 4:15 | Where a Job Runs | A：`$D scene 2` | 五張卡各一個 alice 區塊；決策欄「放得下 kayle、kindred；選 kayle：剩餘的合適 GPU 最少」。讓它繼續跑，換下一張 |
 | 5:15 | Who Goes First | （自動）5:15 bob P9；6:15 alice P5；6:30 bob P5 | 排隊表第 1 列 bob P9 head_reserved（900 + 0 − 0 起，每分鐘 +1），原因 GPU：karma 空 0／占用 1，欄頭 karma 的保留時段。6:30 起：1 bob P9 901、2 bob P5 500、3 alice P5 498 = 500 + 0 − 2；誰在用表 alice 2 分、bob 0 |
 | 約 6:55 | | A：PAUSE 時按 Ctrl-C；`$D reset` | |
-| 7:00 | Backfill | A：`$D scene 3`（自動，不要按任何鍵） | 約 7:25 起：kindred 欄頭「保留給 bob 的工作」；2 分鐘工作標 backfill；30 分鐘工作 would_delay_reservation；隊首原因 GPU：需要 2 張 A40、空 1。要看 18 核工作就切 CPU 核心軸再切回 GPU 卡 |
-| 約 8:35 | | A：Ctrl-C；`$D reset` | |
-| 8:45 | Preemption | A：`$D scene 4` | alice 每 3 秒一個 P2 可搶占工作，占滿五張卡；約 15 秒後 bob 的 P8 送出，搶占不到 2 秒就完成，所以指決策欄「搶占 …（kindred，損失最少）」；alice 的工作「被搶占 1 / 3 次」回到隊首 |
-| 約 9:50 | | A：`$D reset` | |
+| 第 8 頁講完 | Backfill | A：`bash demo/3_backfill.sh`；第一次 Enter | 兩張 A40 各跑一個原始工作；按 Enter 後，排隊表出現雙 A40 大 Job、一張 A40 小 Job；約 10 秒後原始短工作自然完成，小 Job 帶 backfill 標記先跑，大 Job 保有保留時段 |
+| | | 講完後第二次 Enter | 自動取消本幕 alice、bob 的工作，確認停止後清場 |
+| 第 9 頁講完 | Preemption | A：`bash demo/4_preemption.sh` | Job1 先跑，每 2 秒存 checkpoint；5 秒後 Job2 進入、不存 checkpoint，兩張 A40 都被占住 |
+| | | 第一次 Enter；講完後第二次 Enter | Urgent 搶占 checkpoint 較近的 Job1，Job2 繼續跑，Job1 回到 queue；最後清場 |
 | 10:00 | Shared Models | A：`$D scene 6c`；PAUSE 時到 B 按 Enter（keepalive 會一直等，這是正常的），回 A 按 Enter | 排隊表 MODEL「隊首。搶占 kindred 的 …,等它們停止後開始。」；alice 的 A40 區塊「被 gemma4-31b 搶占」；約 10 秒後 MODEL 區塊占兩張 A40，模型服務表開始計時。這一幕跑完自己結束 |
 | 11:15 | Fast Lane | A：`$D reset`；`$D scene 5`；PAUSE 時到 C 執行 `labflux shell`，再執行 `python hello.py` 兩次；回 A 按 Enter | CPU 軸全滿；session 排第 1「互動工作優先」；kayle 上的 SESSION 區塊（閒置倒數）；alice 的 4 核工作「被搶占 1 / 3 次」；第二次的容器 ID 和第一次相同 |
 | 約 12:35 | | C：`exit`；A：`$D reset` | |
@@ -196,14 +225,17 @@ gemma 從 B 送出第一個請求到開始服務約 4–5 分鐘（預演 4 分 
 
 ## 8. 彩排注意事項
 
-- **第 2 幕需要 bob 的近期用量接近 0**（視窗是 60 分鐘）。完整彩排一次會讓 bob 累積約 3–4 分鐘，主要來自第 3 幕的 18 核工作和第 5 幕的訓練工作。
+- **第 2 幕需要 bob 的近期用量接近 0**（視窗是 60 分鐘）。其他幕的彩排會累積 bob 的近期用量，例如第 5 幕的訓練工作。
   所以彩排要在正式展示前 60 分鐘以上做完，或者正式展示前只彩排不含 bob 的部分。`$D check` 會顯示 bob 的用量。
 - **第 2 幕的時間**：alice 的 P5 剛好在她的五個工作開始後 2 分鐘送出，她的分數一直是 500 − 2，
   Dashboard 四捨五入後的拆解（500 + 0 − 2）才會加得起來。間隔不是整數分鐘時會出現「499 = 500 + 0 − 2」這種畫面，改時間時要注意。
-- **第 3 幕的時間窗**：保留時段從 18 核工作開始後 300 秒起算，2 分鐘的工作必須在那之前至少 120 秒送到，否則它會延後保留時段，也就看不到 backfill。
-  `demo.py` 在 18 核工作送出 20 秒後，接連送出三個工作，大約還有 160 秒餘裕。不要手動一步一步送。
-  沒有按 Ctrl-C 的話，最後倒數約 4 分半，看隊首準時拿到兩張 A40。
-- **GPU 卡是預設的軸**：只用 CPU 的工作不會畫在上面，例如第 3 幕的 18 核工作、第 1 幕的 CPU／RAM 工作、第 5 幕。
+- **第 3 幕由 Enter 送出排隊工作**：先確認兩個原始工作已在 A40 上執行，再按 Enter 送出大 Job 與小 Job。
+  原始短工作透過 Scheduler API 等待本輪的小 Job，使用 alice 的展示 token 與每次重新產生的識別碼；
+  小 Job 送出後，原始程式自行倒數 10 秒並正常退出，不需要部署 SSH 金鑰。第一個畫面可停留解說，倒數從按 Enter 後啟動。
+  腳本確認小 Job 已 RUNNING，才停下來讓講者解說。
+  兩個新 Job 都指定 A40，GPU 軸只需看 kindred。小 Job 的硬性時限 2 分鐘，早於大 Job 約 10 分鐘的保留時段。
+  現場可說「原始工作完成後，空出一張卡；大工作仍需要兩張，所以小工作利用空檔先跑。」最後第二次 Enter 清場。
+- **GPU 卡是預設的軸**：只用 CPU 的工作不會畫在上面，例如第 1 幕的 CPU／RAM 工作、第 5 幕。
   要看就切到「CPU 核心」或「RAM」；重新整理頁面會回到 GPU 卡。
 - 第 2–4 幕進行中不要對 gemma 送任何請求，連測試用的 curl 也不行。
 - 從 6c 到展示結束，B 的 keepalive 要一直開著。有工作在等、又 60 秒沒有請求時，gemma 會被回收，下一個請求又要冷啟動 5 分鐘。
