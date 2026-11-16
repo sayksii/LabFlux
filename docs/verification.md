@@ -1334,6 +1334,8 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
 - 模型服務：`gemma4-31b`（`vllm/vllm-openai:v0.30.0`，tensor parallel 2），常駐（`persistent`），8 核、48 GiB、2 張 A40，
   `startup_timeout_s` 600、`cold_wait_s` 600、`shm_mib` 16384。
 - 使用者：`scheduler.users` 只有部署者一人；其他人以 `labflux login` 用自己的 Linux 帳號登入。三台都有 `/opt/labflux` 的共用 CLI。
+- 以上是 14.4 執行時（09:38～09:40）的設定。09:44 起另一個 session 為 M13 試跑把實驗室的 Scheduler 換成實驗設定（另有實驗帳號）；
+  這之後本節只有 `priority-high-gpu.json` 一個工作（09:45，`schedule_note` 仍是 `fcfs`），已告知 M13 的 session 從資料中排除。
 
 ### 14.1 以唯讀指令核對文件
 
@@ -1436,8 +1438,8 @@ M10、M11、6.1、Q14 各節，以及 `docs/lab-deploy.md` 的「目前限制」
 
 ### 實驗結果（M13，待補）
 
-M13 的 FCFS／`priority`／`backfill` 對照實驗還沒有進行。完成後把 CSV 與圖放在 `docs/evidence/m13/`，摘要與連結寫在這裡；
-展示分鏡第 8 幕使用這些結果。
+M13 的 FCFS／`priority`／`backfill` 對照實驗由另一個 session 進行中（2026-11-16 09:44 起在實驗室試跑），本 PR 沒有結果。
+完成後把 CSV 與圖放在 `docs/evidence/` 下（位置由 M13 決定），摘要與連結寫在這裡；展示分鏡第 8 幕使用這些結果。
 
 ## 最後驗證與交付
 
