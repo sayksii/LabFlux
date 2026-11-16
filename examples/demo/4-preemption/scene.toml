@@ -1,0 +1,30 @@
+# GPU scene 4: a priority 8 job preempts the cheapest of alice's preemptible jobs. Storyboard
+# scene 4 with all five cards free (gemma stopped), replayed by tests/test_demo_scenes.py.
+# Optional in the full run: scene 6c also shows preemption, by the model.
+title = "搶占（GPU）"
+run_order = 3
+axis = "GPU 卡"
+
+[requires]
+model = ["stopped"]
+no_jobs = true
+
+[[steps]]
+user = "alice"
+submit = "low.json"
+count = 5
+every = 10
+label = "low"
+say = """
+alice 每 10 秒送一個優先權 2、可搶占（safe_to_rerun + preemptible）的單卡工作，占滿五張卡。
+最後一個在 kindred 的第二張 A40，跑得最短。"""
+
+[[steps]]
+user = "bob"
+submit = "urgent.json"
+label = "urgent"
+say = """
+bob 的優先權 8 工作要一張 VRAM ≥ 20 GiB 的卡，現在沒有空卡 → 停止損失最少（最晚開始）的 alice 工作。
+kindred 第二張 A40 的區塊變虛線「被 bob 的工作搶占 · 停止中」；bob 的決定「隊首。搶占 kindred 的 …,等它停止後開始。」「選它是因為損失最少」；決策欄「搶占」。
+容器確認停止後 bob 的區塊落下；alice 的工作回到佇列「被搶占 1 / 3 次」，成為隊首並取得保留時段。
+點開 alice 的工作：執行紀錄有一列 PREEMPTED 和原因。"""

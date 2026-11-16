@@ -1,0 +1,74 @@
+# GPU scene 3: EASY backfill. Verified in tests/test_storyboard_gpu.py and replayed from this file
+# by tests/test_demo_scenes.py. Every card starts free and nobody asks for gemma.
+#
+# Timing window: the reservation starts when bob's 18-core job reaches its 300 s limit, so the
+# 2-minute job must arrive at least 120 s before that. The script sends head, long and short
+# back to back 120 s after prep; do not add pauses between them.
+title = "EASY backfill（GPU）"
+run_order = 2
+axis = "GPU 卡（看 18 核工作時切 CPU 核心）"
+
+[requires]
+model = ["stopped"]
+no_jobs = true
+
+[[steps]]
+user = "alice"
+submit = "held-4090.json"
+label = "held"
+
+[[steps]]
+user = "alice"
+submit = "held-a5000.json"
+label = "held"
+
+[[steps]]
+user = "alice"
+submit = "held-3090.json"
+label = "held"
+say = "alice 的三個 1 小時工作指定型號，占住 karma 4090、kayle A5000、kayle 3090。kindred 兩張 A40 空著。"
+
+[[steps]]
+user = "bob"
+submit = "prep.json"
+label = "prep"
+say = """
+bob 的 18 核工作（時限 5 分）只有 kindred 放得下；kindred 剩 14 核，兩張 A40 都空。
+GPU 軸不畫只用 CPU 的工作：切 CPU 核心軸看這個區塊，再切回 GPU 卡。"""
+
+[[steps]]
+wait = 120
+say = "2 分鐘後 bob 送出要兩張 A40 的工作；接著 alice 連送兩個單卡工作（30 分、2 分）。"
+
+[[steps]]
+user = "bob"
+submit = "head.json"
+label = "head"
+say = """
+排隊表第 1 列 head_reserved。原因 CPU：需要 16 核，kindred 最多空 14 核。
+保留時段在 kindred，從 18 核工作的時限到時開始（約 3 分鐘後；欄頭「保留給 bob 的工作」）。"""
+
+[[steps]]
+user = "alice"
+submit = "long.json"
+label = "long"
+say = "30 分鐘的工作：would_delay_reservation，沒有原因（現在放得下），「時限 1800 秒會延後保留時段」。"
+
+[[steps]]
+user = "alice"
+submit = "short.json"
+label = "short"
+say = """
+2 分鐘的工作 backfill 到 kindred 第一張 A40：區塊標 backfill，約 2 分鐘後結束。
+決策欄：「alice 的 … 在 kindred 先跑(backfill),不延後 …」；點開它，排程說明寫「…的保留時段:時限在保留時段開始前結束」。
+兩個決定同時在畫面上：30 分鐘的工作還放得下另一張 A40，所以一直是 would_delay。
+隊首的原因變成 GPU：需要 2 張 A40，kindred 空 1 張 / 占用 1 張。"""
+
+[[steps]]
+wait = 175
+say = "倒數：2 分鐘的工作先結束，接著 18 核工作在時限前結束，隊首拿到兩張 A40。"
+
+[[steps]]
+say = """
+隊首已在 kindred 的兩張 A40 開始（「只有 kindred 放得下」）。
+30 分鐘的工作變成 head_reserved，保留 kindred，從隊首開始後 10 分鐘起。FCFS 下兩個都要等：第 8 幕用圖對照。"""

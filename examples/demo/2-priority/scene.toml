@@ -1,0 +1,66 @@
+# GPU scene 2: priority jump and fairness. Verified in tests/test_storyboard_gpu.py and replayed
+# from this file by tests/test_demo_scenes.py. Every card starts free and nobody asks for gemma.
+title = "優先權插隊與公平性（GPU）"
+run_order = 1
+axis = "GPU 卡"
+
+[requires]
+model = ["stopped"]
+no_jobs = true
+# bob's priority 5 job ranks ahead of alice's earlier one only while bob has used (almost)
+# nothing in the last 60 minutes.
+max_usage_min = { bob = 1.0 }
+
+[[steps]]
+user = "alice"
+submit = "sweep.json"
+count = 5
+label = "sweep"
+say = """
+GPU 軸：五張卡各一個 alice 的區塊（karma 4090；kayle A5000、3090；kindred 兩張 A40），配置 started。
+決策欄：「在 kayle 開始 … 放得下 kayle、kindred；選 kayle：剩餘的合適 GPU 最少」。
+接下來 4 分鐘做開場介紹：alice 每分鐘累積 1 分鐘近期占用（每張卡是叢集的 1/5）。"""
+
+[[steps]]
+wait = 240
+
+[[steps]]
+user = "bob"
+submit = "urgent.json"
+label = "urgent"
+say = """
+排隊表第 1 列：bob 優先權 9，head_reserved，分數 900 + 0 − 0。
+原因 GPU：需要 1 張，karma 空 0 張 / 占用 1 張。保留時段在 karma，alice 開始後 30 分鐘（看欄頭）。"""
+
+[[steps]]
+wait = 60
+
+[[steps]]
+user = "alice"
+submit = "p5.json"
+label = "alice-p5"
+say = "alice 送出優先權 5 的單卡工作（no_capacity）。一分鐘後 bob 也送一個。"
+
+[[steps]]
+wait = 60
+
+[[steps]]
+user = "bob"
+submit = "p5.json"
+label = "bob-p5"
+say = """
+馬上講解（alice 每多等 1 分鐘就加 1 分）：
+  1 bob P9   902 = 900 + 2 − 0   head_reserved
+  2 bob P5   500 = 500 + 0 − 0   no_capacity
+  3 alice P5 495 = 500 + 1 − 6   no_capacity
+alice 先送、多等了 1 分鐘，但近 60 分鐘用了約 6 分鐘，所以排在 bob 後面。誰在用表：alice 約 6 分，bob 0。"""
+
+[[steps]]
+pause = "（可選）按 Enter：alice 取消她第 2 個 sweep（在 kayle 的 A5000 上）。不做就按 Ctrl-C 結束本幕。"
+
+[[steps]]
+cancel = "sweep"
+index = 2
+say = """
+bob P9 先顯示「等 kayle 上的工作停止」（waiting_for_release），接著落在 kayle 的 A5000（started）。
+排隊表變成：1 bob P5 head_reserved（保留 karma），2 alice P5 no_capacity。"""

@@ -1,0 +1,36 @@
+# Scene 1: job arrivals and heterogeneous placement, while gemma4-31b holds kindred's two A40s,
+# 8 CPU and 48 GiB (loading or serving). Verified in tests/test_storyboard.py and replayed from
+# this file by tests/test_demo_scenes.py.
+title = "工作抵達與異質配置"
+run_order = 5
+axis = "GPU 卡 → CPU 核心 → RAM"
+
+[requires]
+model = ["starting", "serving"]
+no_jobs = true
+
+[[steps]]
+user = "alice"
+submit = "gpu-4090.json"
+label = "gpu-4090"
+
+[[steps]]
+user = "alice"
+submit = "vram20.json"
+label = "vram20"
+
+[[steps]]
+user = "alice"
+submit = "ram40.json"
+label = "ram40"
+
+[[steps]]
+user = "alice"
+submit = "cpu8.json"
+count = 3
+label = "cpu8"
+say = """
+4090 的工作只能到 karma；VRAM ≥ 20 GiB 的選了較小的 kayle A5000。
+40 GiB RAM 只能到 kayle（kindred 有 64 GiB，但 gemma 占了 48）：切 RAM 軸看。
+三個 8 核工作依剩餘量分散（karma 一個、kindred 兩個）：切 CPU 核心軸看。
+點開工作看配置說明：「放得下 karma、kindred；選 karma …」、「只有 kayle 放得下」。"""

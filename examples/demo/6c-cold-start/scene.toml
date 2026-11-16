@@ -1,0 +1,37 @@
+# Scene 6 (c): gemma4-31b (on_demand) cold-starts on kindred and preempts alice's two
+# preemptible A40 jobs. Verified in tests/test_storyboard_model.py and replayed from this file by
+# tests/test_demo_scenes.py. The 4-5 minute load then overlaps scenes 1, 5 and 7.
+title = "模型冷啟動，搶占 alice 的 A40 工作"
+run_order = 4
+axis = "GPU 卡"
+
+[requires]
+model = ["stopped"]
+no_jobs = true
+
+[[steps]]
+user = "alice"
+submit = "sweep.json"
+count = 2
+every = 5
+label = "sweep"
+say = """
+GPU 軸：kindred 兩張 A40 上是 alice 的 sweep（優先權 2、可搶占）。
+模型服務表：gemma4-31b「自動釋放 · stopped · 下一個請求時啟動」。"""
+
+[[steps]]
+pause = "在 bob 的終端機執行 `uv run python scripts/demo.py keepalive`（第一個請求會一直等到冷啟動完成），然後回來按 Enter。"
+
+[[steps]]
+wait_model = ["starting", "serving"]
+timeout = 120
+say = """
+排隊表第 1 列是 MODEL gemma4-31b「隊首。搶占 kindred 的 …、…,等它們停止後開始。」「選它們是因為損失最少」；決策欄「gemma4-31b 搶占 …（kindred，損失最少）」。
+alice 的區塊「被 gemma4-31b 搶占 · 停止中」；約 10 秒後 MODEL 區塊占住兩張 A40（A40 · 45 GiB；starting · 啟動 0:10）。
+模型服務表「啟動 10 秒」開始計時；決策欄「… 被 gemma4-31b 搶占後重新排隊（第 1 次）」。"""
+
+[[steps]]
+cancel = "sweep"
+say = """
+取消 alice 重新排隊的兩個 sweep：留著的話它們會成為 backfill 隊首、保留 kindred，後面幾幕的畫面就變了。
+載入約 4–5 分鐘：接著做第 1、5、7 幕，keepalive 一直開著。"""

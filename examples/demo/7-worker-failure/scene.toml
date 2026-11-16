@@ -1,0 +1,45 @@
+# Scene 7: karma's Worker is lost and comes back. The jobs are those of tests/test_storyboard.py
+# scene 7, replayed by tests/test_demo_scenes.py. Stopping the Worker is done by hand
+# (docs/demo.md); stopping it leaves the job containers running.
+#
+# alice's job has priority 6: in (b) bob's retried job and alice's job queue together, and at
+# equal priority the order would follow recent usage. By this point in the demo alice has used
+# far more than bob, so bob's job would rank first and take karma's 4090 back.
+title = "Worker 失聯與恢復"
+run_order = 7
+axis = "GPU 卡"
+
+[requires]
+model = ["starting", "serving"]
+no_jobs = true
+
+[[steps]]
+user = "bob"
+submit = "retry.json"
+label = "retry"
+
+[[steps]]
+user = "alice"
+submit = "wants-4090.json"
+label = "wants"
+say = "bob 的工作（VRAM ≥ 20 GiB，節點故障可重跑 1 次）在 karma 的 4090；alice 要 4090 的工作（優先權 6）在等（head_reserved）。"
+
+[[steps]]
+pause = """
+(a) 停止 karma 的 Worker：$SSH labflux@<karma> systemctl --user stop labflux-worker.service
+    約 10 秒後 karma OFFLINE、bob 的工作 UNKNOWN（資源保留、不重派），alice 的工作「沒有在線的節點放得下」，不擋後面。
+    約 20 秒後啟動：$SSH labflux@<karma> systemctl --user start labflux-worker.service
+    看到欄頭 RECONCILING → ONLINE、工作回到 RUNNING 後按 Enter（不做 (b) 就按 Ctrl-C）。"""
+
+[[steps]]
+pause = """
+(b) 再停一次 Worker，刪掉 bob 工作的容器（模擬整台當機），再啟動 Worker：
+    $SSH labflux@<karma> systemctl --user stop labflux-worker.service
+    $SSH labflux@<karma> 'docker rm -f $(docker ps -q --filter label=labflux.job_id={retry})'
+    $SSH labflux@<karma> systemctl --user start labflux-worker.service
+    按 Enter。"""
+
+[[steps]]
+say = """
+核對發現容器不見：attempt FAILED 並釋放；bob 的工作重新排隊，換到 kayle 的 A5000（執行紀錄 FAILED → RUNNING）。
+alice 終於拿到 karma 的 4090。"""

@@ -38,26 +38,35 @@
   .bar { background: var(--navy); color: #fff; display: flex; align-items: center; gap: 1.6rem;
     padding: .8rem 1.6rem; flex-wrap: wrap; }
   .bar h1 { font-size: 1.47rem; font-weight: 700; letter-spacing: .01em; }
+  .brand { display: flex; align-items: center; gap: .8rem; }
+  .policy { display: inline-flex; align-items: center; gap: .4rem; border: 1px solid var(--navy-line); border-radius: var(--radius);
+    padding: .1rem .55rem; color: var(--navy-ink); font-size: .867rem; cursor: help; white-space: nowrap; }
+  .policy b { color: #fff; font-weight: 500; }
   .cluster { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; color: var(--navy-ink); font-size: .933rem; margin: 0; min-width: 0; flex: 1 1 18rem; }
   .cluster div { display: flex; gap: .4rem; }
   .cluster dt { margin: 0; } .cluster dd { margin: 0; color: #fff; font-weight: 500; }
-  .bar-end { margin-left: auto; display: flex; align-items: center; gap: .6rem; }
+  .bar-end { margin-left: auto; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
   .live { display: flex; align-items: center; gap: .45rem; color: var(--navy-ink); font-size: .867rem; }
   .live i { width: .5rem; height: .5rem; border-radius: 50%; background: #6fd39a; }
   .live.stale { color: #ffd38a; } .live.stale i { background: #ffb020; }
+  .who { display: inline-flex; align-items: center; gap: .35rem; color: #fff; font-size: .867rem; font-weight: 500; }
+  .who svg { width: 1rem; height: 1rem; color: var(--navy-ink); }
   .ghost { background: transparent; border: 1px solid var(--navy-line); color: #fff; border-radius: var(--radius);
     padding: .3rem .75rem; font-size: .867rem; display: inline-flex; align-items: center; gap: .4rem; }
   .ghost:hover { background: var(--navy-2); }
   .ghost[aria-pressed="true"] { background: #fff; color: var(--navy); border-color: #fff; }
   .ghost svg { width: 1rem; height: 1rem; }
+  .bar :focus-visible { outline-color: #fff; }
 
   main { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(26rem, 1fr); gap: 1.33rem;
     padding: 1.33rem 1.6rem 2rem; align-items: start; }
+  .stack { display: grid; gap: 1.33rem; min-width: 0; align-content: start; }
   .panel { background: var(--sheet); border: 1px solid var(--rule-strong); border-radius: var(--radius); min-width: 0; }
   .panel-head { display: flex; align-items: center; gap: 1rem; padding: .9rem 1.1rem; border-bottom: 1px solid var(--rule); flex-wrap: wrap; }
   .panel-head h2 { font-size: 1.2rem; font-weight: 700; }
   .panel-head p { margin: 0; color: var(--muted); font-size: .867rem; }
   .seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: var(--radius); overflow: hidden; margin-left: auto; }
+  .seg + .seg { margin-left: 0; }
   .seg button { border: 0; background: var(--sheet); padding: .3rem .8rem; font-size: .867rem; color: var(--muted); }
   .seg button + button { border-left: 1px solid var(--rule-strong); }
   .seg button[aria-pressed="true"] { background: var(--navy); color: #fff; }
@@ -75,6 +84,11 @@
   .node-cap { font-size: .867rem; color: var(--ink); margin-top: .15rem; }
   .node-live { font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; column-gap: .6rem; }
   .node-live span { white-space: nowrap; }
+  /* The backfill head's reservation: dashed amber, the visual language of waiting. It wraps, never
+     truncates: the start time at its end is the point. */
+  .resv { display: block; width: fit-content; max-width: 100%; margin-top: .35rem; border: 1px dashed var(--queued); color: var(--queued);
+    border-radius: 3px; padding: 0 .4rem; font-size: .8rem; font-weight: 500; line-height: 1.5; white-space: normal;
+    word-break: keep-all; overflow-wrap: anywhere; }
   .gutter { position: relative; border-right: 1px solid var(--rule); }
   .gutter span { position: absolute; right: .45rem; font-size: .8rem; color: var(--faint); transform: translateY(.2rem); }
   .gutter span.edge { transform: translateY(-50%); }
@@ -91,15 +105,26 @@
     border: 1px solid var(--line); background: var(--fill); color: var(--ink); text-align: left; display: flex;
     flex-direction: column; justify-content: flex-start; line-height: 1.3; }
   button.blk:hover, .blk.hot, .blk.sel { box-shadow: 0 0 0 2px var(--sheet), 0 0 0 4px var(--navy); z-index: 2; }
-  .blk b { font-size: .933rem; font-weight: 700; }
-  .blk span { font-size: .8rem; color: color-mix(in oklab, var(--line) 40%, var(--ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .blk.short span + span { display: none; }
-  .blk.tight { justify-content: center; padding-block: 0; }
-  .blk.tight span { display: none; }
-  .blk.micro b { display: none; }
+  .blk b { font-size: .933rem; font-weight: 700; display: flex; align-items: center; gap: .3rem; min-width: 0; max-width: 100%; }
+  .blk b .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .blk .ln { font-size: .8rem; color: color-mix(in oklab, var(--line) 40%, var(--ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Under 所有人 the owner leads its line in ink: who holds the block reads before what it holds. */
+  .blk .own { color: var(--ink); font-weight: 700; }
+  .blk.short .ln + .ln { display: none; }
+  /* Tight blocks keep one line: the name, then the first secondary line beside it. */
+  .blk.tight { flex-direction: row; align-items: center; gap: .45rem; padding-block: 0; }
+  .blk.tight b { flex: 0 1 auto; }
+  .blk.tight .ln { flex: 1 1 0; min-width: 0; }
+  .blk.tight .ln + .ln { display: none; }
+  .blk.micro b, .blk.micro .ln { display: none; }
   .blk.others { --fill: #e9ecf1; --line: #c5cad3; cursor: default; }
   .blk.stopping { border-style: dashed; border-width: 2px; }
-  .blk.unknown { border-style: dotted; border-width: 2px; --line: var(--unknown); }
+  .blk.unknown { border-style: dotted; border-width: 2px; border-color: var(--unknown); }
+  /* Kind and placement tags: SESSION, MODEL, backfill. */
+  .tag { display: inline-block; flex: none; font-size: .75rem; font-weight: 700; letter-spacing: .03em; line-height: 1.35;
+    padding: 0 .28rem; border: 1px solid currentColor; border-radius: 3px; background: var(--sheet); color: var(--muted);
+    white-space: nowrap; }
+  .blk .tag { color: color-mix(in oklab, var(--line) 45%, var(--ink)); }
   /* GPU axis: one period per pooled card; cards no job holds are labelled in place. */
   .col .card { position: absolute; left: 0; right: 0; padding: .3rem .95rem; display: flex; flex-direction: column;
     justify-content: center; font-size: .8rem; line-height: 1.3; color: var(--muted); overflow: hidden; }
@@ -111,7 +136,7 @@
   @keyframes land { from { opacity: 0; transform: scaleY(.88); } }
   @media (prefers-reduced-motion: reduce) { .blk.land { animation: none; } }
   .legend { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; padding: .7rem 1.1rem; border-top: 1px solid var(--rule); font-size: .8rem; color: var(--muted); }
-  .legend span { display: inline-flex; align-items: center; gap: .4rem; }
+  .legend > span { display: inline-flex; align-items: center; gap: .4rem; }
   .legend i { width: 1.1rem; height: .75rem; border-radius: 2px; display: inline-block; }
 
   /* States */
@@ -128,6 +153,13 @@
   .s-ONLINE { color: var(--ok); }
   .s-OFFLINE { background: var(--fail); border-color: var(--fail); color: #fff; }
   .s-RECONCILING { color: var(--unknown); border-style: dashed; }
+  /* Model service states, lowercase as /api/models reports them. */
+  .s-serving, .s-starting { background: var(--run); border-color: var(--run); color: #fff; }
+  .s-waiting { color: var(--queued); border-style: dashed; }
+  .s-stopping { color: var(--run); border-style: dashed; }
+  .s-failed { background: var(--fail); border-color: var(--fail); color: #fff; }
+  .s-stopped { color: var(--off); }
+  .s-unknown { color: var(--unknown); border-style: dotted; border-width: 2px; }
 
   /* Jobs */
   .tabs { display: flex; gap: .25rem; padding: .6rem .8rem; border-bottom: 1px solid var(--rule); overflow-x: auto; }
@@ -142,16 +174,38 @@
   tbody tr { cursor: pointer; }
   tbody tr:hover, tbody tr.hot { background: #f3f6fb; }
   tbody tr:last-child td { border-bottom: 0; }
+  .static tbody tr { cursor: default; }
+  .static tbody tr:hover { background: none; }
   .job-id { display: inline-flex; align-items: center; gap: .5rem; border: 0; background: none; padding: 0; font-weight: 500; }
   .sw { width: .7rem; height: .7rem; border-radius: 2px; background: var(--fill); border: 1px solid var(--line); flex: none; }
   .sw.none { background: transparent; border-color: transparent; }
   td.why-cell { white-space: normal; width: 100%; min-width: 10rem; }
-  :root.projector .res { display: none; }
+  /* Projected, the queue keeps its decision column on screen; the score breakdown still shows the priority term. */
+  :root.projector .res, :root.projector .hide-proj { display: none; }
+  :root.projector .list-scroll th, :root.projector .list-scroll td,
+  :root.projector #modelsView th, :root.projector #modelsView td { padding-inline: .5rem; }
+  :root.projector #modelsView td.why-cell { min-width: 7rem; }
+  /* Projected, the page scrolls as one, so the decision feed is not squeezed into a nested scroller. */
+  :root.projector .list-scroll { max-height: none; }
+  /* Projected at 1280-1366px, the timetable takes a larger share so block lines and model names fit at 18px. */
+  @media (min-width: 1081px) { :root.projector main { grid-template-columns: minmax(0, 1.5fr) minmax(26rem, 1fr); } }
   .why { color: var(--muted); font-size: .867rem; line-height: 1.35; overflow: hidden; display: -webkit-box;
     -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
   .num { white-space: nowrap; }
+  .dim { color: var(--muted); }
+  /* Queue: positions read like the timetable's period numerals. */
+  th.pos, td.pos { width: 1%; text-align: right; padding-right: .2rem; color: var(--faint); font-size: .8rem; }
+  .sc small, .decide small { display: block; color: var(--muted); font-size: .8rem; line-height: 1.35; }
+  /* The score breakdown and the kind wrap only between whole terms (no-break spaces inside each). */
+  .sc small, td.kind { white-space: normal; word-break: keep-all; }
+  .list-scroll th, .list-scroll td { padding-inline: .6rem; }
+  .decide { font-size: .867rem; line-height: 1.35; overflow-wrap: anywhere; }
+  .feed { padding: .9rem 1.1rem 1.1rem; border-top: 1px solid var(--rule); }
+  .feed h3 { font-size: 1rem; font-weight: 700; margin-bottom: .5rem; }
+  .feed ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .35rem; font-size: .867rem; line-height: 1.35; }
+  .feed li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .8rem; overflow-wrap: anywhere; }
+  .feed time { color: var(--faint); font-size: .8rem; padding-top: .05rem; white-space: nowrap; }
   .list-scroll { max-height: calc(100vh - 13rem); overflow: auto; }
-  @media (min-width: 1081px) { main > .panel:first-child { position: sticky; top: 1rem; } }
   .empty { padding: 2rem 1.2rem; color: var(--muted); text-align: center; }
   .empty p { margin: .3rem 0; }
   .empty code { background: var(--ground); padding: .1rem .4rem; border-radius: 3px; color: var(--ink); }
@@ -169,6 +223,8 @@
   .detail-body h3 { font-size: 1rem; font-weight: 700; margin-bottom: .5rem; }
   dl.facts { display: grid; grid-template-columns: 6rem 1fr; gap: .35rem 1rem; margin: 0; font-size: .933rem; }
   dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+  .raw { display: block; margin-top: .3rem; font-size: .8rem; color: var(--muted); background: var(--ground); border-radius: 3px;
+    padding: .25rem .45rem; overflow-wrap: anywhere; }
   .actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
   .btn { border: 1px solid var(--rule-strong); background: var(--sheet); border-radius: var(--radius); padding: .4rem .9rem; font-size: .933rem; }
   .btn:hover:not(:disabled) { background: var(--ground); }
@@ -204,18 +260,24 @@
   @media (max-width: 1080px) {
     main { grid-template-columns: minmax(0, 1fr); padding: 1rem; }
     .list-scroll { max-height: none; }
+    /* One column: the queue (why jobs wait) or the open detail comes right after the timetable. */
+    .stack { display: contents; }
+    #listView, #detailView { order: 1; }
+    .stack > .panel:not(:first-child) { order: 2; }
   }
   @media (max-width: 640px) {
     .bar { padding: .7rem 1rem; gap: .6rem 1rem; }
     .bar-end { margin-left: 0; width: 100%; }
     .bar-end .live { margin-right: auto; }
     .hide-sm { display: none; }
+    th, td { padding: .5rem .55rem; }
     .node-head { padding: .6rem .5rem; }
     .node-name b { flex: 1 0 100%; min-width: 0; font-size: .867rem; white-space: nowrap; overflow: hidden;
       text-overflow: ellipsis; direction: rtl; text-align: left; }
     .blk { left: .25rem; right: .25rem; padding-inline: .4rem; }
     .col .card { padding-inline: .65rem; }
     .panel-head .seg { margin-left: 0; }
+    .sc small { display: none; }
     dl.facts { grid-template-columns: 5rem 1fr; }
   }
 </style>
@@ -224,70 +286,109 @@
 <div class="login" id="login" hidden>
   <form id="tokenForm">
     <h1>LabFlux</h1>
-    <p>輸入使用者 Token,查看叢集節點與你的工作。</p>
+    <p>輸入使用者 Token,查看叢集節點、佇列與工作。</p>
     <label>使用者 Token
       <input id="token" type="password" autocomplete="off" spellcheck="false" required>
     </label>
     <p class="note error" id="loginError" role="alert"></p>
     <button class="btn primary" type="submit">連線</button>
-    <p class="note">Token 設定在 Scheduler TOML 的 <code>[users]</code>。只存在這個分頁,不會出現在網址。</p>
+    <p class="note">Token 來自 Scheduler TOML 的 <code>[users]</code>,或在 LabFlux 節點上執行 <code>labflux login</code>。只存在這個分頁,不會出現在網址。</p>
   </form>
 </div>
 
 <div id="app" hidden>
   <header class="bar">
-    <h1>LabFlux</h1>
+    <div class="brand">
+      <h1>LabFlux</h1>
+      <span class="policy" id="policy" hidden>策略 <b id="policyName"></b></span>
+    </div>
     <dl class="cluster" id="cluster"></dl>
     <div class="bar-end">
       <span class="live" id="live" role="status"><i></i><span>連線中</span></span>
+      <span class="who" id="who" title="目前登入的使用者" hidden>
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="5.5" r="2.75"/><path d="M2.75 14c.6-2.9 2.7-4.5 5.25-4.5s4.65 1.6 5.25 4.5"/></svg><span id="whoName"></span></span>
       <button class="ghost" id="projector" aria-pressed="false" title="放大字級,適合投影">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="3" width="13" height="8" rx="1"/><path d="M5 14h6M8 11v3"/></svg>投影模式</button>
       <button class="ghost" id="logout">登出</button>
     </div>
   </header>
   <main>
-    <section class="panel" aria-labelledby="tt-title">
-      <div class="panel-head">
-        <div><h2 id="tt-title">節點課表</h2><p>每一格是一單位資源,色塊是已預約的工作</p></div>
-        <div class="seg" role="group" aria-label="資源">
-          <button data-axis="cpu" aria-pressed="true">CPU 核心</button>
-          <button data-axis="ram" aria-pressed="false">RAM</button>
-          <button data-axis="gpu" aria-pressed="false" hidden>GPU 卡</button>
+    <div class="stack">
+      <section class="panel" aria-labelledby="tt-title">
+        <div class="panel-head">
+          <div><h2 id="tt-title">節點課表</h2><p>每一格是一單位資源,色塊是已預約的工作</p></div>
+          <div class="seg" role="group" aria-label="資源">
+            <button data-axis="cpu" aria-pressed="true">CPU 核心</button>
+            <button data-axis="ram" aria-pressed="false">RAM</button>
+            <button data-axis="gpu" aria-pressed="false" hidden>GPU 卡</button>
+          </div>
+          <div class="seg" role="group" aria-label="範圍">
+            <button data-scope="all" aria-pressed="true">所有人</button>
+            <button data-scope="mine" aria-pressed="false">我的</button>
+          </div>
         </div>
-      </div>
-      <div class="sheet-scroll"><div class="timetable" id="timetable"></div></div>
-      <div class="legend">
-        <span><i style="background:linear-gradient(90deg,#dbe7fb 0 33%,#fde3d3 33% 66%,#d9f0e0 66%);border:1px solid #9aa8bb"></i>你的工作(每個工作一色)</span>
-        <span><i style="background:#e9ecf1;border:1px solid #c5cad3"></i>其他使用者</span>
-        <span><i style="background:#fff;border:1px solid var(--rule-strong)"></i>可用</span>
-        <span id="lgReserve"><i style="background:var(--hatch);border:1px solid var(--rule-strong)"></i>系統保留</span>
-        <span id="lgExternal" hidden><i style="background:var(--hatch);border:1px solid var(--rule-strong)"></i>外部使用中(不接新工作)</span>
-        <span><i style="background:var(--none);border:1px solid var(--rule-strong)"></i>節點沒有這部分</span>
-        <span><i style="background:var(--hatch-off);border:1px solid #e5b5b1"></i>節點失聯</span>
-      </div>
-    </section>
+        <div class="sheet-scroll"><div class="timetable" id="timetable"></div></div>
+        <div class="legend">
+          <span><i style="background:linear-gradient(90deg,#dbe7fb 0 33%,#fde3d3 33% 66%,#d9f0e0 66%);border:1px solid #9aa8bb"></i><span id="lgJobs">每個工作一色,模型服務依名稱</span></span>
+          <span id="lgOthers"><i style="background:#e9ecf1;border:1px solid #c5cad3"></i>其他使用者</span>
+          <span><small class="tag">SESSION</small>快速測試 session</span>
+          <span><small class="tag">MODEL</small>模型服務</span>
+          <span><small class="tag">backfill</small>先跑的工作</span>
+          <span><i style="border:1px dashed var(--queued)"></i>保留時段</span>
+          <span><i style="background:#fff;border:1px solid var(--rule-strong)"></i>可用</span>
+          <span id="lgReserve"><i style="background:var(--hatch);border:1px solid var(--rule-strong)"></i>系統保留</span>
+          <span id="lgExternal" hidden><i style="background:var(--hatch);border:1px solid var(--rule-strong)"></i>外部使用中(不接新工作)</span>
+          <span><i style="background:var(--none);border:1px solid var(--rule-strong)"></i>節點沒有這部分</span>
+          <span><i style="background:var(--hatch-off);border:1px solid #e5b5b1"></i>節點失聯</span>
+        </div>
+      </section>
+
+      <section class="panel" id="modelsView" aria-labelledby="models-title" hidden>
+        <div class="panel-head"><div><h2 id="models-title">模型服務</h2><p>所有人共用,經 /v1 Gateway 轉送</p></div></div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>模型</th><th>模式</th><th>狀態</th><th>節點</th><th>進行中</th><th>已服務</th><th>閒置</th></tr></thead>
+            <tbody id="models"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="who-title">
+        <div class="panel-head"><div><h2 id="who-title">誰在用</h2><p>已預約是現在的預約;近 60 分占用是公平性扣分的依據</p></div></div>
+        <div class="table-scroll">
+          <table class="static">
+            <thead><tr><th>使用者</th><th>已預約</th><th>執行 / 排隊</th><th>近 60 分占用</th></tr></thead>
+            <tbody id="users"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
 
     <section class="panel" id="listView" aria-labelledby="jobs-title">
-      <div class="panel-head"><div><h2 id="jobs-title">我的工作</h2><p id="jobsNote">嚴格 FCFS:隊首放不下時,後面的工作一起等</p></div></div>
+      <div class="panel-head"><div><h2 id="jobs-title">工作</h2><p id="jobsNote"></p></div></div>
       <div class="tabs" role="tablist" id="tabs"></div>
       <div class="list-scroll">
         <table>
-          <thead><tr><th>工作</th><th>狀態</th><th>節點</th><th class="hide-sm res">資源</th><th>說明</th></tr></thead>
+          <thead id="jobsHead"></thead>
           <tbody id="jobs"></tbody>
         </table>
+        <section class="feed" id="feed" aria-labelledby="feed-title">
+          <h3 id="feed-title">最近的排程決定</h3>
+          <ol id="feedList"></ol>
+        </section>
       </div>
     </section>
 
     <section class="panel" id="detailView" hidden aria-live="polite">
       <div class="panel-head">
-        <button class="back" id="back"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3 5 8l5 5"/></svg>我的工作</button>
+        <button class="back" id="back"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3 5 8l5 5"/></svg>工作</button>
         <div class="detail-title"><i class="sw" id="dSw"></i><h2 id="dTitle"></h2><span id="dState"></span></div>
       </div>
       <div class="detail-body">
         <div class="actions" id="dActions"></div>
         <dl class="facts" id="dFacts"></dl>
-        <div><h3>執行紀錄</h3><div id="dAttempts"></div></div>
-        <div>
+        <div id="dAttemptsBox"><h3>執行紀錄</h3><div id="dAttempts"></div></div>
+        <div id="dLogBox">
           <div class="log-head"><h3>日誌</h3><span class="note" id="dLogNote"></span></div>
           <pre class="log" id="dLog"></pre>
         </div>
@@ -301,11 +402,12 @@
 "use strict";
 const REFRESH_MS = 3000, LOG_MS = 2000;
 const TERMINAL = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
-const ACTIVE = new Set(["DISPATCHED", "STARTING", "RUNNING", "STOPPING", "UNKNOWN"]);
+const RUNNING = ["DISPATCHED", "STARTING", "RUNNING", "STOPPING"];
+const MODELS_OWNER = "@models";
 const TABS = [
+  ["queue", "排隊順序", null],
   ["all", "全部", () => true],
-  ["running", "執行中", (j) => ["DISPATCHED", "STARTING", "RUNNING", "STOPPING"].includes(j.state)],
-  ["queued", "排隊", (j) => j.state === "QUEUED"],
+  ["running", "執行中", (j) => RUNNING.includes(j.state)],
   ["done", "完成", (j) => j.state === "SUCCEEDED"],
   ["failed", "失敗/未知", (j) => j.state === "FAILED" || j.state === "UNKNOWN"],
   ["cancelled", "已取消", (j) => j.state === "CANCELLED"],
@@ -321,11 +423,48 @@ const REASONS = {
   "worker heartbeat expired; termination unconfirmed": "節點失聯,無法確認是否停止",
   "waiting for matching CPU/RAM/GPU capacity or datasets": "等待足夠的 CPU/RAM/GPU 或資料集",
   "output upload exceeds server limit": "輸出超過伺服器上限",
+  "container missing after worker restart": "Worker 重啟後找不到容器(節點故障)",
+  "worker heartbeats resumed": "節點恢復心跳",
+  "worker reported start": "節點回報已開始",
+  "adopted by new instance": "由重新啟動的 Worker 接手",
+  "restarted after worker restart": "Worker 重啟後重新啟動",
+  "cancelled while queued: its client stopped waiting for it": "排隊時取消:用戶端不再等待",
+  "cancelled while queued: no request is waiting for it": "排隊時取消:沒有請求在等這個模型",
+  "session lease expired; waiting for confirmed container termination": "session 閒置到期,等待確認容器已停止",
+  "replaced by a new session; waiting for confirmed container termination": "已由新的 session 取代,等待確認容器已停止",
+  "model configuration changed; waiting for confirmed container termination": "模型設定已變更,等待確認容器已停止",
 };
+/* Reasons that carry a node, a job ID or a count (assignment, M11 preemption, retries). */
+const REASON_PATTERNS = [
+  [/^assigned to (.+)$/, (m) => `已配置到 ${m[1]}`],
+  [/^preempted by job (\S+); queued to run again \(preemption (\d+) of (\d+)\)$/,
+    (m) => `被 ${jobName(m[1])} 搶占,已重新排隊(被搶占 ${m[2]} / ${m[3]} 次)`],
+  [/^preempted by job (\S+); waiting for confirmed container termination$/, (m) => `被 ${jobName(m[1])} 搶占,等待確認容器已停止`],
+  [/^preempted by job (\S+) \((.*)\)$/, (m) => `被 ${jobName(m[1])} 搶占(${reason(m[2])})`],
+  [/^(.*); queued for retry (\d+) of (\d+)$/, (m) => `${reason(m[1])},重新排隊重試(第 ${m[2]} / ${m[3]} 次)`],
+  [/^idle for (\d+)s( while other jobs wait for resources)?; waiting for confirmed container termination$/,
+    (m) => `${idleZh(m[1], m[2])};等待確認容器已停止`],
+];
+/* An on-demand model's idle stop (Scheduler._idle_stop): early while other jobs wait, else at its idle limit. */
+function idleZh(s, early) { return `閒置 ${elapsed(Number(s))},${early ? "有工作在等資源,提前回收" : "逾時自動釋放"}`; }
+/* The criteria a dispatch note names for its node choice (explain.PLACEMENT_CRITERIA). */
+const CRITERIA = {
+  "it holds the project's files": "有專案的檔案", "fewest spare matching GPUs": "剩下符合的 GPU 最少",
+  "least spare CPU": "剩下的 CPU 最少", "smallest CPU capacity": "CPU 容量最小", "least spare RAM": "剩下的 RAM 最少",
+  "node name": "節點名稱排序",
+};
+const POLICY_NOTE = {
+  fcfs: "嚴格 FCFS:隊首放不下時,後面的工作一起等",
+  priority: "依分數排序:隊首放不下時,後面的工作一起等",
+  backfill: "依分數排序;隊首取得保留時段,不會延後它的工作可以先跑",
+};
+const KINDS = { BATCH: "批次", SESSION: "快速測試 session", MODEL: "模型服務" };
+const MODES = { persistent: "常駐", on_demand: "自動釋放" };
 
 const $ = (id) => document.getElementById(id);
-const S = { token: null, nodes: [], jobs: [], details: new Map(), axis: "cpu", tab: "all", selected: null,
-  hover: null, lastOk: 0, failing: false, seenBlocks: new Set(), confirm: false, cancelError: "", log: null };
+const S = { token: null, user: null, nodes: [], jobs: [], queue: null, models: [], alloc: new Map(), entry: new Map(),
+  model: new Map(), axis: "cpu", axisChosen: false, tab: "queue", scope: "all", selected: null, readOnly: false, hover: null, lastOk: 0,
+  failing: false, seenBlocks: new Set(), confirm: false, cancelError: "", log: null };
 
 function store(kind, key, value) {
   try {
@@ -348,7 +487,17 @@ const short = (id) => String(id).slice(0, 6);
 const trim = (n, d = 1) => Number(n).toFixed(d).replace(/\.?0+$/, "");
 const cores = (n) => `${trim(n)} 核`;
 const mem = (m) => (m >= 1024 ? `${trim(m / 1024)} GiB` : `${Math.round(m)} MiB`);
-const reason = (r) => (r && (REASONS[r] || (r.startsWith("assigned to ") ? `已配置到 ${r.slice(12)}` : r))) || "—";
+const now = () => Date.now() / 1000;
+const round = (n) => String(Math.round(n));
+function reason(r) {
+  if (!r) return "—";
+  if (REASONS[r]) return REASONS[r];
+  for (const [re, f] of REASON_PATTERNS) {
+    const m = r.match(re);
+    if (m) return f(m);
+  }
+  return r;
+}
 function hue(id) {
   let h = 0;
   for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -362,17 +511,41 @@ function ago(t) {
   if (s < 60) return `${Math.floor(s)} 秒前`;
   if (s < 3600) return `${Math.floor(s / 60)} 分前`;
   if (s < 86400) return `${Math.floor(s / 3600)} 小時前`;
-  return new Date(t * 1000).toLocaleDateString();
+  return new Date(t * 1000).toLocaleDateString("zh-TW");
 }
-function span(a, b) {
-  if (!a) return "";
-  const s = Math.max(0, (b || Date.now() / 1000) - a);
+function elapsed(s) {
+  s = Math.max(0, s);
   if (s < 60) return `${Math.floor(s)} 秒`;
   if (s < 3600) return `${Math.floor(s / 60)} 分 ${Math.floor(s % 60)} 秒`;
   return `${Math.floor(s / 3600)} 小時 ${Math.floor((s % 3600) / 60)} 分`;
 }
-const clock = (t) => (t ? new Date(t * 1000).toLocaleTimeString() : "—");
+const span = (a, b) => (a ? elapsed((b || now()) - a) : "");
+/* Block lines keep a timetable's compact m:ss (h:mm:ss past an hour). */
+function mss(s) {
+  s = Math.max(0, Math.floor(s));
+  const p = (n) => String(n).padStart(2, "0"), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return h ? `${h}:${p(m)}:${p(s % 60)}` : `${m}:${p(s % 60)}`;
+}
+function dur(s) {
+  if (s < 60) return `${trim(s)} 秒`;
+  if (s < 3600) return `${trim(s / 60)} 分`;
+  return `${trim(s / 3600)} 小時`;
+}
+/* One 24-hour zh-TW clock for every time on the page, whatever the browser's locale. */
+const timeText = (t, o) => new Date(t * 1000).toLocaleTimeString("zh-TW", { hourCycle: "h23", ...o });
+const clock = (t) => (t ? timeText(t) : "—");
+const hhmm = (t) => timeText(t, { hour: "2-digit", minute: "2-digit" });
+const dateTime = (t) => new Date(t * 1000).toLocaleString("zh-TW", { hourCycle: "h23" });
 const stamp = (state) => el("span", { className: "stamp s-" + state, textContent: state });
+const tag = (text) => el("small", { className: "tag", textContent: text });
+const ownerName = (o) => (o === MODELS_OWNER ? "模型服務" : o);
+
+/* Scope: 所有人 names and colours every job; 我的 only the viewer's. Model services are always named. */
+const inScope = (x) => S.scope === "all" || x.mine;
+const named = (x) => S.scope === "all" || x.mine || x.kind === "MODEL";
+/* A model service keeps its colour across restarts (each start is a new job ID), so it hashes its name. */
+const hueKey = (x) => (x.kind === "MODEL" && x.service ? x.service : x.job_id || x.id);
+const remScale = () => parseFloat(getComputedStyle(document.documentElement).fontSize) / 15;
 
 /* GPU cards: absent fields (older API) mean no cards, so nothing GPU-related is drawn. */
 const gpus = (n) => ((n.capacity && n.capacity.gpus) || []).slice().sort((a, b) => a.index - b.index);
@@ -396,22 +569,6 @@ function gpuNeed(res) {
   return [`${res.gpu} 張`, res.gpu_model && `型號含 ${res.gpu_model}`,
     res.min_vram_mib && `每張至少 ${mem(res.min_vram_mib)}`].filter(Boolean).join(" · ");
 }
-/* Same eligibility as the scheduler: matching, not held, reported, not in external use. */
-function gpuFit(n, need) {
-  const seen = seenGpus(n), held = heldGpus(n);
-  const model = (need.gpu_model || "").toLowerCase(), vram = need.min_vram_mib || 0;
-  const fit = { id: n.id, match: 0, free: 0, held: 0, external: 0, unreported: 0 };
-  for (const g of gpus(n)) {
-    if (!g.name.toLowerCase().includes(model) || g.memory_total_mib < vram) continue;
-    fit.match++;
-    const o = seen.get(g.uuid);
-    if (held.has(g.uuid)) fit.held++;
-    else if (!o) fit.unreported++;
-    else if (o.external_use) fit.external++;
-    else fit.free++;
-  }
-  return fit;
-}
 
 async function api(path, init = {}) {
   const r = await fetch(path, { ...init, headers: { Authorization: "Bearer " + S.token, ...(init.headers || {}) } });
@@ -424,23 +581,49 @@ async function api(path, init = {}) {
   return r.json();
 }
 
-/* Placement: where each of my jobs currently holds resources. */
-function placements() {
-  const out = [];
-  for (const job of S.jobs) {
-    if (!ACTIVE.has(job.state) || !job.current_attempt_id) continue;
-    const d = S.details.get(job.id);
-    const a = d && d.attempts.find((x) => x.id === job.current_attempt_id);
-    if (a && !a.released) out.push({ job, attempt: a });
-  }
-  return out;
+/* The viewer's own full job row in the summary shape of /api/jobs?scope=all. */
+function norm(j) {
+  if (!j.spec) return j;
+  const s = j.spec;
+  return { ...j, mine: true, priority: s.priority ?? null, resources: s.resources || {}, time_limit_s: s.time_limit_s ?? null,
+    estimated_runtime_s: s.estimated_runtime_s ?? null, safe_to_rerun: Boolean(s.safe_to_rerun),
+    preemptible: Boolean(s.preemptible), project: s.project ?? null, datasets: s.datasets || [] };
 }
-function nodeOf(job) {
-  const d = S.details.get(job.id);
-  const a = d && d.attempts.find((x) => x.id === job.current_attempt_id);
-  return a ? a.node_id : null;
+/* Lookups for one refresh: where each job holds resources, its queue entry, each model service. */
+function index() {
+  S.alloc = new Map();
+  for (const n of S.nodes) for (const a of n.allocations || []) S.alloc.set(a.job_id, { ...a, node_id: n.id });
+  S.entry = new Map(((S.queue && S.queue.entries) || []).map((e) => [e.job_id, e]));
+  S.model = new Map(S.models.map((m) => [m.name, m]));
 }
+const summary = (id) => S.jobs.find((j) => j.id === id);
+/* A job as explanations name it: a model service by its name, anything else by its short ID.
+   Accepts the short ID that English reasons and notes carry. */
+function jobName(id) {
+  const j = S.jobs.find((x) => x.id.startsWith(id));
+  return j && j.kind === "MODEL" && j.service ? j.service : short(id);
+}
+const nodeOf = (j) => (S.alloc.get(j.id) || {}).node_id || j.node_id || "—";
 
+function policyTip(q) {
+  const w = q.weights || {};
+  const x = (v) => (v == null || v === 1 ? "" : ` × ${trim(v, 2)}`);
+  const score = `分數 = 優先權${x(w.priority)} + 等待分鐘${x(w.wait)} − 近期占用分鐘${x(w.usage)}`;
+  const rule = {
+    fcfs: "嚴格先到先服務,依提交順序;隊首放不下時,後面的工作一起等。",
+    priority: `依分數排序(${score});隊首放不下時,後面的工作一起等。`,
+    backfill: `依分數排序(${score});隊首放不下時依執行中工作的時限取得保留時段,後面的工作只要不會延後它就可以先跑。`,
+  }[q.policy] || "";
+  return `${q.policy}:${rule}session 和模型服務一律排在批次工作前面。要切換策略,改設定並重啟 Scheduler。`;
+}
+function renderHeader() {
+  const q = S.queue;
+  $("policy").hidden = !(q && q.policy);
+  if (q && q.policy) { $("policyName").textContent = q.policy; $("policy").title = policyTip(q); }
+  $("jobsNote").textContent = (q && POLICY_NOTE[q.policy]) || "";
+  $("who").hidden = !S.user;
+  $("whoName").textContent = S.user || "";
+}
 function renderCluster() {
   const online = S.nodes.filter((n) => n.status === "ONLINE");
   const sum = (f) => S.nodes.reduce((t, n) => t + f(n), 0);
@@ -448,7 +631,7 @@ function renderCluster() {
     ["節點", `${online.length} / ${S.nodes.length} 上線`],
     ["CPU 已預約", `${trim(sum((n) => n.allocated.cpu))} / ${cores(sum((n) => n.capacity.cpu))}`],
     ["RAM 已預約", `${mem(sum((n) => n.allocated.memory_mib))} / ${mem(sum((n) => n.capacity.memory_mib))}`],
-    ["執行中", String(S.jobs.filter((j) => TABS[1][2](j)).length)],
+    ["執行中", String(S.jobs.filter((j) => RUNNING.includes(j.state)).length)],
     ["排隊", String(S.jobs.filter((j) => j.state === "QUEUED").length)],
   ];
   if (hasGpus()) items.splice(3, 0, ["GPU 已預約", `${sum((n) => n.allocated.gpu || 0)} / ${sum((n) => gpus(n).length)} 張`]);
@@ -462,9 +645,17 @@ function setAxis(axis) {
 function renderAxes() {
   const gpu = hasGpus();
   document.querySelector('[data-axis="gpu"]').hidden = !gpu;
-  if (!gpu && S.axis === "gpu") setAxis("cpu");
+  // GPU cards are the default axis once a node reports pooled cards, until the viewer picks one.
+  if (!S.axisChosen) setAxis(gpu ? "gpu" : "cpu");
+  else if (!gpu && S.axis === "gpu") setAxis("cpu");
   $("lgReserve").hidden = S.axis === "gpu";
   $("lgExternal").hidden = S.axis !== "gpu";
+}
+function setScope(scope) {
+  S.scope = scope;
+  document.querySelectorAll("[data-scope]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.scope === scope)));
+  $("lgJobs").textContent = scope === "all" ? "每個工作一色,模型服務依名稱" : "你的工作(每個工作一色),模型服務依名稱";
+  $("lgOthers").hidden = scope === "all";
 }
 
 function axisInfo() {
@@ -484,6 +675,63 @@ function axisInfo() {
     used: (r) => r.memory_mib, label: (i) => trim((i * step) / 1024), unitLabel: "GiB", reserveText: "系統保留" };
 }
 
+function reservationChip(r) {
+  const t = now(), soon = r.start <= t;
+  const need = `${cores(r.cpu)} · ${mem(r.memory_mib)}${r.gpu ? ` · ${r.gpu} 張 GPU` : ""}`;
+  return el("span", { className: "resv", textContent: `保留給 ${short(r.job_id)} · ${soon ? "資源釋放就開始" : clock(r.start) + " 起"}`,
+    title: `backfill 隊首 ${r.job_id} 的保留時段:${need},` +
+      (soon ? "超過時限的工作釋放資源後就開始" : `${clock(r.start)} 起(${span(t, r.start)}後)`) });
+}
+
+/* A block's two secondary lines; the first one stays visible on tight blocks, so it carries the news.
+   Under 所有人 the owner leads its line ({who, text}); a model names none, its MODEL tag says it. */
+function blockLines(a, res) {
+  const who = S.scope === "all" && a.kind !== "MODEL" ? ownerName(a.owner) : "";
+  const owned = (text) => (who ? { who, text } : text);
+  const m = a.kind === "MODEL" && S.model.get(a.service);
+  const preempted = a.state === "STOPPING" && a.preempted_by;
+  let status = a.state;
+  if (preempted) status = `被 ${jobName(a.preempted_by)} 搶占 · 停止中`;
+  else if (a.state === "UNKNOWN") status = "UNKNOWN · 資源保留中";
+  else if (m && m.state === "starting") status = `starting · 啟動 ${mss(now() - (a.started_at || a.created_at))}`;
+  else if (m) status = `${m.state} · 進行中 ${m.inflight ?? 0}`;
+  else if (a.kind === "SESSION" && a.state === "RUNNING" && a.lease_expires_at) status = `閒置到期 ${mss(a.lease_expires_at - now())}`;
+  else if (a.state === "RUNNING" && a.started_at) status = `執行 ${mss(now() - a.started_at)}${a.ends_at ? " · 時限到 " + hhmm(a.ends_at) : ""}`;
+  if (preempted) return [status, owned(res)];
+  if (a.kind === "SESSION") return [owned(status), res];
+  return [owned(res), status];
+}
+const lineText = (l) => (typeof l === "string" ? l : `${l.who} · ${l.text}`);
+const lineNode = (l) => (typeof l === "string" ? el("span", { className: "ln", textContent: l })
+  : el("span", { className: "ln" }, el("strong", { className: "own", textContent: l.who }), ` · ${l.text}`));
+function blockFor(a, h, style, lines, seen, scale) {
+  seen.add(a.attempt_id);
+  const cls = ["blk"];
+  cls.push(...fit(h, scale));
+  if (a.state === "STOPPING") cls.push("stopping");
+  if (a.state === "UNKNOWN") cls.push("unknown");
+  if (!S.seenBlocks.has(a.attempt_id)) cls.push("land");
+  if (S.hover === a.job_id) cls.push("hot");
+  if (S.selected === a.job_id) cls.push("sel");
+  const model = a.kind === "MODEL";
+  const b = paint(el("button", { className: cls.join(" "), "data-job": a.job_id, type: "button", style,
+      title: [a.job_id, `${ownerName(a.owner)} · ${a.state}`, ...lines.map(lineText),
+        a.state === "UNKNOWN" ? "無法確認容器已停止,所以不會重派" : null].filter(Boolean).join("\n") },
+    el("b", {}, model ? tag("MODEL") : a.kind === "SESSION" ? tag("SESSION") : null,
+      el("span", { className: "nm", textContent: model && a.service ? a.service : short(a.job_id) }),
+      a.placement === "backfilled" ? tag("backfill") : null),
+    ...lines.map(lineNode)), hueKey(a));
+  b.addEventListener("click", () => openDetail(a.job_id));
+  b.addEventListener("mouseenter", () => setHover(a.job_id));
+  b.addEventListener("mouseleave", () => setHover(null));
+  return b;
+}
+/* How much of a block fits: three lines, two (short), one beside the name (tight), or none (micro). */
+function fit(h, scale) {
+  return [h < 62 * scale && "short", h < 44 * scale && "tight", h < 16 && "micro"].filter(Boolean);
+}
+const allocsOf = (n) => (n.allocations || []).slice().sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+
 function renderTimetable() {
   const box = $("timetable");
   if (!S.nodes.length) {
@@ -494,13 +742,13 @@ function renderTimetable() {
     return;
   }
   const ax = axisInfo();
-  const scale = parseFloat(getComputedStyle(document.documentElement).fontSize) / 15;
+  const scale = remScale();
   const room = Math.min(640 * scale, Math.max(300, window.innerHeight - 300 * scale));
   const row = Math.max(14, Math.min(72 * scale, Math.floor(room / ax.rows)));
   const height = row * ax.rows;
   const px = (v) => (v / ax.unit) * row;
-  const mine = placements();
   const every = row >= 18 ? 1 : row >= 10 ? 2 : 5;
+  const reservation = S.queue && S.queue.reservation;
 
   const narrow = window.matchMedia("(max-width: 640px)").matches;
   box.style.gridTemplateColumns = `2.6rem repeat(${S.nodes.length}, minmax(${narrow ? 6.5 : 9.5}rem, 1fr))`;
@@ -518,7 +766,8 @@ function renderTimetable() {
       off ? el("div", { className: "node-live", textContent: `失聯 · 最後心跳 ${ago(n.last_seen)}` })
         : gpuHead ? gpuHeadLive(n)
         : el("div", { className: "node-live" }, el("span", { textContent: `即時 CPU ${trim(live.cpu_percent ?? 0)}%` }),
-          el("span", { textContent: `可用 RAM ${mem(live.available_memory_mib ?? 0)}` }))));
+          el("span", { textContent: `可用 RAM ${mem(live.available_memory_mib ?? 0)}` })),
+      reservation && reservation.node_id === n.id ? reservationChip(reservation) : null));
   }
   const gutter = el("div", { className: "gutter", style: { height: height + "px" } });
   for (let i = 1; i <= ax.rows; i++) {
@@ -541,47 +790,27 @@ function renderTimetable() {
     }
     if (px(total) < height - 0.5) col.append(el("div", { className: "beyond", style: { top: px(total) + "px" } }));
     if (S.axis === "gpu") {
-      gpuColumn(col, n, row, mine, seen, scale);
+      gpuColumn(col, n, row, seen, scale);
       kids.push(col);
       continue;
     }
 
-    let y = 0, own = 0;
-    for (const { job, attempt } of mine.filter((m) => m.attempt.node_id === n.id)) {
-      const v = ax.used(attempt.resources);
-      own += v;
+    // Blocks come from the Scheduler's allocations; under 我的 the unnamed ones merge into one grey block.
+    let y = 0, others = 0;
+    for (const a of allocsOf(n)) {
+      const v = ax.used(a);
+      if (!named(a)) { others += v; continue; }
       const h = px(v);
-      const key = `${attempt.id}`;
-      seen.add(key);
-      const cls = ["blk"];
-      if (h < 62 * scale) cls.push("short");
-      if (h < 34) cls.push("tight");
-      if (h < 16) cls.push("micro");
-      if (job.state === "STOPPING") cls.push("stopping");
-      if (job.state === "UNKNOWN") cls.push("unknown");
-      if (!S.seenBlocks.has(key)) cls.push("land");
-      if (S.hover === job.id) cls.push("hot");
-      if (S.selected === job.id) cls.push("sel");
-      const b = paint(el("button", { className: cls.join(" "), "data-job": job.id, type: "button",
-        title: `${job.id}\n${job.state} · ${cores(attempt.resources.cpu)} · ${mem(attempt.resources.memory_mib)}`,
-        style: { top: y + 1 + "px", height: Math.max(4, h - 2) + "px" } },
-        el("b", { textContent: short(job.id) }),
-        el("span", { textContent: `${cores(attempt.resources.cpu)} · ${mem(attempt.resources.memory_mib)}` }),
-        el("span", { textContent: job.state === "RUNNING" ? `執行 ${span(attempt.started_at)}` : job.state })), job.id);
-      b.addEventListener("click", () => openDetail(job.id));
-      b.addEventListener("mouseenter", () => setHover(job.id));
-      b.addEventListener("mouseleave", () => setHover(null));
-      col.append(b);
+      col.append(blockFor(a, h, { top: y + 1 + "px", height: Math.max(4, h - 2) + "px" },
+        blockLines(a, `${cores(a.cpu)} · ${mem(a.memory_mib)}`), seen, scale));
       y += h;
     }
-    const others = ax.used(n.allocated) - own;
     if (others > 1e-6) {
       const h = px(others);
-      const o = el("div", { className: "blk others" + (h < 34 ? " tight" : "") + (h < 16 ? " micro" : ""),
+      col.append(el("div", { className: ["blk", "others", ...fit(h, scale)].join(" "),
         title: "其他使用者的預約", style: { top: y + 1 + "px", height: Math.max(4, h - 2) + "px" } },
-        el("b", { textContent: "其他使用者" }),
-        el("span", { textContent: S.axis === "cpu" ? cores(others) : mem(others) }));
-      col.append(o);
+        el("b", {}, el("span", { className: "nm", textContent: "其他使用者" })),
+        el("span", { className: "ln", textContent: S.axis === "cpu" ? cores(others) : mem(others) })));
     }
     kids.push(col);
   }
@@ -595,7 +824,7 @@ function gpuHeadLive(n) {
   const parts = gpus(n).map((g) => {
     const o = seen.get(g.uuid);
     if (!o) return `GPU ${g.index} 尚未回報`;
-    const text = `${first ? "即時 " : ""}GPU ${g.index} ${trim(o.utilization_percent)}%`;
+    const text = `${first ? "即時 " : ""}GPU ${g.index} · ${trim(o.utilization_percent)}%`;
     first = false;
     return text;
   });
@@ -605,42 +834,24 @@ function gpuHeadLive(n) {
 }
 
 /* Each pooled card is one whole period; a job holding k cards draws k blocks in its hue. */
-function gpuColumn(col, n, row, mine, seen, scale) {
+function gpuColumn(col, n, row, seen, scale) {
   const off = n.status !== "ONLINE";
-  const observed = seenGpus(n), held = heldGpus(n), own = new Map();
-  for (const m of mine) {
-    if (m.attempt.node_id === n.id) for (const uuid of m.attempt.gpu_uuids || []) own.set(uuid, m);
-  }
+  const observed = seenGpus(n), held = heldGpus(n), byCard = new Map();
+  for (const a of n.allocations || []) for (const uuid of a.gpu_uuids || []) byCard.set(uuid, a);
   gpus(n).forEach((g, i) => {
     const o = observed.get(g.uuid), model = gpuName(g.name), size = mem(g.memory_total_mib);
     const card = `GPU ${g.index} · ${model}`;
     const h = row - 2, place = { top: i * row + 1 + "px", height: h + "px" };
-    const mineHere = own.get(g.uuid);
-    if (mineHere) {
-      const { job, attempt } = mineHere;
-      seen.add(attempt.id);
-      const cls = ["blk"];
-      if (h < 62 * scale) cls.push("short");
-      if (h < 34) cls.push("tight");
-      if (h < 16) cls.push("micro");
-      if (job.state === "STOPPING") cls.push("stopping");
-      if (job.state === "UNKNOWN") cls.push("unknown");
-      if (!S.seenBlocks.has(attempt.id)) cls.push("land");
-      if (S.hover === job.id) cls.push("hot");
-      if (S.selected === job.id) cls.push("sel");
-      const b = paint(el("button", { className: cls.join(" "), "data-job": job.id, type: "button",
-        title: `${job.id}\n${job.state} · ${card} · ${size}${o ? "\n" + gpuLive(o) : ""}`, style: place },
-        el("b", { textContent: short(job.id) }),
-        el("span", { textContent: `${model} · ${size}` }),
-        el("span", { textContent: job.state === "RUNNING" ? `執行 ${span(attempt.started_at)}` : job.state })), job.id);
-      b.addEventListener("click", () => openDetail(job.id));
-      b.addEventListener("mouseenter", () => setHover(job.id));
-      b.addEventListener("mouseleave", () => setHover(null));
+    const a = byCard.get(g.uuid);
+    if (a && named(a)) {
+      const b = blockFor(a, h, place, blockLines(a, `${model} · ${size}`), seen, scale);
+      b.title += `\n${card}${o ? "\n" + gpuLive(o) : ""}`;
       col.append(b);
-    } else if (held.has(g.uuid)) {
-      col.append(el("div", { className: "blk others" + (h < 34 ? " tight" : "") + (h < 16 ? " micro" : ""),
+    } else if (a || held.has(g.uuid)) {
+      col.append(el("div", { className: ["blk", "others", ...fit(h, scale)].join(" "),
         title: `其他使用者的預約\n${card} · ${size}`, style: place },
-        el("b", { textContent: "其他使用者" }), el("span", { textContent: `${model} · ${size}` })));
+        el("b", {}, el("span", { className: "nm", textContent: "其他使用者" })),
+        el("span", { className: "ln", textContent: `${model} · ${size}` })));
     } else {
       // Offline readings are stale, so only the card itself is named there.
       const status = off ? null : !o ? "尚未回報" : o.external_use ? "外部使用中" : null;
@@ -653,100 +864,290 @@ function gpuColumn(col, n, row, mine, seen, scale) {
   });
 }
 
-function queuePositions() {
-  const q = S.jobs.filter((j) => j.state === "QUEUED").sort((a, b) => a.submission_seq - b.submission_seq);
-  return new Map(q.map((j, i) => [j.id, { pos: i + 1, head: q[0] }]));
-}
-function blocker(job) {
-  const need = (job.spec && job.spec.resources) || {};
-  const sets = (job.spec && job.spec.datasets) || [];
-  const online = S.nodes.filter((n) => n.status === "ONLINE");
-  if (!online.length) return "沒有上線的節點";
-  const withData = online.filter((n) => sets.every((x) => (n.capacity.datasets || []).includes(x)));
-  if (!withData.length) return `沒有節點有資料集 ${sets.join(", ")}`;
-  const gpuOk = new Set(withData.map((n) => n.id));
-  if (need.gpu > 0) {
-    const fits = withData.map((n) => gpuFit(n, need));
-    const kind = need.gpu_model ? ` ${need.gpu_model}` : "";
-    const vram = need.min_vram_mib ? `(每張至少 ${mem(need.min_vram_mib)})` : "";
-    const enough = fits.filter((f) => f.match >= need.gpu);
-    if (!enough.length) return `沒有節點有 ${need.gpu} 張${kind} GPU${vram}`;
-    if (!enough.some((f) => f.free >= need.gpu)) {
-      const b = enough.reduce((a, f) => (f.free > a.free ? f : a));
+/* Explanations: rendered from the Scheduler's own results (GET /api/queue), never recomputed here. */
+function blockerText(b) {
+  if (!b) return "";
+  switch (b.kind) {
+    case "no_worker": return "沒有上線的節點";
+    case "dataset": return `沒有在線的節點有資料集 ${(b.datasets || []).join(", ")}`;
+    case "gpu": {
+      const kind = b.model ? ` ${b.model}` : "";
+      const vram = b.min_vram_mib ? `(每張至少 ${mem(b.min_vram_mib)})` : "";
+      if (!b.best_node) return `沒有在線的節點有 ${b.need} 張${kind} GPU${vram}`;
       const why = [b.held && `${b.held} 張已預約`, b.external && `${b.external} 張外部使用中`,
         b.unreported && `${b.unreported} 張尚未回報`].filter(Boolean).join("、");
-      return `需要 ${need.gpu} 張${kind} GPU${vram},可用 ${b.free} 張(${b.id}${why ? ":" + why : ""})`;
+      return `需要 ${b.need} 張${kind} GPU${vram},可用 ${b.free} 張(${b.best_node}${why ? ":" + why : ""})`;
     }
-    gpuOk.clear();
-    for (const f of fits) if (f.free >= need.gpu) gpuOk.add(f.id);
+    case "cpu": return `需要 ${cores(b.need)},最多空 ${cores(Math.max(0, b.best_free))}(${b.best_node})`;
+    case "memory": return `需要 ${mem(b.need_mib)} RAM,最多空 ${mem(Math.max(0, b.best_free_mib))}(${b.best_node})`;
+    case "max_jobs": return `${b.best_node} 已達同時執行的工作數上限`;
+    case "combination": return "沒有單一節點同時放得下它要的 CPU、RAM 和 GPU";
+    default: return "";
   }
-  const free = withData.map((n) => ({ id: n.id, cpu: n.capacity.cpu - n.allocated.cpu, ram: n.capacity.memory_mib - n.allocated.memory_mib }));
-  const best = (k) => free.reduce((a, b) => (b[k] > a[k] ? b : a));
-  if (!free.some((f) => f.cpu + 1e-9 >= need.cpu)) {
-    const b = best("cpu");
-    return `需要 ${cores(need.cpu)},最多空 ${cores(Math.max(0, b.cpu))}(${b.id})`;
-  }
-  if (!free.some((f) => f.ram >= need.memory_mib)) {
-    const b = best("ram");
-    return `需要 ${mem(need.memory_mib)} RAM,最多空 ${mem(Math.max(0, b.ram))}(${b.id})`;
-  }
-  if (!free.some((f) => f.cpu + 1e-9 >= need.cpu && f.ram >= need.memory_mib && gpuOk.has(f.id))) {
-    return need.gpu > 0 ? "沒有單一節點同時有足夠的 CPU、RAM 和 GPU" : "沒有單一節點同時有足夠的 CPU 和 RAM";
-  }
-  return null;
 }
-function explain(job, qpos) {
-  if (job.state === "QUEUED") {
-    const p = qpos.get(job.id);
-    if (p && p.pos === 1) return `隊首 · ${blocker(job) || reason(job.reason)}`;
-    if (p) return `第 ${p.pos} 位 · 排在 ${short(p.head.id)} 後`;
-  }
-  if (job.state === "RUNNING") {
-    const d = S.details.get(job.id);
-    const a = d && d.attempts.find((x) => x.id === job.current_attempt_id);
-    if (a && a.started_at) return `已執行 ${span(a.started_at)}`;
-  }
-  return reason(job.reason);
+function reservedAt(r) {
+  return r.start <= now() ? `保留 ${r.node_id},資源釋放就開始` : `保留 ${r.node_id},${clock(r.start)} 起(${span(now(), r.start)}後)`;
 }
+/* [sentence, detail line] for a queue entry, from decision + blocker + head + reservation + waiting_for. */
+function decision(e) {
+  const q = S.queue || {}, r = q.reservation;
+  const b = blockerText(e.blocker);
+  const head = e.head_job_id ? jobName(e.head_job_id) : "隊首";
+  const waits = (e.waiting_for || []).map(jobName).join("、");
+  const limit = (summary(e.job_id) || {}).time_limit_s;
+  let out;
+  switch (e.decision) {
+    case "head_blocked":
+      out = [q.policy === "backfill" ? "隊首,現在放不下。" : "隊首,現在放不下;後面的工作一起等。", b]; break;
+    case "head_reserved":
+      out = [b ? `隊首。${b}。` : "隊首。", r && r.job_id === e.job_id ? reservedAt(r) : ""]; break;
+    case "behind_head":
+      out = [`排在 ${head} 後面。`, b || `現在放得下,但要等 ${head} 先開始`]; break;
+    case "would_delay_reservation":
+      out = [`放得下,但時限${limit ? " " + dur(limit) : ""}會延後 ${head} 的保留時段。`, r ? reservedAt(r) : ""]; break;
+    case "no_capacity":
+      out = ["現在沒有放得下的節點。", b]; break;
+    case "does_not_block":
+      out = [e.kind === "MODEL" ? "模型服務現在放不下,但不擋後面的工作。" : "沒有在線的節點放得下它,所以不擋後面的工作。", b]; break;
+    case "waiting_for_release": {
+      // The jobs this one preempted hold their resources until their stop is confirmed.
+      const victims = (e.waiting_for || []).map((id) => S.alloc.get(id)).filter((a) => a && a.preempted_by === e.job_id);
+      if (!victims.length) { out = [waits ? `等 ${waits} 停止,釋放資源後開始。` : "等閒置的模型服務釋放資源。", b]; break; }
+      const byNode = new Map();
+      for (const v of victims) byNode.set(v.node_id, [...(byNode.get(v.node_id) || []), jobName(v.job_id)]);
+      const it = victims.length > 1 ? "它們" : "它";
+      out = [`隊首。搶占 ${[...byNode].map(([n, ids]) => `${n} 的 ${ids.join("、")}`).join("、")},等${it}停止後開始。`,
+        [`選${it}是因為損失最少`, b].filter(Boolean).join(" · ")];
+      break;
+    }
+    case "no_worker":
+      out = ["沒有上線的節點。", ""]; break;
+    default:
+      out = [e.note || e.decision, ""];
+  }
+  if (e.kind !== "BATCH") out[1] = [out[1], "互動工作排在批次工作前面"].filter(Boolean).join(" · ");
+  return out;
+}
+/* Why a backfilled job cannot delay the reservation (the dispatch note's safety clause). */
+const SAFE = { "its time limit ends before the reservation": "時限在保留時段開始前結束",
+  "it leaves enough room for the reserved job": "剩下的資源仍夠保留的工作用" };
+/* The dispatch note's node choice: 選 node:criteria. */
+function choseZh(note) {
+  const m = note.match(/chose (\S+?): ([^;]+)/);
+  return m ? `選 ${m[1]}:${m[2].split(", then ").map((c) => CRITERIA[c.trim()] || c.trim()).join(",其次")}` : "";
+}
+/* The dispatch note in Chinese: where it started, the candidates and the choice; the raw note keeps the rest. */
+function placementZh(note) {
+  let m = note.match(/backfilled on (\S+) ahead of job (\S+) reserved on (\S+)/);
+  const parts = [];
+  if (m) {
+    const s = note.match(/; (its time limit ends before the reservation|it leaves enough room for the reserved job|the reserved job waits for (\S+))/);
+    const safe = !s ? "" : s[2] ? `保留的工作等的是 ${s[2]}` : SAFE[s[1]];
+    parts.push(`在 ${m[1]} 先跑(backfill),不會延後 ${jobName(m[2])} 在 ${m[3]} 的保留時段${safe ? ":" + safe : ""}`);
+  } else if ((m = note.match(/started on ([^\s;(]+)/))) parts.push(`在 ${m[1]} 開始`);
+  else return "";
+  if ((m = note.match(/only (\S+) fits/))) parts.push(`只有 ${m[1]} 放得下`);
+  if ((m = note.match(/fits on ([^;]+)/))) parts.push(`可放 ${m[1].trim().split(/,\s*/).join("、")}`);
+  if (choseZh(note)) parts.push(choseZh(note));
+  if ((m = note.match(/starts from the files of job (\S+)/))) parts.push(`從 ${jobName(m[1])} 留下的專案檔案接續`);
+  return parts.join(" · ");
+}
+function feedText(d) {
+  const det = d.detail || {}, id = d.job_id ? jobName(d.job_id) : "";
+  const owner = d.owner && d.owner !== MODELS_OWNER && S.scope === "all" ? `${d.owner} 的 ` : "";
+  const cands = det.candidates || [];
+  const choice = cands.length > 1 ? `,可放 ${cands.join("、")}` : cands.length ? ",只有這台放得下" : "";
+  switch (d.kind) {
+    case "started": {
+      const chose = choseZh(d.text || "");
+      return `${owner}${id} 在 ${d.node_id} 開始${choice}${chose ? ";" + chose : ""}`;
+    }
+    case "backfilled": return `${owner}${id} 在 ${d.node_id} 先跑(backfill)${det.ahead_of ? `,不延後 ${jobName(det.ahead_of)}` : ""}`;
+    case "preempting": return `${id} 搶占 ${(det.victims || []).map(jobName).join("、")}(${det.node_id || d.node_id},損失最少)`;
+    case "requeued_after_preemption":
+      return `${id} 被 ${det.preempted_by ? jobName(det.preempted_by) : "其他工作"} 搶占後重新排隊${det.preemptions ? `(第 ${det.preemptions} 次)` : ""}`;
+    case "retried_after_node_failure":
+      return `${id} 因節點故障重新排隊${det.retry ? `(重試 ${det.retry} / ${det.limit} 次)` : ""}`;
+    case "node_offline": return `${d.node_id} 失聯${(det.jobs || []).length ? `,${det.jobs.length} 個工作變成 UNKNOWN,資源保留` : ""}`;
+    // Recorded on every registration too, not only when a lost node comes back.
+    case "node_online": return `${d.node_id} 上線`;
+    case "model_stopping": {
+      const idle = (det.reason || d.text || "").match(/idle for (\d+)s( while other jobs wait for resources)?/);
+      const name = det.service || ((d.text || "").match(/^model (\S+):/) || [])[1] || id || "模型服務";
+      return idle ? `${name} ${idleZh(idle[1], idle[2])}` : d.text;
+    }
+    default: return d.text;
+  }
+}
+
+function jobCell(id, x) {
+  const a = S.alloc.get(id);
+  return el("button", { className: "job-id", type: "button",
+      title: `${id}${x.created_at ? `\n提交於 ${dateTime(x.created_at)}(${ago(x.created_at)})` : ""}` },
+    a && named(x) ? paint(el("i", { className: "sw" }), hueKey(x)) : el("i", { className: "sw none" }),
+    short(id),
+    x.kind === "SESSION" ? tag("SESSION") : x.kind === "MODEL" ? tag("MODEL") : null,
+    a && a.placement === "backfilled" ? tag("backfill") : null);
+}
+function kindText(x) {
+  if (x.kind === "MODEL") return `模型\u00a0· ${x.service || "—"}`;
+  if (x.kind === "SESSION") return "session";
+  return x.priority == null ? "批次" : `批次\u00a0·\u00a0P${x.priority}`;
+}
+const queueEntries = () => ((S.queue && S.queue.entries) || []).filter(inScope);
 
 function renderTabs() {
   $("tabs").replaceChildren(...TABS.map(([key, label, f]) => {
+    const count = f ? S.jobs.filter((j) => inScope(j) && f(j)).length : queueEntries().length;
     const b = el("button", { role: "tab", "aria-selected": String(S.tab === key), type: "button" },
-      label, el("em", { textContent: String(S.jobs.filter(f).length) }));
+      label, el("em", { textContent: String(count) }));
     b.addEventListener("click", () => { S.tab = key; renderTabs(); renderJobs(); });
     return b;
   }));
 }
-
+function rowEvents(tr, id) {
+  tr.addEventListener("click", () => openDetail(id));
+  tr.addEventListener("mouseenter", () => setHover(id));
+  tr.addEventListener("mouseleave", () => setHover(null));
+  return tr;
+}
+function emptyRow(cols, ...lines) {
+  return el("tr", { style: { cursor: "default" } }, el("td", { colSpan: cols, className: "empty" }, ...lines.map((l) => el("p", {}, ...l))));
+}
 function renderJobs() {
-  const body = $("jobs");
-  const f = TABS.find((t) => t[0] === S.tab)[2];
-  const qpos = queuePositions();
-  const rows = S.jobs.filter(f).sort((a, b) => b.submission_seq - a.submission_seq).map((j) => {
-    const res = (j.spec && j.spec.resources) || {};
-    const placed = ACTIVE.has(j.state) && nodeOf(j);
-    const tr = el("tr", { "data-job": j.id, className: S.hover === j.id ? "hot" : "" },
-      el("td", {}, el("button", { className: "job-id", type: "button",
-        title: `${j.id}\n提交於 ${new Date(j.created_at * 1000).toLocaleString()}(${ago(j.created_at)})` },
-        placed ? paint(el("i", { className: "sw" }), j.id) : el("i", { className: "sw none" }), short(j.id))),
-      el("td", {}, stamp(j.state)),
-      el("td", { textContent: nodeOf(j) || "—" }),
-      el("td", { className: "num hide-sm res", textContent: resText(res) }),
-      el("td", { className: "why-cell" }, el("div", { className: "why", textContent: explain(j, qpos), title: j.reason || "" })));
-    tr.addEventListener("click", () => openDetail(j.id));
-    tr.addEventListener("mouseenter", () => setHover(j.id));
-    tr.addEventListener("mouseleave", () => setHover(null));
-    return tr;
+  if (S.tab === "queue") renderQueue(); else renderList(TABS.find((t) => t[0] === S.tab)[2]);
+  $("feed").hidden = S.tab !== "queue";
+  renderFeed();
+}
+function renderQueue() {
+  const q = S.queue || {}, fcfs = q.policy === "fcfs", all = S.scope === "all";
+  $("jobsHead").replaceChildren(el("tr", {}, el("th", { className: "pos", textContent: "#" }), el("th", { textContent: "工作" }),
+    all ? el("th", { textContent: "擁有者" }) : null, el("th", { className: "hide-sm hide-proj", textContent: "類別" }),
+    fcfs ? null : el("th", { textContent: "分數" }), el("th", { textContent: "排程器的決定" })));
+  const cols = 4 + all + !fcfs;
+  // Positions stay global under 我的: they are the Scheduler's order, filtered, not renumbered.
+  const rows = queueEntries().map((e) => {
+    const [main, sub] = decision(e);
+    const score = e.score == null ? [el("span", { textContent: "—" })]
+      : [el("span", { textContent: round(e.score) }), e.score_parts && el("small", { textContent:
+        `${round(e.score_parts.priority)} +\u00a0等\u00a0${round(e.score_parts.waited_min)} −\u00a0用\u00a0${round(e.score_parts.usage_min)}` })];
+    return rowEvents(el("tr", { "data-job": e.job_id, className: S.hover === e.job_id ? "hot" : "" },
+      el("td", { className: "pos", textContent: String(e.position) }),
+      el("td", {}, jobCell(e.job_id, e)),
+      all ? el("td", { textContent: ownerName(e.owner) }) : null,
+      el("td", { className: "kind hide-sm hide-proj", textContent: kindText(e) }),
+      fcfs ? null : el("td", { className: "sc num" }, ...score),
+      el("td", { className: "why-cell" }, el("div", { className: "decide", title: e.note || "" },
+        el("div", { textContent: main }), sub ? el("small", { textContent: sub }) : null))), e.job_id);
   });
   if (!rows.length) {
-    const msg = S.jobs.length
-      ? el("td", { colSpan: 5, className: "empty", textContent: "這個分類目前沒有工作。" })
-      : el("td", { colSpan: 5, className: "empty" },
-          el("p", { textContent: "你還沒有提交工作。" }),
-          el("p", {}, "用 CLI 提交:", el("code", { textContent: "labflux submit job.json --source ./code" })));
-    rows.push(el("tr", { style: { cursor: "default" } }, msg));
+    rows.push(q.computed_at == null && S.queue
+      ? emptyRow(cols, ["Scheduler 剛啟動,還沒有完成第一輪排程。"])
+      : emptyRow(cols, [S.scope === "all" ? "佇列是空的。" : "你沒有排隊中的工作。"],
+        ["放得下的工作會直接派送,不會停在這裡。"]));
   }
-  body.replaceChildren(...rows);
+  $("jobs").replaceChildren(...rows);
+}
+function renderList(f) {
+  const all = S.scope === "all";
+  $("jobsHead").replaceChildren(el("tr", {}, el("th", { textContent: "工作" }), all ? el("th", { textContent: "擁有者" }) : null,
+    el("th", { textContent: "狀態" }), el("th", { textContent: "節點" }), el("th", { className: "hide-sm res", textContent: "資源" }),
+    el("th", { textContent: "說明" })));
+  const cols = all ? 6 : 5;
+  const rows = S.jobs.filter((j) => inScope(j) && f(j)).sort((a, b) => b.submission_seq - a.submission_seq).map((j) =>
+    rowEvents(el("tr", { "data-job": j.id, className: S.hover === j.id ? "hot" : "" },
+      el("td", {}, jobCell(j.id, j)),
+      all ? el("td", { textContent: ownerName(j.owner) }) : null,
+      el("td", {}, stamp(j.state)),
+      el("td", { textContent: nodeOf(j) }),
+      el("td", { className: "num hide-sm res", textContent: resText(j.resources || {}) }),
+      el("td", { className: "why-cell" }, el("div", { className: "why", textContent: explain(j), title: j.schedule_note || j.reason || "" }))), j.id));
+  if (!rows.length) {
+    rows.push(S.jobs.some(inScope) ? emptyRow(cols, ["這個分類目前沒有工作。"])
+      : emptyRow(cols, [all ? "叢集上目前沒有工作。" : "你還沒有提交工作。"],
+        ["用 CLI 提交:", el("code", { textContent: "labflux submit job.json --source ./code" })]));
+  }
+  $("jobs").replaceChildren(...rows);
+}
+function explain(j) {
+  const e = S.entry.get(j.id), a = S.alloc.get(j.id);
+  if (j.state === "QUEUED" && e) return `第 ${e.position} 位 · ${decision(e)[0]}`;
+  if (a && a.state === "STOPPING" && a.preempted_by) return `被 ${jobName(a.preempted_by)} 搶占 · 停止中`;
+  if (j.state === "RUNNING" && a && a.started_at) return `已執行 ${span(a.started_at)}`;
+  return (j.kind === "MODEL" && j.service ? `${j.service} · ` : "") + reason(j.reason);
+}
+function renderFeed() {
+  const mineIds = new Set(S.jobs.filter((j) => j.mine).map((j) => j.id));
+  const items = ((S.queue && S.queue.recent_decisions) || []).filter((d) => S.scope === "all" || !d.owner || d.owner === S.user ||
+    ((d.detail && d.detail.victims) || []).some((v) => mineIds.has(v))).slice(0, 8);
+  $("feedList").replaceChildren(...(items.length ? items.map((d) => el("li", { title: d.text || "" },
+    el("time", { textContent: clock(d.at) }), el("span", { textContent: feedText(d) })))
+    : [el("li", { className: "note", textContent: "還沒有排程決定。Scheduler 只在記憶體裡保留最近 50 筆,重啟後重新累積。" })]));
+}
+
+function modelIdle(m) {
+  const t = now();
+  if (m.state === "serving") {
+    if (m.inflight > 0) return `處理中 ${m.inflight} 個請求`;
+    const idle = m.last_activity_at ? `閒置 ${span(m.last_activity_at)}` : "Scheduler 啟動後還沒有請求";
+    if (m.mode === "persistent") return `${idle} · 常駐不因閒置停止`;
+    return m.idle_stop_at ? `${idle} · ${span(t, m.idle_stop_at)}後釋放` : idle;
+  }
+  if (m.state === "waiting") {
+    const e = m.job_id && S.entry.get(m.job_id), b = e && blockerText(e.blocker);
+    return b ? `等待資源:${b}` : "等待資源";
+  }
+  if (m.state === "starting") {
+    const a = m.job_id && S.alloc.get(m.job_id);
+    return a ? `啟動 ${span(a.started_at || a.created_at)}` : "啟動中";
+  }
+  if (m.state === "failed" && m.retry_at && m.retry_at > t) return `${span(t, m.retry_at)}後才會重試 · ${reason(m.reason)}`;
+  if (m.state === "stopped") return m.mode === "on_demand" ? "下一個請求時啟動" : "Scheduler 會自動啟動";
+  return reason(m.reason);
+}
+function renderModels() {
+  $("modelsView").hidden = !S.models.length;
+  $("models").replaceChildren(...S.models.map((m) => {
+    const open = Boolean(m.job_id && summary(m.job_id));
+    const name = [S.alloc.has(m.job_id) ? paint(el("i", { className: "sw" }), m.name) : el("i", { className: "sw none" }), m.name];
+    const tr = el("tr", { ...(m.job_id ? { "data-job": m.job_id } : {}), className: m.job_id && S.hover === m.job_id ? "hot" : "",
+      style: open ? {} : { cursor: "default" } },
+      el("td", {}, open ? el("button", { className: "job-id", type: "button", title: m.job_id }, ...name)
+        : el("span", { className: "job-id" }, ...name)),
+      el("td", { textContent: MODES[m.mode] || m.mode }),
+      el("td", {}, stamp(m.state)),
+      el("td", { textContent: m.node_id || "—" }),
+      el("td", { className: "num", textContent: String(m.inflight ?? 0) }),
+      el("td", { className: "num", textContent: m.served == null ? "—" : String(m.served) }),
+      el("td", { className: "why-cell" }, el("div", { className: "why", textContent: modelIdle(m), title: m.reason || "" })));
+    return open ? rowEvents(tr, m.job_id) : tr;
+  }));
+}
+/* Reserved resources per user, summed from the allocations; recent usage from the Scheduler. */
+function renderUsers() {
+  const q = S.queue || {}, usage = q.usage_min_by_user || {}, rows = new Map();
+  const row = (o) => {
+    if (!rows.has(o)) rows.set(o, { cpu: 0, mem: 0, gpu: 0, run: 0, queued: 0 });
+    return rows.get(o);
+  };
+  for (const n of S.nodes) {
+    for (const a of n.allocations || []) {
+      const r = row(a.owner);
+      r.cpu += a.cpu; r.mem += a.memory_mib; r.gpu += (a.gpu_uuids || []).length; r.run++;
+    }
+  }
+  for (const j of S.jobs) if (j.state === "QUEUED") row(j.owner).queued++;
+  for (const o of Object.keys(usage)) row(o);
+  const gpu = hasGpus();
+  const list = [...rows].sort(([a], [b]) => (a === MODELS_OWNER) - (b === MODELS_OWNER) || a.localeCompare(b));
+  $("users").replaceChildren(...(list.length ? list.map(([o, r]) => el("tr", {},
+    el("td", { className: o === MODELS_OWNER ? "dim" : "", textContent: ownerName(o) + (o === S.user ? "(你)" : "") }),
+    el("td", { className: "num", textContent: `${cores(r.cpu)} · ${mem(r.mem)}${gpu ? ` · ${r.gpu} 張` : ""}` }),
+    el("td", { className: "num", textContent: `${r.run} / ${r.queued}` }),
+    el("td", { className: "num" + (o === MODELS_OWNER || q.policy === "fcfs" ? " dim" : ""),
+      title: q.policy === "fcfs" ? "fcfs 不看近期占用" : "",
+      textContent: o === MODELS_OWNER ? "不計" : q.policy === "fcfs" ? "—" : `${round(usage[o] || 0)} 分` })))
+    : [emptyRow(4, ["目前沒有人預約資源,也沒有工作在排隊。"])]));
 }
 
 function setHover(id) {
@@ -755,51 +1156,110 @@ function setHover(id) {
   if (id) document.querySelectorAll(`[data-job="${CSS.escape(id)}"]`).forEach((n) => n.classList.add("hot"));
 }
 
-/* Detail */
+/* Detail: the viewer's own jobs in full; anyone else's as a read-only summary (decision 1A). */
 async function openDetail(id) {
+  const j = summary(id);
+  if (S.log && S.log.timer) clearTimeout(S.log.timer);
   S.selected = id; S.confirm = false; S.cancelError = "";
-  S.log = { attempt: null, after: -1, decoders: {}, parts: [], timer: null };
+  S.readOnly = Boolean(j && !j.mine);
+  S.log = S.readOnly ? null : { attempt: null, after: -1, decoders: {}, parts: [], timer: null };
   $("dLog").replaceChildren(); $("dLogNote").textContent = "";
+  $("dAttempts").replaceChildren(); $("dOutputs").replaceChildren(); $("dFacts").replaceChildren(); $("dActions").replaceChildren();
+  $("dAttemptsBox").hidden = $("dLogBox").hidden = S.readOnly;
   $("listView").hidden = true; $("detailView").hidden = false;
   $("back").focus();
   renderTimetable();
+  if (S.readOnly) return renderSummary(j);
   await refreshDetail();
   pollLogs();
 }
 function closeDetail() {
   if (S.log && S.log.timer) clearTimeout(S.log.timer);
-  S.selected = null; S.log = null;
+  S.selected = null; S.log = null; S.readOnly = false;
   $("detailView").hidden = true; $("listView").hidden = false;
   renderTimetable();
 }
 async function refreshDetail() {
-  if (!S.selected) return;
+  const id = S.selected;
+  if (!id) return;
+  if (S.readOnly) {
+    const j = summary(id);
+    if (j) renderSummary(j);
+    return;
+  }
   try {
-    const d = await api(`/api/jobs/${encodeURIComponent(S.selected)}`);
-    S.details.set(d.id, d);
-    renderDetail(d);
-  } catch (e) { if (e.auth) return logout(e.message); }
+    const d = await api(`/api/jobs/${encodeURIComponent(id)}`);
+    if (S.selected === id) renderDetail(d);
+  } catch (e) {
+    if (e.auth) return logout(e.message);
+    if (S.selected === id && !$("dFacts").childNodes.length) {
+      $("dActions").replaceChildren(el("p", { className: "note error", role: "alert", textContent: `讀取失敗:${e.message}` }));
+    }
+  }
 }
-function renderDetail(d) {
-  const spec = d.spec || {}, res = spec.resources || {};
-  $("dTitle").textContent = short(d.id);
-  const placedNow = ACTIVE.has(d.state) && (d.attempts || []).some((a) => a.id === d.current_attempt_id && !a.released);
-  $("dSw").className = placedNow ? "sw" : "sw none";
-  paint($("dSw"), d.id);
-  $("dTitle").title = d.id;
-  $("dState").replaceChildren(stamp(d.state));
+function detailHead(x) {
+  $("dTitle").textContent = short(x.id);
+  $("dTitle").title = x.id;
+  $("dSw").className = S.alloc.has(x.id) && named(x) ? "sw" : "sw none";
+  paint($("dSw"), hueKey(x));
+  $("dState").replaceChildren(stamp(x.state));
+}
+function noteView(x, e) {
+  const raw = (x.state === "QUEUED" && e && e.note) || x.schedule_note || "";
+  const zh = x.state === "QUEUED" && e ? decision(e).filter(Boolean).join(" ") : placementZh(raw);
+  if (!raw && !zh) return "—";
+  return el("div", {}, zh ? el("div", { textContent: zh }) : null, raw ? el("code", { className: "raw", textContent: raw }) : null);
+}
+/* x: the job in summary shape; d: the owner's full detail (spec, attempts), or null for a summary. */
+function renderFacts(x, d) {
+  const e = S.entry.get(x.id), a = S.alloc.get(x.id), res = x.resources || {}, spec = (d && d.spec) || {};
+  const preempted = d ? (d.attempts || []).filter((t) => t.state === "PREEMPTED").length : null;
+  const parts = e && e.score_parts;
   const facts = [
-    ["工作 ID", el("code", { textContent: d.id })],
-    ["映像", spec.image],
-    ["指令", el("code", { textContent: (spec.argv || []).join(" ") })],
+    ["工作 ID", el("code", { textContent: x.id })],
+    ["擁有者", ownerName(x.owner)],
+    ["類別", `${KINDS[x.kind] || x.kind}(${x.kind})${x.service ? " · " + x.service : ""}`],
+    x.kind === "BATCH" ? ["優先權", x.priority != null ? String(x.priority)
+      : e && e.priority != null ? `${e.priority}(沒有指定,用預設值)` : "沒有指定,用預設值"] : null,
+    e && e.score != null ? ["分數", parts ? `${round(e.score)} = 優先權 ${round(parts.priority)} + 等待 ${round(parts.waited_min)} − 近期占用 ${round(parts.usage_min)}`
+      : round(e.score)] : null,
+    d ? ["映像", spec.image] : null,
+    d ? ["指令", el("code", { textContent: (spec.argv || []).join(" ") })] : null,
     ["資源", resText(res)],
     res.gpu ? ["GPU", gpuNeed(res)] : null,
-    ["時限", spec.time_limit_s ? `${trim(spec.time_limit_s)} 秒` : "—"],
-    ["資料集", (spec.datasets || []).join(", ") || "—"],
-    ["提交", new Date(d.created_at * 1000).toLocaleString()],
-    ["說明", reason(d.reason)],
+    x.kind === "BATCH" ? ["時限", `${x.time_limit_s ? dur(x.time_limit_s) : "預設"} · 預估 ${x.estimated_runtime_s ? dur(x.estimated_runtime_s) : "—"}`] : null,
+    x.kind === "SESSION" && x.lease_expires_at && x.state === "RUNNING" ? ["閒置到期", `${span(now(), x.lease_expires_at)}後(每個指令結束後重新起算)`] : null,
+    ["資料集", (x.datasets || []).join(", ") || "—"],
+    x.project ? ["專案", x.project] : null,
+    x.kind === "BATCH" ? ["重跑", [x.safe_to_rerun ? "safe_to_rerun" : "不可重跑", x.preemptible ? "preemptible" : "不可搶占",
+      preempted != null ? `被搶占 ${preempted} 次` : null].filter(Boolean).join(" · ")] : null,
+    ["節點", (a && a.node_id) || x.node_id || "—"],
+    ["提交", dateTime(x.created_at)],
+    ["說明", reason(x.reason)],
+    ["排程說明", noteView(x, e)],
   ].filter(Boolean);
   $("dFacts").replaceChildren(...facts.flatMap(([k, v]) => [el("dt", { textContent: k }), el("dd", {}, v ?? "—")]));
+}
+function renderSummary(j) {
+  detailHead(j);
+  renderFacts(j, null);
+  $("dActions").replaceChildren(el("p", { className: "note", textContent: j.kind === "MODEL"
+    ? "模型服務由 Scheduler 管理,這裡只顯示摘要;狀態也可以用 labflux models 查看。"
+    : `這是 ${ownerName(j.owner)} 的工作。指令、日誌、執行紀錄和輸出只有擁有者看得到,也只有擁有者能取消。` }));
+}
+function attemptWhy(t) {
+  if (t.preempted_by && (t.state === "PREEMPTED" || t.state === "STOPPING")) {
+    return `被 ${jobName(t.preempted_by)} 搶占${t.state === "STOPPING" ? ",停止中" : ""}`;
+  }
+  return ["FAILED", "UNKNOWN", "CANCELLED"].includes(t.state) ? reason(t.reason) : "—";
+}
+function renderDetail(d) {
+  const at = d.attempts || [];
+  const current = at.find((t) => t.id === d.current_attempt_id);
+  const x = { ...norm(d), node_id: current ? current.node_id : null };
+  const res = x.resources;
+  detailHead(x);
+  renderFacts(x, d);
 
   const acts = $("dActions");
   // A job stopping for a preemption is not cancelled: it queues again once the stop is confirmed.
@@ -824,9 +1284,8 @@ function renderDetail(d) {
     yes.focus();
   }
 
-  const at = d.attempts || [];
   const gpuCol = res.gpu > 0 || at.some((a) => (a.gpu_uuids || []).length);
-  const heads = ["Attempt", "節點", ...(gpuCol ? ["GPU"] : []), "狀態", "開始", "耗時", "Exit"];
+  const heads = ["Attempt", "節點", ...(gpuCol ? ["GPU"] : []), "狀態", "開始", "耗時", "Exit", "原因"];
   $("dAttempts").replaceChildren(at.length ? el("div", { className: "table-scroll" }, el("table", { className: "attempts" },
     el("thead", {}, el("tr", {}, ...heads.map((h) => el("th", { textContent: h })))),
     el("tbody", {}, ...at.map((a) => el("tr", {},
@@ -836,7 +1295,8 @@ function renderDetail(d) {
       el("td", {}, stamp(a.state)),
       el("td", { className: "num", textContent: clock(a.started_at) }),
       el("td", { className: "num", textContent: span(a.started_at, a.finished_at) || "—" }),
-      el("td", { className: "num", textContent: a.oom_killed ? "OOM" : a.exit_code ?? "—" }))))))
+      el("td", { className: "num", textContent: a.oom_killed ? "OOM" : a.exit_code ?? "—" }),
+      el("td", { className: "why-cell", title: a.reason || "" }, el("div", { className: "why", textContent: attemptWhy(a) })))))))
     : el("p", { className: "note", textContent: "還沒有派送到節點。" }));
 
   const outs = d.outputs || [];
@@ -913,22 +1373,22 @@ function appendLog(text, err) {
   if (stick) pre.scrollTop = pre.scrollHeight;
 }
 
-/* Refresh loop */
+/* Refresh loop: five requests per tick, no per-job detail fetches (only the selected job's). */
 let timer;
 async function refresh() {
   clearTimeout(timer);
   if (!S.token) return;
   try {
-    const [nodes, jobs] = await Promise.all([api("/api/nodes"), api("/api/jobs")]);
-    S.nodes = nodes; S.jobs = jobs;
-    const want = jobs.filter((j) => j.current_attempt_id &&
-      (ACTIVE.has(j.state) || !S.details.has(j.id) || S.details.get(j.id).state !== j.state));
-    const recent = want.sort((a, b) => b.submission_seq - a.submission_seq).slice(0, 40);
-    const got = await Promise.all(recent.map((j) => api(`/api/jobs/${encodeURIComponent(j.id)}`).catch(() => null)));
-    for (const d of got) if (d) S.details.set(d.id, d);
+    const [nodes, own, all, queue, models] = await Promise.all([api("/api/nodes"), api("/api/jobs"),
+      api("/api/jobs?scope=all"), api("/api/queue"), api("/api/models")]);
+    // Summaries cover every user's recent jobs; the viewer's own older jobs come from the plain list.
+    const recent = new Set(all.map((j) => j.id));
+    S.nodes = nodes; S.queue = queue; S.models = models;
+    S.jobs = all.concat(own.filter((j) => !recent.has(j.id)).map(norm));
+    index();
     S.lastOk = Date.now(); S.failing = false;
     renderAll();
-    if (S.selected && S.details.has(S.selected) && !S.confirm) renderDetail(S.details.get(S.selected));
+    if (S.selected && !S.confirm) await refreshDetail();
   } catch (e) {
     if (e.auth) return logout(e.message);
     S.failing = true; renderLive();
@@ -939,10 +1399,12 @@ function renderLive() {
   const live = $("live");
   live.classList.toggle("stale", S.failing);
   live.lastChild.textContent = S.failing
-    ? (S.lastOk ? `連線中斷 · 顯示 ${new Date(S.lastOk).toLocaleTimeString()} 的資料` : "無法連上 Scheduler")
-    : `即時 · ${new Date(S.lastOk).toLocaleTimeString()} 更新`;
+    ? (S.lastOk ? `連線中斷 · 顯示 ${clock(S.lastOk / 1000)} 的資料` : "無法連上 Scheduler")
+    : `即時 · ${clock(S.lastOk / 1000)} 更新`;
 }
-function renderAll() { renderCluster(); renderAxes(); renderTimetable(); renderTabs(); renderJobs(); renderLive(); }
+function renderAll() {
+  renderHeader(); renderCluster(); renderAxes(); renderTimetable(); renderModels(); renderUsers(); renderTabs(); renderJobs(); renderLive();
+}
 
 function showLogin(message = "") {
   $("app").hidden = true; $("login").hidden = false;
@@ -951,13 +1413,13 @@ function showLogin(message = "") {
 }
 function logout(message = "") {
   clearTimeout(timer); closeDetail();
-  S.token = null; store("session", "labflux-token", null);
-  S.details.clear(); S.seenBlocks.clear();
+  S.token = null; S.user = null; store("session", "labflux-token", null);
+  S.seenBlocks.clear();
   showLogin(message);
 }
 async function start(token) {
   S.token = token;
-  try { await api("/api/nodes"); }
+  try { S.user = (await api("/api/whoami")).user; }
   catch (e) {
     if (e.auth) return logout(e.message);
   }
@@ -976,9 +1438,15 @@ $("logout").addEventListener("click", () => logout());
 $("back").addEventListener("click", closeDetail);
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && S.selected) closeDetail(); });
 document.querySelectorAll("[data-axis]").forEach((b) => b.addEventListener("click", () => {
+  S.axisChosen = true;
   setAxis(b.dataset.axis);
   renderAxes();
   renderTimetable();
+}));
+document.querySelectorAll("[data-scope]").forEach((b) => b.addEventListener("click", () => {
+  setScope(b.dataset.scope);
+  store("local", "labflux-scope", b.dataset.scope);
+  renderTimetable(); renderTabs(); renderJobs();
 }));
 $("projector").addEventListener("click", () => {
   const on = !document.documentElement.classList.contains("projector");
@@ -994,6 +1462,7 @@ if (store("local", "labflux-projector") === "1") {
   document.documentElement.classList.add("projector");
   $("projector").setAttribute("aria-pressed", "true");
 }
+setScope(store("local", "labflux-scope") === "mine" ? "mine" : "all");
 const saved = store("session", "labflux-token");
 if (saved) start(saved); else showLogin();
 </script>
