@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import logging
 import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -28,6 +29,7 @@ from labflux.scheduler import Scheduler, ServiceError
 from labflux.session_protocol import SessionRequest
 
 DASHBOARD_PAGE = Path(__file__).parent / "dashboard.html"
+log = logging.getLogger("labflux.api")
 
 
 def create_app(
@@ -44,7 +46,12 @@ def create_app(
 
         async def scheduling_loop():
             while True:
-                await asyncio.to_thread(service.tick)
+                try:
+                    await asyncio.to_thread(service.tick)
+                except Exception:
+                    # One failed pass must not end the loop, or offline detection, lease expiry
+                    # and model management would stop silently.
+                    log.exception("scheduling pass failed")
                 await asyncio.sleep(settings.scheduler_interval_s)
 
         task = asyncio.create_task(scheduling_loop()) if run_loop else None

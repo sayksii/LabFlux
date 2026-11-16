@@ -1,19 +1,62 @@
 """What every logged-in user may see of everyone's work (M12, decision 1A).
 
 Node allocations and job summaries name owners, kinds, resources and scheduling notes. A job's
-argv, env, image and source, its logs and outputs, and cancelling it stay with its owner.
+argv, env, image and source, its logs and outputs, and cancelling it stay with its owner; so
+does any reason that could quote them (public_reason).
 """
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import select
 
 from labflux.database import attempt_gpus, attempts, jobs, nodes
-from labflux.scheduler import TERMINAL, Scheduler, row_dict
+from labflux.models import MODEL_KIND
+from labflux.scheduler import STOP_WAIT, TERMINAL, Scheduler, row_dict
 
 # Ended jobs in the all-users list: those updated in this window, at most this many (newest).
 SUMMARY_WINDOW_S = 24 * 3600.0
 SUMMARY_TERMINAL_LIMIT = 200
+
+# Job reasons the Scheduler and Worker build only from fixed text, node names, job IDs and
+# counts. Any other reason, such as a Docker error, can quote the job's image or command.
+_STOPPED_BY = (
+    r"preempted by job \w{8}|session lease expired|replaced by a new session|one-shot mode"
+    r"|session ended by the worker|model configuration changed"
+    r"|model removed from the configuration|idle for \d+s( while other jobs wait for resources)?"
+)
+_PUBLIC = (
+    "waiting for scheduling",
+    "dispatched",
+    r"assigned to \S+",
+    "executing",
+    "no online worker",
+    "waiting for matching CPU/RAM/GPU capacity or datasets",
+    "cancelled while queued(: its client stopped waiting for it|: no request is waiting for it)?",
+    "worker heartbeat expired; (resources remain reserved|termination unconfirmed)",
+    "model removed from the configuration",
+    rf"(({_STOPPED_BY}); )?{STOP_WAIT}",
+    r"preempted by job \w{8}; queued to run again \(preemption \d+ of \d+\)",
+    r"container missing after worker restart(; queued for retry \d+ of \d+)?",
+    # The Worker's own outcomes.
+    "completed",
+    "cancelled",
+    "cancelled before start",
+    "time limit exceeded",
+    r"memory limit exceeded \(OOM\)",
+    "output upload exceeds server limit",
+    "termination could not be confirmed|container identity mismatch|container still running",
+)
+PUBLIC_REASONS = re.compile(f"({'|'.join(_PUBLIC)})(; log limit reached)?")
+
+
+def public_reason(reason: str | None, state: str) -> str | None:
+    """The reason as a user other than the job's owner sees it: one of PUBLIC_REASONS as it
+    is, anything else as the job's state ("failed")."""
+    if not reason or PUBLIC_REASONS.fullmatch(reason):
+        return reason
+    return state.lower()
 
 
 def _allocations(connection, viewer: str, default_limit: float) -> dict[str, list[dict]]:
@@ -92,16 +135,20 @@ def list_nodes(service: Scheduler, viewer: str) -> list[dict]:
 
 
 def _summary(row, viewer: str) -> dict:
-    """Only these fields: never the spec's argv, env, image or source_id."""
+    """Only these fields: never the spec's argv, env, image or source_id. A model service's
+    reason is public already (GET /api/models)."""
     spec = row.spec
+    mine = row.owner == viewer
     return {
         "id": row.id,
         "owner": row.owner,
-        "mine": row.owner == viewer,
+        "mine": mine,
         "kind": row.kind,
         "service": row.service,
         "state": row.state,
-        "reason": row.reason,
+        "reason": row.reason
+        if mine or row.kind == MODEL_KIND
+        else public_reason(row.reason, row.state),
         "schedule_note": row.schedule_note,
         "priority": spec.get("priority"),
         "resources": spec["resources"],

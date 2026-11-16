@@ -2367,6 +2367,20 @@ class Scheduler:
                     .values(lease_expires_at=self._model_lease(row.service))
                 )
 
+    def _stop_model(self, connection, job: dict, reason: str) -> None:
+        """Ask the Worker to stop a live model service, and tell the queue view why (M12)."""
+        self._request_stop(connection, job, f"{reason}; {STOP_WAIT}")
+        node_id = connection.execute(
+            select(attempts.c.node_id).where(attempts.c.id == job["current_attempt_id"])
+        ).scalar_one_or_none()
+        self._decide(
+            "model_stopping",
+            f"{who(job)}: {reason}; stopping it",
+            job=job,
+            node_id=node_id,
+            detail={"service": job["service"], "reason": reason},
+        )
+
     def _idle_stop(self, job: dict, now: float, waiting: bool) -> str | None:
         """Why an idle model service is stopped now, or None: a RUNNING on-demand model with no
         request in flight, idle for idle_stop_s, or for reclaim_idle_s while other jobs wait
@@ -2423,7 +2437,7 @@ class Scheduler:
                         )
                     )
                 else:
-                    self._request_stop(connection, job, f"{reason}; {STOP_WAIT}")
+                    self._stop_model(connection, job, reason)
                 continue
             if job["state"] == "QUEUED":
                 # Requests poll ensure_model for up to cold_wait_s; when they stop, a queued
@@ -2453,7 +2467,7 @@ class Scheduler:
                 else:
                     # A persistent model's next service is queued below without a backoff: a
                     # stop ends in CANCELLED, which is not a failure.
-                    self._request_stop(connection, job, f"model configuration changed; {STOP_WAIT}")
+                    self._stop_model(connection, job, "model configuration changed")
                 continue
             if job["state"] != "RUNNING":
                 continue
@@ -2466,7 +2480,7 @@ class Scheduler:
                 continue
             reason = self._idle_stop(job, now, waiting)
             if reason:
-                self._request_stop(connection, job, f"{reason}; {STOP_WAIT}")
+                self._stop_model(connection, job, reason)
         self.model_polled = asked
         for name, config in models.items():
             if (

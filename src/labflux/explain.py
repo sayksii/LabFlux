@@ -68,8 +68,9 @@ def blocker(
     """Why the request cannot start on any available node now; None when it fits now.
 
     The checks of Scheduler._candidates against the same free capacity, one at a time: online
-    nodes, datasets, GPUs, CPU, RAM, the job limit, and finally all of them on one node. Ties
-    name the first node by id.
+    nodes, datasets, GPUs, CPU, RAM, the job limit, and finally all of them on one node. Each
+    of the last four looks only at the nodes that passed the dataset and GPU checks. Ties name
+    the first node by id.
     """
     if not available:
         return {"kind": "no_worker"}
@@ -99,6 +100,8 @@ def blocker(
                 },
             }
         gpu_ok = {fit["node"] for fit in fits if fit["free"] >= need}
+    # Of a GPU job, only the nodes with enough free matching cards: the CPU, RAM and job-limit
+    # checks then never name a node that cannot run it.
     free = [
         {
             "node": node["id"],
@@ -107,6 +110,7 @@ def blocker(
             "jobs": allocated[node["id"]]["jobs"],
         }
         for node in nodes
+        if node["id"] in gpu_ok
     ]
     cpu_ok = {item["node"] for item in free if request["cpu"] <= item["cpu"] + 1e-9}
     memory_ok = {item["node"] for item in free if request["memory_mib"] <= item["memory_mib"]}

@@ -56,6 +56,7 @@
   .ghost:hover { background: var(--navy-2); }
   .ghost[aria-pressed="true"] { background: #fff; color: var(--navy); border-color: #fff; }
   .ghost svg { width: 1rem; height: 1rem; }
+  .bar :focus-visible { outline-color: #fff; }
 
   main { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(26rem, 1fr); gap: 1.33rem;
     padding: 1.33rem 1.6rem 2rem; align-items: start; }
@@ -83,10 +84,11 @@
   .node-cap { font-size: .867rem; color: var(--ink); margin-top: .15rem; }
   .node-live { font-size: .8rem; color: var(--muted); display: flex; flex-wrap: wrap; column-gap: .6rem; }
   .node-live span { white-space: nowrap; }
-  /* The backfill head's reservation: dashed amber, the visual language of waiting. */
+  /* The backfill head's reservation: dashed amber, the visual language of waiting. It wraps, never
+     truncates: the start time at its end is the point. */
   .resv { display: block; width: fit-content; max-width: 100%; margin-top: .35rem; border: 1px dashed var(--queued); color: var(--queued);
-    border-radius: 3px; padding: 0 .4rem; font-size: .8rem; font-weight: 500; line-height: 1.5; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; }
+    border-radius: 3px; padding: 0 .4rem; font-size: .8rem; font-weight: 500; line-height: 1.5; white-space: normal;
+    word-break: keep-all; overflow-wrap: anywhere; }
   .gutter { position: relative; border-right: 1px solid var(--rule); }
   .gutter span { position: absolute; right: .45rem; font-size: .8rem; color: var(--faint); transform: translateY(.2rem); }
   .gutter span.edge { transform: translateY(-50%); }
@@ -106,6 +108,8 @@
   .blk b { font-size: .933rem; font-weight: 700; display: flex; align-items: center; gap: .3rem; min-width: 0; max-width: 100%; }
   .blk b .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .blk .ln { font-size: .8rem; color: color-mix(in oklab, var(--line) 40%, var(--ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* Under 所有人 the owner leads its line in ink: who holds the block reads before what it holds. */
+  .blk .own { color: var(--ink); font-weight: 700; }
   .blk.short .ln + .ln { display: none; }
   /* Tight blocks keep one line: the name, then the first secondary line beside it. */
   .blk.tight { flex-direction: row; align-items: center; gap: .45rem; padding-block: 0; }
@@ -178,7 +182,13 @@
   td.why-cell { white-space: normal; width: 100%; min-width: 10rem; }
   /* Projected, the queue keeps its decision column on screen; the score breakdown still shows the priority term. */
   :root.projector .res, :root.projector .hide-proj { display: none; }
-  :root.projector .list-scroll th, :root.projector .list-scroll td { padding-inline: .5rem; }
+  :root.projector .list-scroll th, :root.projector .list-scroll td,
+  :root.projector #modelsView th, :root.projector #modelsView td { padding-inline: .5rem; }
+  :root.projector #modelsView td.why-cell { min-width: 7rem; }
+  /* Projected, the page scrolls as one, so the decision feed is not squeezed into a nested scroller. */
+  :root.projector .list-scroll { max-height: none; }
+  /* Projected at 1280-1366px, the timetable takes a larger share so block lines and model names fit at 18px. */
+  @media (min-width: 1081px) { :root.projector main { grid-template-columns: minmax(0, 1.5fr) minmax(26rem, 1fr); } }
   .why { color: var(--muted); font-size: .867rem; line-height: 1.35; overflow: hidden; display: -webkit-box;
     -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
   .num { white-space: nowrap; }
@@ -250,6 +260,10 @@
   @media (max-width: 1080px) {
     main { grid-template-columns: minmax(0, 1fr); padding: 1rem; }
     .list-scroll { max-height: none; }
+    /* One column: the queue (why jobs wait) or the open detail comes right after the timetable. */
+    .stack { display: contents; }
+    #listView, #detailView { order: 1; }
+    .stack > .panel:not(:first-child) { order: 2; }
   }
   @media (max-width: 640px) {
     .bar { padding: .7rem 1rem; gap: .6rem 1rem; }
@@ -428,7 +442,11 @@ const REASON_PATTERNS = [
   [/^preempted by job (\S+); waiting for confirmed container termination$/, (m) => `被 ${jobName(m[1])} 搶占,等待確認容器已停止`],
   [/^preempted by job (\S+) \((.*)\)$/, (m) => `被 ${jobName(m[1])} 搶占(${reason(m[2])})`],
   [/^(.*); queued for retry (\d+) of (\d+)$/, (m) => `${reason(m[1])},重新排隊重試(第 ${m[2]} / ${m[3]} 次)`],
+  [/^idle for (\d+)s( while other jobs wait for resources)?; waiting for confirmed container termination$/,
+    (m) => `${idleZh(m[1], m[2])};等待確認容器已停止`],
 ];
+/* An on-demand model's idle stop (Scheduler._idle_stop): early while other jobs wait, else at its idle limit. */
+function idleZh(s, early) { return `閒置 ${elapsed(Number(s))},${early ? "有工作在等資源,提前回收" : "逾時自動釋放"}`; }
 /* The criteria a dispatch note names for its node choice (explain.PLACEMENT_CRITERIA). */
 const CRITERIA = {
   "it holds the project's files": "有專案的檔案", "fewest spare matching GPUs": "剩下符合的 GPU 最少",
@@ -493,22 +511,31 @@ function ago(t) {
   if (s < 60) return `${Math.floor(s)} 秒前`;
   if (s < 3600) return `${Math.floor(s / 60)} 分前`;
   if (s < 86400) return `${Math.floor(s / 3600)} 小時前`;
-  return new Date(t * 1000).toLocaleDateString();
+  return new Date(t * 1000).toLocaleDateString("zh-TW");
 }
-function span(a, b) {
-  if (!a) return "";
-  const s = Math.max(0, (b || Date.now() / 1000) - a);
+function elapsed(s) {
+  s = Math.max(0, s);
   if (s < 60) return `${Math.floor(s)} 秒`;
   if (s < 3600) return `${Math.floor(s / 60)} 分 ${Math.floor(s % 60)} 秒`;
   return `${Math.floor(s / 3600)} 小時 ${Math.floor((s % 3600) / 60)} 分`;
+}
+const span = (a, b) => (a ? elapsed((b || now()) - a) : "");
+/* Block lines keep a timetable's compact m:ss (h:mm:ss past an hour). */
+function mss(s) {
+  s = Math.max(0, Math.floor(s));
+  const p = (n) => String(n).padStart(2, "0"), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60;
+  return h ? `${h}:${p(m)}:${p(s % 60)}` : `${m}:${p(s % 60)}`;
 }
 function dur(s) {
   if (s < 60) return `${trim(s)} 秒`;
   if (s < 3600) return `${trim(s / 60)} 分`;
   return `${trim(s / 3600)} 小時`;
 }
-const clock = (t) => (t ? new Date(t * 1000).toLocaleTimeString() : "—");
-const hhmm = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/* One 24-hour zh-TW clock for every time on the page, whatever the browser's locale. */
+const timeText = (t, o) => new Date(t * 1000).toLocaleTimeString("zh-TW", { hourCycle: "h23", ...o });
+const clock = (t) => (t ? timeText(t) : "—");
+const hhmm = (t) => timeText(t, { hour: "2-digit", minute: "2-digit" });
+const dateTime = (t) => new Date(t * 1000).toLocaleString("zh-TW", { hourCycle: "h23" });
 const stamp = (state) => el("span", { className: "stamp s-" + state, textContent: state });
 const tag = (text) => el("small", { className: "tag", textContent: text });
 const ownerName = (o) => (o === MODELS_OWNER ? "模型服務" : o);
@@ -656,21 +683,27 @@ function reservationChip(r) {
       (soon ? "超過時限的工作釋放資源後就開始" : `${clock(r.start)} 起(${span(t, r.start)}後)`) });
 }
 
-/* A block's two secondary lines; the first one stays visible on tight blocks, so it carries the news. */
+/* A block's two secondary lines; the first one stays visible on tight blocks, so it carries the news.
+   Under 所有人 the owner leads its line ({who, text}); a model names none, its MODEL tag says it. */
 function blockLines(a, res) {
-  const owner = S.scope === "all" ? `${ownerName(a.owner)} · ` : "";
+  const who = S.scope === "all" && a.kind !== "MODEL" ? ownerName(a.owner) : "";
+  const owned = (text) => (who ? { who, text } : text);
   const m = a.kind === "MODEL" && S.model.get(a.service);
   const preempted = a.state === "STOPPING" && a.preempted_by;
   let status = a.state;
   if (preempted) status = `被 ${jobName(a.preempted_by)} 搶占 · 停止中`;
+  else if (a.state === "UNKNOWN") status = "UNKNOWN · 資源保留中";
+  else if (m && m.state === "starting") status = `starting · 啟動 ${mss(now() - (a.started_at || a.created_at))}`;
   else if (m) status = `${m.state} · 進行中 ${m.inflight ?? 0}`;
-  else if (a.kind === "SESSION" && a.state === "RUNNING" && a.lease_expires_at) status = `閒置到期 ${span(now(), a.lease_expires_at)}`;
-  else if (a.state === "RUNNING") status = `執行 ${span(a.started_at)}${a.ends_at ? " · 時限到 " + hhmm(a.ends_at) : ""}`;
-  const holder = a.kind === "MODEL" ? "模型服務 · " : owner;
-  if (preempted) return [status, `${holder}${res}`];
-  if (a.kind === "SESSION") return [`${owner}${status}`, res];
-  return [`${holder}${res}`, status];
+  else if (a.kind === "SESSION" && a.state === "RUNNING" && a.lease_expires_at) status = `閒置到期 ${mss(a.lease_expires_at - now())}`;
+  else if (a.state === "RUNNING" && a.started_at) status = `執行 ${mss(now() - a.started_at)}${a.ends_at ? " · 時限到 " + hhmm(a.ends_at) : ""}`;
+  if (preempted) return [status, owned(res)];
+  if (a.kind === "SESSION") return [owned(status), res];
+  return [owned(res), status];
 }
+const lineText = (l) => (typeof l === "string" ? l : `${l.who} · ${l.text}`);
+const lineNode = (l) => (typeof l === "string" ? el("span", { className: "ln", textContent: l })
+  : el("span", { className: "ln" }, el("strong", { className: "own", textContent: l.who }), ` · ${l.text}`));
 function blockFor(a, h, style, lines, seen, scale) {
   seen.add(a.attempt_id);
   const cls = ["blk"];
@@ -682,11 +715,12 @@ function blockFor(a, h, style, lines, seen, scale) {
   if (S.selected === a.job_id) cls.push("sel");
   const model = a.kind === "MODEL";
   const b = paint(el("button", { className: cls.join(" "), "data-job": a.job_id, type: "button", style,
-      title: [a.job_id, `${ownerName(a.owner)} · ${a.state}`, ...lines].join("\n") },
+      title: [a.job_id, `${ownerName(a.owner)} · ${a.state}`, ...lines.map(lineText),
+        a.state === "UNKNOWN" ? "無法確認容器已停止,所以不會重派" : null].filter(Boolean).join("\n") },
     el("b", {}, model ? tag("MODEL") : a.kind === "SESSION" ? tag("SESSION") : null,
       el("span", { className: "nm", textContent: model && a.service ? a.service : short(a.job_id) }),
       a.placement === "backfilled" ? tag("backfill") : null),
-    ...lines.map((t) => el("span", { className: "ln", textContent: t }))), hueKey(a));
+    ...lines.map(lineNode)), hueKey(a));
   b.addEventListener("click", () => openDetail(a.job_id));
   b.addEventListener("mouseenter", () => setHover(a.job_id));
   b.addEventListener("mouseleave", () => setHover(null));
@@ -790,7 +824,7 @@ function gpuHeadLive(n) {
   const parts = gpus(n).map((g) => {
     const o = seen.get(g.uuid);
     if (!o) return `GPU ${g.index} 尚未回報`;
-    const text = `${first ? "即時 " : ""}GPU ${g.index} ${trim(o.utilization_percent)}%`;
+    const text = `${first ? "即時 " : ""}GPU ${g.index} · ${trim(o.utilization_percent)}%`;
     first = false;
     return text;
   });
@@ -875,8 +909,17 @@ function decision(e) {
       out = ["現在沒有放得下的節點。", b]; break;
     case "does_not_block":
       out = [e.kind === "MODEL" ? "模型服務現在放不下,但不擋後面的工作。" : "沒有在線的節點放得下它,所以不擋後面的工作。", b]; break;
-    case "waiting_for_release":
-      out = [waits ? `等 ${waits} 停止,釋放資源後開始。` : "等閒置的模型服務釋放資源。", b]; break;
+    case "waiting_for_release": {
+      // The jobs this one preempted hold their resources until their stop is confirmed.
+      const victims = (e.waiting_for || []).map((id) => S.alloc.get(id)).filter((a) => a && a.preempted_by === e.job_id);
+      if (!victims.length) { out = [waits ? `等 ${waits} 停止,釋放資源後開始。` : "等閒置的模型服務釋放資源。", b]; break; }
+      const byNode = new Map();
+      for (const v of victims) byNode.set(v.node_id, [...(byNode.get(v.node_id) || []), jobName(v.job_id)]);
+      const it = victims.length > 1 ? "它們" : "它";
+      out = [`隊首。搶占 ${[...byNode].map(([n, ids]) => `${n} 的 ${ids.join("、")}`).join("、")},等${it}停止後開始。`,
+        [`選${it}是因為損失最少`, b].filter(Boolean).join(" · ")];
+      break;
+    }
     case "no_worker":
       out = ["沒有上線的節點。", ""]; break;
     default:
@@ -885,19 +928,28 @@ function decision(e) {
   if (e.kind !== "BATCH") out[1] = [out[1], "互動工作排在批次工作前面"].filter(Boolean).join(" · ");
   return out;
 }
+/* Why a backfilled job cannot delay the reservation (the dispatch note's safety clause). */
+const SAFE = { "its time limit ends before the reservation": "時限在保留時段開始前結束",
+  "it leaves enough room for the reserved job": "剩下的資源仍夠保留的工作用" };
+/* The dispatch note's node choice: 選 node:criteria. */
+function choseZh(note) {
+  const m = note.match(/chose (\S+?): ([^;]+)/);
+  return m ? `選 ${m[1]}:${m[2].split(", then ").map((c) => CRITERIA[c.trim()] || c.trim()).join(",其次")}` : "";
+}
 /* The dispatch note in Chinese: where it started, the candidates and the choice; the raw note keeps the rest. */
 function placementZh(note) {
   let m = note.match(/backfilled on (\S+) ahead of job (\S+) reserved on (\S+)/);
   const parts = [];
-  if (m) parts.push(`在 ${m[1]} 先跑(backfill),不會延後 ${m[2]} 在 ${m[3]} 的保留時段`);
-  else if ((m = note.match(/started on ([^\s;(]+)/))) parts.push(`在 ${m[1]} 開始`);
+  if (m) {
+    const s = note.match(/; (its time limit ends before the reservation|it leaves enough room for the reserved job|the reserved job waits for (\S+))/);
+    const safe = !s ? "" : s[2] ? `保留的工作等的是 ${s[2]}` : SAFE[s[1]];
+    parts.push(`在 ${m[1]} 先跑(backfill),不會延後 ${jobName(m[2])} 在 ${m[3]} 的保留時段${safe ? ":" + safe : ""}`);
+  } else if ((m = note.match(/started on ([^\s;(]+)/))) parts.push(`在 ${m[1]} 開始`);
   else return "";
   if ((m = note.match(/only (\S+) fits/))) parts.push(`只有 ${m[1]} 放得下`);
   if ((m = note.match(/fits on ([^;]+)/))) parts.push(`可放 ${m[1].trim().split(/,\s*/).join("、")}`);
-  if ((m = note.match(/chose (\S+?): ([^;]+)/))) {
-    parts.push(`選 ${m[1]}:${m[2].split(", then ").map((c) => CRITERIA[c.trim()] || c.trim()).join(",其次")}`);
-  }
-  if ((m = note.match(/starts from the files of job (\S+)/))) parts.push(`從 ${m[1]} 留下的專案檔案接續`);
+  if (choseZh(note)) parts.push(choseZh(note));
+  if ((m = note.match(/starts from the files of job (\S+)/))) parts.push(`從 ${jobName(m[1])} 留下的專案檔案接續`);
   return parts.join(" · ");
 }
 function feedText(d) {
@@ -906,7 +958,10 @@ function feedText(d) {
   const cands = det.candidates || [];
   const choice = cands.length > 1 ? `,可放 ${cands.join("、")}` : cands.length ? ",只有這台放得下" : "";
   switch (d.kind) {
-    case "started": return `${owner}${id} 在 ${d.node_id} 開始${choice}`;
+    case "started": {
+      const chose = choseZh(d.text || "");
+      return `${owner}${id} 在 ${d.node_id} 開始${choice}${chose ? ";" + chose : ""}`;
+    }
     case "backfilled": return `${owner}${id} 在 ${d.node_id} 先跑(backfill)${det.ahead_of ? `,不延後 ${jobName(det.ahead_of)}` : ""}`;
     case "preempting": return `${id} 搶占 ${(det.victims || []).map(jobName).join("、")}(${det.node_id || d.node_id},損失最少)`;
     case "requeued_after_preemption":
@@ -916,6 +971,11 @@ function feedText(d) {
     case "node_offline": return `${d.node_id} 失聯${(det.jobs || []).length ? `,${det.jobs.length} 個工作變成 UNKNOWN,資源保留` : ""}`;
     // Recorded on every registration too, not only when a lost node comes back.
     case "node_online": return `${d.node_id} 上線`;
+    case "model_stopping": {
+      const idle = (det.reason || d.text || "").match(/idle for (\d+)s( while other jobs wait for resources)?/);
+      const name = det.service || ((d.text || "").match(/^model (\S+):/) || [])[1] || id || "模型服務";
+      return idle ? `${name} ${idleZh(idle[1], idle[2])}` : d.text;
+    }
     default: return d.text;
   }
 }
@@ -923,7 +983,7 @@ function feedText(d) {
 function jobCell(id, x) {
   const a = S.alloc.get(id);
   return el("button", { className: "job-id", type: "button",
-      title: `${id}${x.created_at ? `\n提交於 ${new Date(x.created_at * 1000).toLocaleString()}(${ago(x.created_at)})` : ""}` },
+      title: `${id}${x.created_at ? `\n提交於 ${dateTime(x.created_at)}(${ago(x.created_at)})` : ""}` },
     a && named(x) ? paint(el("i", { className: "sw" }), hueKey(x)) : el("i", { className: "sw none" }),
     short(id),
     x.kind === "SESSION" ? tag("SESSION") : x.kind === "MODEL" ? tag("MODEL") : null,
@@ -1039,7 +1099,7 @@ function modelIdle(m) {
   }
   if (m.state === "starting") {
     const a = m.job_id && S.alloc.get(m.job_id);
-    return a ? `${a.node_id} · 啟動 ${span(a.started_at || a.created_at)}` : "啟動中";
+    return a ? `啟動 ${span(a.started_at || a.created_at)}` : "啟動中";
   }
   if (m.state === "failed" && m.retry_at && m.retry_at > t) return `${span(t, m.retry_at)}後才會重試 · ${reason(m.reason)}`;
   if (m.state === "stopped") return m.mode === "on_demand" ? "下一個請求時啟動" : "Scheduler 會自動啟動";
@@ -1174,7 +1234,7 @@ function renderFacts(x, d) {
     x.kind === "BATCH" ? ["重跑", [x.safe_to_rerun ? "safe_to_rerun" : "不可重跑", x.preemptible ? "preemptible" : "不可搶占",
       preempted != null ? `被搶占 ${preempted} 次` : null].filter(Boolean).join(" · ")] : null,
     ["節點", (a && a.node_id) || x.node_id || "—"],
-    ["提交", new Date(x.created_at * 1000).toLocaleString()],
+    ["提交", dateTime(x.created_at)],
     ["說明", reason(x.reason)],
     ["排程說明", noteView(x, e)],
   ].filter(Boolean);
@@ -1339,8 +1399,8 @@ function renderLive() {
   const live = $("live");
   live.classList.toggle("stale", S.failing);
   live.lastChild.textContent = S.failing
-    ? (S.lastOk ? `連線中斷 · 顯示 ${new Date(S.lastOk).toLocaleTimeString()} 的資料` : "無法連上 Scheduler")
-    : `即時 · ${new Date(S.lastOk).toLocaleTimeString()} 更新`;
+    ? (S.lastOk ? `連線中斷 · 顯示 ${clock(S.lastOk / 1000)} 的資料` : "無法連上 Scheduler")
+    : `即時 · ${clock(S.lastOk / 1000)} 更新`;
 }
 function renderAll() {
   renderHeader(); renderCluster(); renderAxes(); renderTimetable(); renderModels(); renderUsers(); renderTabs(); renderJobs(); renderLive();
