@@ -25,7 +25,13 @@ def render(name: str, description: str, jobs: list[dict]) -> str:
     for job in jobs:
         lines.append("[[jobs]]")
         for key, value in job.items():
-            text = f'"{value}"' if isinstance(value, str) else str(value).lower() if isinstance(value, bool) else value
+            text = (
+                f'"{value}"'
+                if isinstance(value, str)
+                else str(value).lower()
+                if isinstance(value, bool)
+                else value
+            )
             lines.append(f"{key} = {text}")
         lines.append("")
     return "\n".join(lines)
@@ -33,15 +39,59 @@ def render(name: str, description: str, jobs: list[dict]) -> str:
 
 def cpu() -> list[dict]:
     jobs = [
-        dict(id="c01", at=0, user="alice", cpu=16, memory_mib=2048, run_s=90, time_limit_s=150, load="cpu"),
-        dict(id="c02", at=1, user="bob", cpu=16, memory_mib=2048, run_s=120, time_limit_s=180, load="cpu"),
-        dict(id="c03", at=2, user="carol", cpu=8, memory_mib=2048, run_s=60, time_limit_s=120, load="cpu"),
-        dict(id="c04", at=4, user="alice", cpu=24, memory_mib=2048, run_s=60, time_limit_s=120, load="cpu"),
+        dict(
+            id="c01",
+            at=0,
+            user="alice",
+            cpu=16,
+            memory_mib=2048,
+            run_s=90,
+            time_limit_s=150,
+            load="cpu",
+        ),
+        dict(
+            id="c02",
+            at=1,
+            user="bob",
+            cpu=16,
+            memory_mib=2048,
+            run_s=120,
+            time_limit_s=180,
+            load="cpu",
+        ),
+        dict(
+            id="c03",
+            at=2,
+            user="carol",
+            cpu=8,
+            memory_mib=2048,
+            run_s=60,
+            time_limit_s=120,
+            load="cpu",
+        ),
+        dict(
+            id="c04",
+            at=4,
+            user="alice",
+            cpu=24,
+            memory_mib=2048,
+            run_s=60,
+            time_limit_s=120,
+            load="cpu",
+        ),
     ]
     for i in range(8):
         jobs.append(
-            dict(id=f"c{i + 5:02d}", at=6 + 4 * i, user=USERS[i % 3], cpu=4, memory_mib=1024,
-                 run_s=30 + 15 * (i % 3), time_limit_s=60 + 30 * (i % 3), load="cpu")
+            dict(
+                id=f"c{i + 5:02d}",
+                at=6 + 4 * i,
+                user=USERS[i % 3],
+                cpu=4,
+                memory_mib=1024,
+                run_s=30 + 15 * (i % 3),
+                time_limit_s=60 + 30 * (i % 3),
+                load="cpu",
+            )
         )
     return jobs
 
@@ -54,8 +104,15 @@ def ram() -> list[dict]:
     ]
     for i in range(8):
         jobs.append(
-            dict(id=f"r{i + 4:02d}", at=4 + 4 * i, user=USERS[i % 3], cpu=1,
-                 memory_mib=4096 * (1 + i % 3), run_s=30 + 15 * (i % 3), time_limit_s=60 + 30 * (i % 3))
+            dict(
+                id=f"r{i + 4:02d}",
+                at=4 + 4 * i,
+                user=USERS[i % 3],
+                cpu=1,
+                memory_mib=4096 * (1 + i % 3),
+                run_s=30 + 15 * (i % 3),
+                time_limit_s=60 + 30 * (i % 3),
+            )
         )
     return jobs
 
@@ -84,24 +141,30 @@ def mixed(seed: int = 13, count: int = 24) -> list[dict]:
 
 def main() -> None:
     WORKLOADS.mkdir(parents=True, exist_ok=True)
-    (WORKLOADS / "cpu.toml").write_text(render(
-        "cpu",
-        "CPU contention, big and small jobs (simulation only). A 24-core job only fits kindred and\n"
-        "blocks the queue while small 4-core jobs could run elsewhere.",
-        cpu(),
-    ))
-    (WORKLOADS / "ram.toml").write_text(render(
-        "ram",
-        "RAM contention (simulation only). Two 40 GiB jobs only fit kayle; small 4-12 GiB jobs\n"
-        "could use karma and kindred meanwhile.",
-        ram(),
-    ))
-    (WORKLOADS / "mixed.toml").write_text(render(
-        "mixed",
-        "Mixed CPU/RAM/GPU workload drawn once with random seed 13 (simulation only): 24 jobs,\n"
-        "Poisson arrivals every 8 s on average, 50% small, 20% wide CPU, 15% RAM, 15% GPU.",
-        mixed(),
-    ))
+    (WORKLOADS / "cpu.toml").write_text(
+        render(
+            "cpu",
+            "CPU contention, big and small jobs (simulation only). A 24-core job only fits kindred and\n"
+            "blocks the queue while small 4-core jobs could run elsewhere.",
+            cpu(),
+        )
+    )
+    (WORKLOADS / "ram.toml").write_text(
+        render(
+            "ram",
+            "RAM contention (simulation only). Two 40 GiB jobs only fit kayle; small 4-12 GiB jobs\n"
+            "could use karma and kindred meanwhile.",
+            ram(),
+        )
+    )
+    (WORKLOADS / "mixed.toml").write_text(
+        render(
+            "mixed",
+            "Mixed CPU/RAM/GPU workload drawn once with random seed 13 (simulation only): 24 jobs,\n"
+            "Poisson arrivals every 8 s on average, 50% small, 20% wide CPU, 15% RAM, 15% GPU.",
+            mixed(),
+        )
+    )
 
 
 if __name__ == "__main__":

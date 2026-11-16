@@ -1728,3 +1728,23 @@ gemma4-31b 改用 `on_demand`（`startup_timeout_s`、`cold_wait_s` 600 秒）�
 - **第 7 幕 alice 的工作優先權是 6。**優先權相同時，(b) 中 bob 重跑的工作會因 alice 的近期占用較多排在前面，拿回 karma 的 4090，看不到工作換節點。
 - **第 3 幕的時間窗約 60 秒。**18 核工作的時限是驗證過的 300 秒；`demo.py` 在它送出 120 秒後接連送出三個工作，手動逐步送會錯過。
 - 三台都要先有 `python:3.12-slim` 映像，否則第一個工作要先下載，時間會對不上。
+
+## M13：排程策略的實驗與比較（kayle、karma、kindred，2026-11-16）
+
+方法、案例、結果、解釋、代價、已知限制與重跑步驟見 `docs/experiments.md`；原始資料、CSV 與圖在 `docs/evidence/m13/`，
+工具在 `scripts/experiments/`。實驗室執行 `8fcab7a`，實驗期間只切換 Scheduler 的設定（重啟 4 次），結束後還原。
+
+| Checklist | 驗證 |
+|---|---|
+| 13.1、13.3 | `experiments/workloads/*.toml` 記錄送出時間、使用者、資源、時限、優先權、可否搶占與實際執行時間；`replay.py` 依時間點以輪替的實驗帳號送出，`campaign.py` 以同一份輸入跑三種策略 |
+| 13.2 | 實機：GPU 爭用、CPU／RAM／GPU 混合爭用（大小工作混合）、使用者競爭、高優先權插入；只模擬：單一 CPU、單一 RAM、種子 13 的亂數混合負載 |
+| 13.4 | 等待（p50、p95）、turnaround、bounded slowdown、makespan；CPU／RAM／GPU 配置占用率與 cgroup／NVML 量測的實際利用率分開列出 |
+| 13.5 | 需求相同的三位使用者：Jain 0.686（fcfs）→ 0.899（priority）；叢集滿載時 `labflux run` 取得資源 1.4 秒（可搶占）／56 秒（不可搶占） |
+| 13.6 | 4 個案例 × 3 種策略 × 3 次，加上 `urgent` 工作不可搶占 3 次，共 39 輪；每組 3 次幾乎相同，模擬與實機的平均等待相差 1～3% |
+| 13.7 | 搶占（P9 等待 28 → 0.3 秒、每輪浪費 112 秒）；模型冷啟動 1.5 秒（假模型）、熱請求 0.03 秒、閒置 60 秒回收；karma Worker 停止 8.6 秒後 OFFLINE，存活的容器被接手、只執行一次，遺失的容器在 Worker 回來後重跑 |
+| 13.8 | `summary.csv`、`runs.csv`、`jobs.csv` 與 `figures/`；GPU 爭用的平均等待 145 → 91 秒、GPU 占用率 77% → 89%，混合爭用 117 → 29 秒；priority 在混合案例變差（117 → 129 秒）與 backfill 降低公平性都保留並說明 |
+
+- 取捨：13.2 的單一資源與亂數混合案例只以模擬執行（真實排程程式碼、假 Worker、假時鐘），以配合展示前的實驗室時間；
+  13.7 的搶占開關以「工作是否可搶占」比較，沒有另外重啟 Scheduler 設定 `preemption_enabled = false`。
+- 以 rebase 後的 main（含 M12 與 11.9）重跑模擬，四個實機案例的結果與實驗時的程式碼相同。
+

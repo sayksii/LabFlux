@@ -59,7 +59,9 @@ def main() -> int:
     needles = secrets()
     problems = []
     for target in TARGETS:
-        files = [target] if target.is_file() else sorted(p for p in target.rglob("*") if p.is_file())
+        files = (
+            [target] if target.is_file() else sorted(p for p in target.rglob("*") if p.is_file())
+        )
         for path in files:
             if path.suffix in (".png", ".pyc") or "__pycache__" in path.parts:
                 continue
@@ -73,7 +75,9 @@ def main() -> int:
                     problems.append(f"{rel}: GPU UUID {uuid[:12]}...")
             for needle in needles:
                 if needle in text:
-                    problems.append(f"{rel}: contains a lab secret or account name ({needle[:3]}...)")
+                    problems.append(
+                        f"{rel}: contains a lab secret or account name ({needle[:3]}...)"
+                    )
     for problem in problems:
         print(problem)
     print("clean" if not problems else f"{len(problems)} problems")

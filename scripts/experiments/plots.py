@@ -27,7 +27,14 @@ from common import EVIDENCE  # noqa: E402
 
 POLICIES = ("fcfs", "priority", "backfill")
 COLOR = {"fcfs": "#2a78d6", "priority": "#eb6834", "backfill": "#1baf7a"}
-INK, INK2, MUTED, GRID, AXIS, SURFACE = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7", "#fcfcfb"
+INK, INK2, MUTED, GRID, AXIS, SURFACE = (
+    "#0b0b0b",
+    "#52514e",
+    "#898781",
+    "#e1e0d9",
+    "#c3c2b7",
+    "#fcfcfb",
+)
 NEUTRAL = "#c3c2b7"
 CASE_TITLE = {
     "gpu": "GPU 爭用",
@@ -72,7 +79,9 @@ def collect(root: Path) -> dict:
         run = load_run(path)
         summary = summarize_run(run)
         summary["run"] = run
-        groups.setdefault((summary["case"], summary["policy"], summary["variant"]), []).append(summary)
+        groups.setdefault((summary["case"], summary["policy"], summary["variant"]), []).append(
+            summary
+        )
     return groups
 
 
@@ -193,7 +202,15 @@ def fig_fairness(groups: dict, out: Path) -> None:
         jain, _ = stat(items, "jain_wait")
         xs = [j + (i - 1) * width for j in range(len(users))]
         label = f"{policy}（Jain {jain:.2f}）" if jain else policy
-        ax.bar(xs, values, width=width, color=COLOR[policy], edgecolor=SURFACE, linewidth=1.5, label=label)
+        ax.bar(
+            xs,
+            values,
+            width=width,
+            color=COLOR[policy],
+            edgecolor=SURFACE,
+            linewidth=1.5,
+            label=label,
+        )
     ax.set_xticks(range(len(users)), ["alice（最早送出）", "bob（晚 10 秒）", "carol（晚 20 秒）"])
     ax.tick_params(axis="x", length=0)
     ax.set_ylabel("每位使用者平均等待（秒）")
@@ -264,7 +281,8 @@ def fig_gantt(run: dict, out: Path, title: str) -> None:
                     "start": attempt["created_at"] - t0,
                     "end": attempt["finished_at"] - t0,
                     "preempted": attempt["state"] == "PREEMPTED",
-                    "backfilled": by_wid[record["wid"]]["backfilled"] and attempt is record["job"]["attempts"][-1],
+                    "backfilled": by_wid[record["wid"]]["backfilled"]
+                    and attempt is record["job"]["attempts"][-1],
                     "label": f"{record['wid']} {record['user']}",
                     "priority": by_wid[record["wid"]]["priority"],
                 }
@@ -345,7 +363,9 @@ def fig_summary(groups: dict, out: Path, footnote: str = "") -> None:
         fontweight="bold",
         color=INK,
     )
-    grid = fig.add_gridspec(2, 3, left=0.06, right=0.98, top=0.86, bottom=0.15, hspace=0.55, wspace=0.3)
+    grid = fig.add_gridspec(
+        2, 3, left=0.06, right=0.98, top=0.86, bottom=0.15, hspace=0.55, wspace=0.3
+    )
     panels = [
         (grid[0, 0], "gpu", "mean_wait_s", "GPU 爭用：平均等待", " s", 1),
         (grid[0, 1], "gpu", "alloc_gpu", "GPU 爭用：GPU 配置占用率", "%", 100),
@@ -386,7 +406,9 @@ def dispatch_mean(groups: dict, case: str, policy: str, job: str):
 def summary_footnote(groups: dict) -> str:
     """Costs and non-improvements for the slide, computed from the runs."""
     parts = []
-    wait = {p: stat(groups.get(("contention", p, "default"), []), "mean_wait_s")[0] for p in POLICIES}
+    wait = {
+        p: stat(groups.get(("contention", p, "default"), []), "mean_wait_s")[0] for p in POLICIES
+    }
     if wait["priority"] and wait["fcfs"]:
         parts.append(
             f"priority 沒有縮短等待（混合爭用 {wait['priority']:.0f} s 對 FCFS {wait['fcfs']:.0f} s）："
@@ -395,7 +417,9 @@ def summary_footnote(groups: dict) -> str:
     late = dispatch_mean(groups, "gpu", "backfill", "g03")
     base = dispatch_mean(groups, "gpu", "fcfs", "g03")
     if late is not None and base is not None:
-        parts.append(f"backfill 的代價：要 2 張卡的工作比 FCFS 晚 {late - base:.0f} s 開始（未超過保留時刻）")
+        parts.append(
+            f"backfill 的代價：要 2 張卡的工作比 FCFS 晚 {late - base:.0f} s 開始（未超過保留時刻）"
+        )
     if not parts:
         return ""
     parts[-1] += "。工作數：GPU 12、混合 16、使用者 30（3 人 × 10）"
@@ -407,9 +431,16 @@ def main() -> None:
     figures = EVIDENCE / "figures"
     figures.mkdir(parents=True, exist_ok=True)
     groups = collect(root)
-    lab_cases = [c for c in ("gpu", "contention", "users", "urgent") if any(k[0] == c for k in groups)]
+    lab_cases = [
+        c for c in ("gpu", "contention", "users", "urgent") if any(k[0] == c for k in groups)
+    ]
     if lab_cases:
-        fig_wait(groups, lab_cases, figures / "mean_wait.png", "平均等待時間（實機，誤差線為 3 次的標準差）")
+        fig_wait(
+            groups,
+            lab_cases,
+            figures / "mean_wait.png",
+            "平均等待時間（實機，誤差線為 3 次的標準差）",
+        )
         loaded = [c for c in ("gpu", "contention") if c in lab_cases]
         if loaded:
             fig_utilization(groups, loaded, figures / "utilization.png")
@@ -425,9 +456,18 @@ def main() -> None:
                     fig_gantt(items[0]["run"], figures / f"gantt_{case}_{policy}.png", title)
         fig_summary(groups, figures / "summary_16x9.png", summary_footnote(groups))
     sim = collect(EVIDENCE / "sim")
-    sim_cases = [c for c in ("gpu", "contention", "users", "urgent", "cpu", "ram", "mixed") if any(k[0] == c for k in sim)]
+    sim_cases = [
+        c
+        for c in ("gpu", "contention", "users", "urgent", "cpu", "ram", "mixed")
+        if any(k[0] == c for k in sim)
+    ]
     if sim_cases:
-        fig_wait(sim, sim_cases, figures / "sim_mean_wait.png", "模擬（真實排程程式碼、假 Worker 與假時鐘）：平均等待時間")
+        fig_wait(
+            sim,
+            sim_cases,
+            figures / "sim_mean_wait.png",
+            "模擬（真實排程程式碼、假 Worker 與假時鐘）：平均等待時間",
+        )
     print("figures ->", figures)
 
 

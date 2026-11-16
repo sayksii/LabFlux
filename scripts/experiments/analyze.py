@@ -166,6 +166,14 @@ def variant(meta: dict) -> str:
     return "default"
 
 
+def display_path(path) -> str:
+    """Repository-relative when inside the checkout, otherwise only the last parts, so that no
+    absolute path (which names the account) reaches a CSV."""
+    path = Path(path).resolve()
+    root = Path(__file__).resolve().parents[2]
+    return str(path.relative_to(root)) if path.is_relative_to(root) else "/".join(path.parts[-3:])
+
+
 def attempt_intervals(run: dict):
     for record in run["records"]:
         for attempt in record["job"]["attempts"]:
@@ -214,7 +222,7 @@ def summarize_run(path: Path) -> dict:
         ]
         gpu_util = statistics.fmean(samples) / 100 if samples else None
     return {
-        "path": str(Path(run["path"]).resolve().relative_to(Path(__file__).resolve().parents[2])),
+        "path": display_path(run["path"]),
         "case": meta["case"],
         "policy": meta["policy"],
         "variant": variant(meta),

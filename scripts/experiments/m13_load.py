@@ -61,8 +61,7 @@ def main():
         # is synchronized, so a two-card job keeps both busy.
         devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
         pairs = [
-            (torch.randn(4096, 4096, device=d), torch.randn(4096, 4096, device=d))
-            for d in devices
+            (torch.randn(4096, 4096, device=d), torch.randn(4096, 4096, device=d)) for d in devices
         ]
         iterations = 0
         while time.monotonic() < deadline:

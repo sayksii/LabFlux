@@ -1,6 +1,6 @@
 """Print the Markdown tables of docs/experiments.md from the raw runs (no hand-copied numbers).
 
-    uv run python scripts/experiments/report_tables.py [--sim]
+uv run python scripts/experiments/report_tables.py [--sim]
 """
 
 from __future__ import annotations
@@ -26,7 +26,9 @@ def collect(root: Path) -> dict:
         run = load_run(path)
         summary = summarize_run(run)
         summary["rows"] = job_rows(run)
-        groups.setdefault((summary["case"], summary["policy"], summary["variant"]), []).append(summary)
+        groups.setdefault((summary["case"], summary["policy"], summary["variant"]), []).append(
+            summary
+        )
     return groups
 
 
@@ -49,7 +51,9 @@ def job_stat(items, job, key):
 
 
 def main_table(groups, cases):
-    print("| 案例 | 策略 | 次數 | 平均等待 s | p50 | p95 | makespan s | CPU 配置 | RAM 配置 | GPU 配置 | CPU 實際 | GPU 實際 | Jain |")
+    print(
+        "| 案例 | 策略 | 次數 | 平均等待 s | p50 | p95 | makespan s | CPU 配置 | RAM 配置 | GPU 配置 | CPU 實際 | GPU 實際 | Jain |"
+    )
     print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for case in cases:
         for policy in POLICIES:
@@ -108,7 +112,9 @@ def urgent_table(groups):
 
 
 def backfill_cost(groups):
-    print("| 案例 | 被保留的大工作 | fcfs 開始 s | priority 開始 s | backfill 開始 s | backfill 先跑的工作數 | 晚於保留時刻開始 |")
+    print(
+        "| 案例 | 被保留的大工作 | fcfs 開始 s | priority 開始 s | backfill 開始 s | backfill 先跑的工作數 | 晚於保留時刻開始 |"
+    )
     print("|---|---|---|---|---|---|---|")
     for case, job, label in (
         ("gpu", "g03", "g03（2 張卡）"),
@@ -116,7 +122,9 @@ def backfill_cost(groups):
         ("contention", "k09", "k09（40 GiB）"),
         ("contention", "k07", "k07（24 核）"),
     ):
-        cells = [job_stat(groups.get((case, p, "default"), []), job, "dispatch_s") for p in POLICIES]
+        cells = [
+            job_stat(groups.get((case, p, "default"), []), job, "dispatch_s") for p in POLICIES
+        ]
         items = groups.get((case, "backfill", "default"), [])
         print(
             f"| {case} | {label} | {cells[0]} | {cells[1]} | {cells[2]} | {ms(items, 'backfilled')} "
@@ -151,14 +159,25 @@ def probes_tables() -> None:
 
     root = EVIDENCE / "raw" / "probes"
     print("\n### interactive\n")
-    print("| 叢集滿載的 8 核工作 | 次數 | `labflux run` 第一行輸出（冷，s） | 同一 session 第二個指令（熱，s） | 被搶占的工作浪費的秒數 |")
+    print(
+        "| 叢集滿載的 8 核工作 | 次數 | `labflux run` 第一行輸出（冷，s） | 同一 session 第二個指令（熱，s） | 被搶占的工作浪費的秒數 |"
+    )
     print("|---|---|---|---|---|")
     for variant, label in (("preemptible", "可搶占"), ("not-preemptible", "不可搶占")):
-        items = [json.loads(p.read_text()) for p in sorted((root / "interactive").glob(f"{variant}-rep*.json"))]
+        items = [
+            json.loads(p.read_text())
+            for p in sorted((root / "interactive").glob(f"{variant}-rep*.json"))
+        ]
         if not items:
             continue
-        cold = [next(c for c in i["commands"] if c["command"] == "cold")["first_output_s"] for i in items]
-        warm = [next(c for c in i["commands"] if c["command"] == "warm")["first_output_s"] for i in items]
+        cold = [
+            next(c for c in i["commands"] if c["command"] == "cold")["first_output_s"]
+            for i in items
+        ]
+        warm = [
+            next(c for c in i["commands"] if c["command"] == "warm")["first_output_s"]
+            for i in items
+        ]
         lost = [
             (a["finished_at"] or 0) - (a["started_at"] or 0)
             for i in items
@@ -171,10 +190,14 @@ def probes_tables() -> None:
             f"| {statistics.fmean(warm):.2f} | {statistics.fmean(lost) if lost else 0:.0f}（{len(lost)} 次） |"
         )
     print("\n### model\n")
-    print("| 情況 | 次數 | 冷啟動請求（s） | 熱請求平均／最大（s） | 等 4090 的工作等待（s） | 模型閒置到回收（s） |")
+    print(
+        "| 情況 | 次數 | 冷啟動請求（s） | 熱請求平均／最大（s） | 等 4090 的工作等待（s） | 模型閒置到回收（s） |"
+    )
     print("|---|---|---|---|---|---|")
     for variant, label in (("free", "4090 空著"), ("contended", "4090 被可搶占工作占用")):
-        items = [json.loads(p.read_text()) for p in sorted((root / "model").glob(f"{variant}-rep*.json"))]
+        items = [
+            json.loads(p.read_text()) for p in sorted((root / "model").glob(f"{variant}-rep*.json"))
+        ]
         if not items:
             continue
         cold = [i["cold"]["seconds"] for i in items]
@@ -190,7 +213,9 @@ def probes_tables() -> None:
         data = json.loads(failure.read_text())
         events = {e["event"]: e["t"] for e in data["events"]}
         print("\n### failure\n")
-        print(f"- Worker 停止到 OFFLINE：{events['karma offline'] - events['worker stopped']:.1f} s")
+        print(
+            f"- Worker 停止到 OFFLINE：{events['karma offline'] - events['worker stopped']:.1f} s"
+        )
         print(f"- Worker 啟動到 ONLINE：{events['karma online'] - events['worker started']:.1f} s")
         for name, job in data["jobs"].items():
             parts = [
