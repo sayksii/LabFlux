@@ -1,0 +1,32 @@
+# Scene 6 (b): with a job waiting for its cards, an idle on-demand model is released after one
+# minute (reclaim_idle_s). Verified in tests/test_storyboard_model.py and replayed from this file
+# by tests/test_demo_scenes.py. docs/demo.md also uses this scene to stop gemma before the demo.
+title = "閒置釋放：有工作在等 A40 時，閒置 1 分鐘就回收"
+run_order = 9
+axis = "GPU 卡"
+
+[requires]
+model = ["serving"]
+no_jobs = true
+
+[[steps]]
+pause = "在 bob 的終端機按 Ctrl-C 停掉 keepalive，然後回來按 Enter。"
+
+[[steps]]
+model_idle = 65
+say = """
+模型服務表「閒置 5 秒 · 59 分 … 後釋放」。
+說明：沒有人等它的卡時會留一小時；有工作在等時，閒置 1 分鐘就提前回收。閒置滿 65 秒才送工作。"""
+
+[[steps]]
+user = "alice"
+submit = "a40.json"
+label = "a40"
+say = "一秒內：排隊表第 1 列「等 gemma4-31b 停止，釋放資源後開始」；模型 stopping，原因「閒置 1 分 … 秒,有工作在等資源,提前回收」（決策欄同一句）。"
+
+[[steps]]
+wait_model = ["stopped"]
+timeout = 180
+say = """
+vLLM 結束後：alice 的區塊落在 kindred 第一張 A40；決策欄「alice 的 … 在 kindred 開始」。
+模型服務表「stopped · 下一個請求時啟動」。"""

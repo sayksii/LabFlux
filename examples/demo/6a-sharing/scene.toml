@@ -1,0 +1,14 @@
+# Scene 6 (a): alice and bob share the one gemma4-31b service. Verified in
+# tests/test_storyboard_model.py; bob's keep-alive loop keeps running.
+title = "模型服務：alice 與 bob 共用 gemma"
+run_order = 8
+axis = "GPU 卡"
+
+[requires]
+model = ["serving"]
+
+[[steps]]
+chat = ["alice", "bob"]
+say = """
+模型服務表「處理中 2 個請求」（keepalive 剛好也送出時是 3），已服務 +2，最後活動時間更新。
+kindred 上只有一個 MODEL 區塊：同一個服務，兩個使用者都看得到。"""

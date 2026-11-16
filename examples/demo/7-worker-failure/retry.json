@@ -1,0 +1,1 @@
+{"image": "python:3.12-slim", "argv": ["sleep", "3590"], "resources": {"cpu": 4, "memory_mib": 4096, "gpu": 1, "min_vram_mib": 20480}, "time_limit_s": 3600, "safe_to_rerun": true, "retries_on_node_failure": 1}
