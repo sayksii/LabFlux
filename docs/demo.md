@@ -184,7 +184,7 @@ Job1 回到 queue，Job2 與 Urgent 各占一張 A40。第二次 Enter 清場成
 | 第 9 頁講完 | Preemption | A：`bash demo/4_preemption.sh` | Job1 先跑，每 2 秒存 checkpoint；5 秒後 Job2 進入、不存 checkpoint，兩張 A40 都被占住 |
 | | | 第一次 Enter；講完後第二次 Enter | Urgent 搶占 checkpoint 較近的 Job1，Job2 繼續跑，Job1 回到 queue；最後清場 |
 | 10:00 | Shared Models | A：`$D scene 6c`；PAUSE 時到 B 按 Enter（keepalive 會一直等，這是正常的），回 A 按 Enter | 排隊表 MODEL「隊首。搶占 kindred 的 …,等它們停止後開始。」；alice 的 A40 區塊「被 gemma4-31b 搶占」；約 10 秒後 MODEL 區塊占兩張 A40，模型服務表開始計時。這一幕跑完自己結束 |
-| 11:15 | Fast Lane | A：`$D reset`；`$D scene 5`；PAUSE 時到 C 執行 `labflux shell`，再執行 `python hello.py` 兩次；回 A 按 Enter | CPU 軸全滿；session 排第 1「互動工作優先」；kayle 上的 SESSION 區塊（閒置倒數）；alice 的 4 核工作「被搶占 1 / 3 次」；第二次的容器 ID 和第一次相同 |
+| 11:15 | Fast Lane | A：`demo/5_fastlane.sh`（以主講自己的帳號進入 `labflux shell`），打 `time python hello.py` 兩次，再 `exit`（腳本接著收掉 session） | karma 的 4090 出現 SESSION 區塊；第一次約 0.8 秒印出 `assigned to karma` 與 `GPU: NVIDIA GeForce RTX 4090`，第二次約 0.3 秒、容器 ID 相同；`exit` 後 SESSION 區塊消失 |
 | 約 12:35 | | C：`exit`；A：`$D reset` | |
 | 12:45 | When a Machine Fails | A：`$D scene 7`；PAUSE 時到 C：`$SSH $KARMA systemctl --user stop labflux-worker.service` | 約 10 秒後 karma 欄紅色斜線「失聯」；bob 的區塊「UNKNOWN · 資源保留中」；alice 的工作「沒有在線的節點放得下」。**指著講完這一句再啟動**：啟動後約 1 秒就回到 ONLINE |
 | | | C：`$SSH $KARMA systemctl --user start labflux-worker.service`；A：按 Ctrl-C（不做 (b)）；`$D reset` | RECONCILING → ONLINE，bob 的工作回到 RUNNING |
@@ -212,7 +212,7 @@ gemma 從 B 送出第一個請求到開始服務約 4–5 分鐘（預演 4 分 
   `$D reset` 會等到逾時並列出「still UNKNOWN」。
 - **投影機解析度太低、畫面被截斷**：關掉投影模式，或把瀏覽器縮小（Ctrl −）。
   也可以改用 CLI：`labflux --config <alice 的設定> queue`、`labflux --config <alice 的設定> status --all`。
-- **第 5 幕的 session 沒有啟動**：檢查 C 的環境變數（bob 的 token、Scheduler 位址），再看 `labflux session status`。
+- **Fast lane 的 session 沒有啟動**：確認在 `demo/5_fastlane/` 裡（`python` 只在有 `.labflux.toml` 的專案裡才送到叢集）、`labflux whoami` 是自己，再看 `labflux session status`。結束時一定要收掉 session，否則它占著 4090，第 7 幕 bob 的工作落不到 karma。
 
 ## 7. 不在現場流程裡的幕
 
@@ -225,7 +225,7 @@ gemma 從 B 送出第一個請求到開始服務約 4–5 分鐘（預演 4 分 
 
 ## 8. 彩排注意事項
 
-- **第 2 幕需要 bob 的近期用量接近 0**（視窗是 60 分鐘）。其他幕的彩排會累積 bob 的近期用量，例如第 5 幕的訓練工作。
+- **第 2 幕需要 bob 的近期用量接近 0**（視窗是 60 分鐘）。其他幕的彩排會累積 bob 的近期用量。
   所以彩排要在正式展示前 60 分鐘以上做完，或者正式展示前只彩排不含 bob 的部分。`$D check` 會顯示 bob 的用量。
 - **第 2 幕的時間**：alice 的 P5 剛好在她的五個工作開始後 2 分鐘送出，她的分數一直是 500 − 2，
   Dashboard 四捨五入後的拆解（500 + 0 − 2）才會加得起來。間隔不是整數分鐘時會出現「499 = 500 + 0 − 2」這種畫面，改時間時要注意。
@@ -235,7 +235,7 @@ gemma 從 B 送出第一個請求到開始服務約 4–5 分鐘（預演 4 分 
   腳本確認小 Job 已 RUNNING，才停下來讓講者解說。
   兩個新 Job 都指定 A40，GPU 軸只需看 kindred。小 Job 的硬性時限 2 分鐘，早於大 Job 約 10 分鐘的保留時段。
   現場可說「原始工作完成後，空出一張卡；大工作仍需要兩張，所以小工作利用空檔先跑。」最後第二次 Enter 清場。
-- **GPU 卡是預設的軸**：只用 CPU 的工作不會畫在上面，例如第 1 幕的 CPU／RAM 工作、第 5 幕。
+- **GPU 卡是預設的軸**：只用 CPU 的工作不會畫在上面，例如第 1 幕的 CPU／RAM 工作。
   要看就切到「CPU 核心」或「RAM」；重新整理頁面會回到 GPU 卡。
 - 第 2–4 幕進行中不要對 gemma 送任何請求，連測試用的 curl 也不行。
 - 從 6c 到展示結束，B 的 keepalive 要一直開著。有工作在等、又 60 秒沒有請求時，gemma 會被回收，下一個請求又要冷啟動 5 分鐘。

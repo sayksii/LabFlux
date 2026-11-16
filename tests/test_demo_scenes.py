@@ -206,7 +206,7 @@ def request(lab):
 def test_every_scene_and_job_file_loads():
     scenes = demo.all_scenes()
     ids = [scene["id"] for scene in scenes]
-    assert sorted(ids) == sorted(["1", "2", "3", "4", "5", "6a", "6b", "6c", "7"])
+    assert sorted(ids) == sorted(["1", "2", "3", "4", "6a", "6b", "6c", "7"])
     assert [scene["run_order"] for scene in scenes] == list(range(1, len(scenes) + 1))
     for scene in scenes:
         used = set()
@@ -239,7 +239,6 @@ def test_the_run_order_keeps_gemma_away_from_the_gpu_scenes():
         ("3", ["stopped"]),
         ("4", ["stopped"]),
         ("6c", ["stopped"]),
-        ("5", ["starting", "serving"]),
         ("7", ["starting", "serving"]),
         ("6a", ["serving"]),
         ("1", ["starting", "serving"]),
@@ -508,9 +507,9 @@ def test_scene_4_workload_saves_progress_on_the_scheduler_clock(tmp_path, monkey
 
 
 def test_the_model_scenes_in_run_order(model_lab, drive, monkeypatch):
-    """6c (cold start preempting alice's A40 jobs), then 5 and 7 while gemma holds kindred's
-    A40s, then 6a (sharing), the spare scene 1 and 6b (idle release), with demo.py reset between
-    the scenes."""
+    """6c (cold start preempting alice's A40 jobs), then 7 while gemma holds kindred's A40s,
+    then 6a (sharing), the spare scene 1 and 6b (idle release), with demo.py reset between the
+    scenes."""
     lab, runner = model_lab, drive(model_lab)
 
     def scene_6c(step, labels):
@@ -544,36 +543,7 @@ def test_the_model_scenes_in_run_order(model_lab, drive, monkeypatch):
     play(runner, "6c", scene_6c, checks=("sweep", "pause", "cancel"))
     request(lab)  # The first request is served once the model is healthy.
 
-    def scene_5(step, labels):
-        if step["action"] == "pause":  # bob's `labflux shell` leases a session.
-            response = lab.client.post(
-                "/api/sessions",
-                headers=user_headers("bob"),
-                json={"resources": {"cpu": 1, "memory_mib": 512}},  # fast-lane-demo's
-            )
-            assert response.status_code == 200, response.text
-            session = {"id": response.json()["id"], "owner": "bob"}
-            lab.service.tick()  # Before the Worker confirms the stop.
-            queue = lab.queue()
-            [waiting] = jobs(labels, "waiting")
-            assert order(queue) == [session["id"], waiting["id"]]
-            want = {"kind": "SESSION", "decision": "waiting_for_release"}
-            assert pick(entry(queue, session), want) == want
-            assert entry(queue, session)["waiting_for"] == [jobs(labels, "sweep")[0]["id"]]
-            lab.settle()
-            assert_running(lab, session, "delta")
-            assert lab.job(jobs(labels, "sweep")[0])["reason"].endswith("(preemption 1 of 3)")
-            return
-        lab.settle()
-        if step.get("label") == "waiting":
-            trains = (("train24", "gamma"), ("train16", "beta"), ("train12", "delta"))
-            for label, node in (*trains, ("sweep", "delta")):
-                assert_running(lab, jobs(labels, label)[0], node)
-
     assert demo.reset(runner) == 0
-    play(runner, "5", scene_5, checks=("waiting", "pause"))
-    assert demo.reset(runner) == 0  # Also ends bob's session.
-    request(lab)
     pauses = []
 
     def scene_7(step, labels):
@@ -697,7 +667,7 @@ def test_dry_run_prints_the_steps_without_contacting_the_scheduler(monkeypatch, 
     assert "小 Job 自動利用空出的卡先跑" in out
     assert demo.main(["scene"]) == 0
     listed = capsys.readouterr().out.splitlines()
-    assert [line.split()[2] for line in listed] == ["2", "3", "4", "6c", "5", "7", "6a", "1", "6b"]
+    assert [line.split()[2] for line in listed] == ["2", "3", "4", "6c", "7", "6a", "1", "6b"]
 
 
 def test_reset_cancels_only_alice_and_bob_and_waits_for_confirmed_stops(

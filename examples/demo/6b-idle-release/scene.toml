@@ -3,7 +3,7 @@
 # by tests/test_demo_scenes.py. Not in the live run: docs/demo.md uses it to stop gemma before
 # the demo.
 title = "閒置釋放：有工作在等 A40 時，閒置 1 分鐘就回收"
-run_order = 9
+run_order = 8
 axis = "GPU 卡"
 
 [requires]

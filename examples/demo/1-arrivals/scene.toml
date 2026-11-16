@@ -2,7 +2,7 @@
 # 8 CPU and 48 GiB (loading or serving). Verified in tests/test_storyboard.py and replayed from
 # this file by tests/test_demo_scenes.py. Not in the live run (docs/demo.md): a spare after 6a.
 title = "工作抵達與異質配置"
-run_order = 8
+run_order = 7
 axis = "GPU 卡 → CPU 核心 → RAM"
 
 [requires]
