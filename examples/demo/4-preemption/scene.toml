@@ -13,10 +13,10 @@ no_jobs = true
 user = "alice"
 submit = "low.json"
 count = 5
-every = 10
+every = 3
 label = "low"
 say = """
-alice 每 10 秒送一個優先權 2、可搶占（safe_to_rerun + preemptible）的單卡工作，占滿五張卡。
+alice 每 3 秒送一個優先權 2、可搶占（safe_to_rerun + preemptible）的單卡工作，占滿五張卡。
 最後一個在 kindred 的第二張 A40，跑得最短。"""
 
 [[steps]]
@@ -26,5 +26,5 @@ label = "urgent"
 say = """
 bob 的優先權 8 工作要一張 VRAM ≥ 20 GiB 的卡，現在沒有空卡 → 停止損失最少（最晚開始）的 alice 工作。
 kindred 第二張 A40 的區塊變虛線「被 bob 的工作搶占 · 停止中」；bob 的決定「隊首。搶占 kindred 的 …,等它停止後開始。」「選它是因為損失最少」；決策欄「搶占」。
-容器確認停止後 bob 的區塊落下；alice 的工作回到佇列「被搶占 1 / 3 次」，成為隊首並取得保留時段。
+實驗室上搶占不到 2 秒就完成，所以指決策欄。容器確認停止後 bob 的區塊落下；alice 的工作回到佇列「被搶占 1 / 3 次」，成為隊首並取得保留時段。
 點開 alice 的工作：執行紀錄有一列 PREEMPTED 和原因。"""

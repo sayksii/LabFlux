@@ -1,6 +1,7 @@
 # Scene 6 (b): with a job waiting for its cards, an idle on-demand model is released after one
 # minute (reclaim_idle_s). Verified in tests/test_storyboard_model.py and replayed from this file
-# by tests/test_demo_scenes.py. docs/demo.md also uses this scene to stop gemma before the demo.
+# by tests/test_demo_scenes.py. Not in the live run: docs/demo.md uses it to stop gemma before
+# the demo.
 title = "閒置釋放：有工作在等 A40 時，閒置 1 分鐘就回收"
 run_order = 9
 axis = "GPU 卡"

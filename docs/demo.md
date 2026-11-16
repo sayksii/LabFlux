@@ -2,7 +2,7 @@
 
 這份文件是實驗室現場展示的操作手冊。展示以 GPU 為主，在 kayle、karma、kindred 三台機器上，
 策略是 backfill（優先權、公平性加上 EASY backfill），由兩個展示用的使用者 alice 與 bob 送出工作。
-gemma4-31b 改成 `on_demand`，讓觀眾看到冷啟動。第 8 幕放 M13 的比較圖。
+gemma4-31b 改成 `on_demand`，讓觀眾看到冷啟動。M13 的比較結果放在簡報的 Results 那張。
 「優先權改變」以「高優先權工作抵達」呈現，因為目前沒有修改排隊中工作優先權的指令（決策 7）。
 
 - 各幕的工作與步驟在 `examples/demo/<幕>/`：每個 `scene.toml` 依序列出誰送出哪個工作檔、要等多久，以及每一步觀眾該看到什麼。
@@ -11,23 +11,26 @@ gemma4-31b 改成 `on_demand`，讓觀眾看到冷啟動。第 8 幕放 M13 的�
 - `tests/test_demo_scenes.py` 讓 `demo.py` 在測試環境裡，依同一批檔案和分鏡測試（`tests/test_storyboard*.py`）的假節點，把每一幕跑一遍。
   它會檢查每一幕要展示的決定：head_reserved、would_delay_reservation、backfilled、公平性排序、模型搶占、閒置回收。
   排程程式或展示檔案一改，展示會不會走樣，跑這個測試就知道。
-- 完整版約 28 分鐘；略過第 4 幕與第 7 幕 (b) 約 24 分鐘。精簡版約 10 分鐘（第 7 節）。
+- 現場流程搭配簡報，約 16 分半（第 5 節）：先送一個真的 GPU 工作，再做第 2、3、4、6c、5、7 (a)、6a 幕。
+  第 1 幕、第 6b 幕和第 7 幕 (b) 不在現場流程裡，是備用（第 7 節）。`$D scene` 列出的順序就是現場順序，備用的排在最後。
 
 ## 1. 前置條件
 
-- 實驗室跑的是含 M12 的版本，三台的 Worker 都是 `ONLINE`。每台的共用 CLI 也已更新（第 5 幕的 `labflux shell` 會用到）。
+- 三台的 Worker 都是 `ONLINE`，部署的版本和主講終端機的 repo 是**同一個 commit**。
+  不同版本的 CLI 不一定相容：例如較新的 `labflux submit` 會多送欄位，較舊的 Scheduler 會回 422。
 - 三台節點的容量和預演時相同：kayle 16 核／48 GiB／RTX 3090＋RTX A5000，karma 16 核／24 GiB／RTX 4090，
   kindred 32 核／64 GiB／兩張 A40（卡 3、4）。`demo.py check` 會比對；容量不同時各幕的落點會改變，要重新預演。
 - 三台都已經有 `python:3.12-slim` 映像，沒有的話以部署帳號先執行 `docker pull python:3.12-slim`。否則第一個工作要先下載映像，時間會對不上。
-- 主講的終端機在一台 LabFlux 節點上（例如 kayle），位置是 repo 根目錄，已經執行過 `uv sync`。8770 只接受 LabFlux 節點的連線。
+- 主講的終端機在一台 LabFlux 節點上（例如 kayle），位置是 repo 根目錄，已經執行過 `uv sync`，
+  主講自己的帳號已經 `labflux login`（開場送的 GPU 工作用主講自己的身分，不影響 alice、bob 的用量）。8770 只接受 LabFlux 節點的連線。
 - 筆電看 Dashboard：先 `ssh -L 8770:<kayle 的位址>:8770 kayle`，再打開 http://localhost:8770/dashboard ，
-  用 **alice** 的 token 登入（自己的工作才能點開完整細節）。範圍選「所有人」，開「投影模式」。
-  投影機用 1920×1080 最好。1280×720 時保留時段的時間與模型名稱仍完整，但 UNKNOWN 區塊的「節點失聯,資源保留」與較長的資源行會被截斷（滑鼠移上去看完整文字）。
+  用 **alice** 的 token 登入（自己的工作才能點開完整細節）。範圍選「所有人」，開「投影模式」，停在「排隊順序」分頁
+  （「全部」分頁會列出 24 小時內所有的工作，包括實驗留下的）。
+  投影機用 1920×1080 最好。1280×720 時保留時段的時間與模型名稱仍完整，較長的資源行會被截斷（滑鼠移上去看完整文字）。
 - 實驗室機器與筆電的時鐘要同步：保留時段的倒數是用瀏覽器的時鐘算的。
 - 先告訴實驗室的人：展示期間 gemma4-31b 會停下再冷啟動，請不要送請求。第 2–4 幕進行中只要有任何人呼叫 gemma，
   它就會在 kindred 冷啟動、占走兩張 A40，那幾幕就不是預演的樣子了。
-- 第 7 幕要停止 karma 的 Worker：準備好 `docs/lab-deploy.md`「日誌」一節的 `$SSH`（部署金鑰與 known_hosts）。
-- 第 8 幕的 M13 比較圖放在投影片裡。
+- 第 7 幕要停止 karma 的 Worker：用 `docs/lab-deploy.md`「日誌」一節的 `$SSH`（部署金鑰與 known_hosts），終端機 C 裡要用 known_hosts 的絕對路徑（第 3 節）。
 
 ## 2. 展示用的 Scheduler 設定
 
@@ -58,10 +61,13 @@ alice、bob 的 token 會產生在 `.labflux/lab/scheduler.toml` 的 `[users]`�
 所以部署後（約 T−15 分鐘）這樣做（`$D` 見第 3 節）：
 
 1. `$D keepalive --once`：送一個請求，期限改成「現在＋`idle_stop_s`」。
-2. `$D scene 6b`：在暫停處直接按 Enter。腳本等 gemma 閒置滿 65 秒後，以 alice 送出一個要 A40 的工作，gemma 隨即被回收（stopping → stopped）。這一步同時是第 6b 幕的彩排。
+2. `$D scene 6b`：在暫停處直接按 Enter。腳本等 gemma 閒置滿 65 秒後，以 alice 送出一個要 A40 的工作，gemma 隨即被回收（stopping → stopped）。
 3. `$D reset`，再執行 `$D check`，確認看到 `gemma4-31b: on_demand, stopped`。
 
 （另一種做法：把 `startup_timeout_s` 改成和目前不同的值，例如 660。這算設定改變，部署時執行中的 gemma 會立刻停止，之後等下一個請求才冷啟動。）
+
+已經是 `on_demand` 的 gemma 被別人的請求叫醒時，閒置滿 `idle_stop_s`（1 小時）會自己停；等不及就照上面第 2、3 步做。
+`check` 那一行的 `in flight` 不是 0、或 `last request` 才幾秒前，表示有人正在用，先請他停下，不要硬停。
 
 **展示後**把 `mode` 改回 `"persistent"`（時間設定可留著，常駐模式不看 `idle_stop_s`、`reclaim_idle_s`），再部署一次。
 gemma 停著的話，會自己啟動（約 5 分鐘）。要收回 alice、bob 的 token，就把他們從 `users` 移除並重新部署；`policy` 是否改回由你決定。
@@ -70,76 +76,104 @@ gemma 停著的話，會自己啟動（約 5 分鐘）。要收回 alice、bob �
 
 `demo.py` 從 `--config` 指定的 TOML 讀 `scheduler_url` 與 `[users]` 裡 alice、bob 的 token。部署產生的 `.labflux/lab/scheduler.toml` 兩者都有，可以直接用。
 也可以改用環境變數 `LABFLUX_SCHEDULER_URL`、`LABFLUX_ALICE_TOKEN`、`LABFLUX_BOB_TOKEN`，環境變數優先。
-token 不要寫進 repo 或貼到投影片上。
+token 不要寫進 repo 或貼到投影片上。三個終端機都從 repo 根目錄開始。
 
 | 終端機 | 用途 | 準備 |
 |---|---|---|
-| A 主講 | 各幕、清場、檢查 | repo 根目錄：`D="uv run python scripts/demo.py --config .labflux/lab/scheduler.toml"` |
-| B bob 的 keepalive | 第 6c 幕開始，第 6b 幕停止 | repo 根目錄，同樣設好 `D`，先打好 `$D keepalive`，不要按 Enter |
-| C bob 的快速測試 | 第 5 幕 | 在 repo 根目錄：`cp -r examples/fast-lane-demo /tmp/lf-demo; export PATH="$PWD/.venv/bin:$PATH" LABFLUX_SCHEDULER_URL=<與 scheduler.toml 相同> LABFLUX_USER_TOKEN=<bob 的 token>; cd /tmp/lf-demo` |
+| A 主講 | 開場的 GPU 工作、各幕、清場、檢查 | `D="uv run python scripts/demo.py --config .labflux/lab/scheduler.toml"`。不要設 `LABFLUX_USER_TOKEN`：`.venv/bin/labflux whoami` 要印出主講自己的帳號 |
+| B bob 的 keepalive | 第 6c 幕開始，展示結束才停 | 同樣設好 `D`，先打好 `$D keepalive`，不要按 Enter |
+| C bob 的快速測試、karma 的 Worker | 第 5、7 幕 | 見下方 |
+
+終端機 C（`labflux whoami` 要印 `bob`，`$SSH $KARMA hostname` 要印 `karma`）：
+
+```bash
+P=.venv/bin/python
+export PATH="$PWD/.venv/bin:$PATH"
+export LABFLUX_SCHEDULER_URL=$($P -c 'import tomllib; print(tomllib.load(open(".labflux/lab/scheduler.toml", "rb"))["scheduler_url"])')
+export LABFLUX_USER_TOKEN=$($P -c 'import tomllib; print(tomllib.load(open(".labflux/lab/scheduler.toml", "rb"))["users"]["bob"])')
+SSH="ssh -i ~/.ssh/labflux_deploy -o IdentitiesOnly=yes -o UserKnownHostsFile=$PWD/.labflux/lab/known_hosts"
+KARMA=labflux@<karma 的位址>        # inventory 裡 karma 的 host
+rm -rf /tmp/lf-demo && cp -r examples/fast-lane-demo /tmp/lf-demo && cd /tmp/lf-demo
+labflux whoami
+$SSH $KARMA hostname
+```
+
+`LABFLUX_USER_TOKEN` 優先於 `labflux login` 存的 token，所以終端機 C 是 bob。`$SSH` 先展開成絕對路徑，`cd` 之後仍然可以用。
 
 指令一覽：
 
 - `$D check`：Scheduler 是否連得上、策略、節點是否 ONLINE、各節點空著的 GPU 卡、gemma 的模式與狀態、
   alice／bob 的 token、兩人近 60 分鐘的用量（bob 超過 0.5 分鐘會警告），以及兩人還沒結束的工作。
-- `$D scene`：依展示順序列出各幕。`$D scene 3 --dry-run` 只印出步驟，不送出任何東西。
+- `$D scene`：依現場順序列出各幕，備用的排在最後。`$D scene 3 --dry-run` 只印出步驟，不送出任何東西。
 - `$D scene 3`：開始前先檢查這一幕的條件，例如 gemma 的狀態、有沒有殘留的工作、bob 的用量。不符合就停下並說明原因（`--force` 可以強制執行）。
-  執行時依序送出工作並照設定等待，每一步都會印出觀眾該看到什麼（`>` 開頭的行）。遇到 PAUSE 時要手動操作，做完按 Enter。
+  執行時依序送出工作並照設定等待，每一步都會印出觀眾該看到什麼（`>` 開頭的行）。遇到 PAUSE 時要手動操作，做完按 Enter；按 Ctrl-C 就在那裡結束這一幕。
 - `$D reset`：取消 alice、bob 所有未結束的工作（包括 bob 的 session），一直等到每個停止都確認了才結束。
 - `$D keepalive`：bob 每 20 秒對 gemma4-31b 送一個短請求，印出 HTTP 狀態碼。逾時設為 900 秒，所以第一個請求可以一直等到冷啟動完成。
 
-## 4. T−10 分鐘檢查清單
+## 4. 開場前檢查清單
 
+T−20 分鐘，在終端機 A：
+
+```bash
+uv run python scripts/lab_deploy.py status        # 加上部署時用的 --inventory
+$D check
+nvidia-smi; $SSH labflux@<karma 的位址> nvidia-smi; $SSH labflux@<kindred 的位址> nvidia-smi -i 3,4
+$D scene 2 --dry-run | grep wait                  # wait 60 s、wait 60 s、wait 15 s
+```
+
+- [ ] `status`：每台 `labflux-worker.service: active`，kayle 另有 `labflux-scheduler.service` 與 `labflux-firewall.service` active，Scheduler `healthy`。
+      不是 active 的：`$SSH labflux@<那台> systemctl --user start labflux-worker.service`（kayle 的 Scheduler 是 `labflux-scheduler.service`），再看一次。
 - [ ] `$D check` 全部 OK：policy backfill；三台 ONLINE；空著的 GPU 卡 kayle 2/2、karma 1/1、kindred 2/2；
-      gemma4-31b `on_demand, stopped`；兩個 token 都正確；bob 的近期用量 0.0；沒有殘留工作。
+      gemma4-31b `on_demand, stopped`；兩個 token 都正確；bob 的近期用量 0.0；沒有殘留工作。最後一行 `check passed`。
+- [ ] `nvidia-smi`：五張卡都只用了幾十 MiB、0 %，沒有別人的程序。
+- [ ] gemma 不是 `stopped`：照第 2 節「讓 gemma 先停下來」處理。
 - [ ] bob 的用量大於 0，表示 60 分鐘內做過彩排：最好等它離開 60 分鐘的視窗。
       等不及的話，只要 alice 的用量不比 bob 少，第 2 幕的排序仍然成立，但分數會和稿子不同，要加 `--force`。
-- [ ] Dashboard：以 alice 登入、「所有人」、投影模式、GPU 卡軸；模型服務表顯示「自動釋放 · stopped · 下一個請求時啟動」。
-- [ ] 終端機 A、B、C 照第 3 節準備好；第 7 幕要用的 `$SSH` 指令也準備好。
+- [ ] Dashboard：以 alice 登入、「所有人」、投影模式、GPU 卡軸、「排隊順序」分頁；模型服務表顯示「自動釋放 · stopped · 下一個請求時啟動」。
+- [ ] 終端機 A、B、C 照第 3 節準備好，`whoami` 和 `hostname` 都對。
 - [ ] 實驗室的人知道這段時間不要呼叫 gemma。
 - [ ] （選用）在這個版本上跑過 `uv run pytest tests/test_demo_scenes.py -q`，結果通過。
 
-## 5. 逐分鐘流程
+## 5. 現場流程（搭配簡報）
 
-時間從開始講算起。每一幕結束後都在 A 執行 `$D reset`（約 10 秒）。「說」欄是重點，完整台詞在 `demo.py` 每一步印出的 `>` 行。
+時間是簡報的時間。每一幕結束後在 A 執行 `$D reset`（約 10 秒）。「說」的重點在簡報的講者備註，完整台詞在 `demo.py` 每一步印出的 `>` 行。
 
 順序是由 gemma 決定的：
 
-- 第 2、3、4 幕需要五張卡都空著，也就是 gemma 停著、沒有人呼叫它，所以排在最前面。第 2 幕另外需要 bob 還沒有用量，所以排第一個。
-- 接著第 6c 幕讓 gemma 冷啟動。它載入的 4–5 分鐘，正好用來做第 1、5、7 幕：這幾幕本來就假設 gemma 占著 kindred 的兩張 A40、8 核與 48 GiB。
-- 等 gemma 開始服務後做第 6a 幕，最後第 6b 幕讓它閒置回收。
+- 第 2、3、4 幕需要五張卡都空著，也就是 gemma 停著、沒有人呼叫它，所以排在前面。第 2 幕另外需要 bob 還沒有用量，所以排第一個。
+- 接著第 6c 幕讓 gemma 冷啟動。它載入的 4–5 分鐘裡做第 5、7 幕：這兩幕本來就假設 gemma 占著 kindred 的兩張 A40、8 核與 48 GiB。
+- 等 gemma 開始服務（B 印出 200）才做第 6a 幕。
 
-`$D scene` 會依這個順序列出各幕，每一幕開始前也會檢查 gemma 的狀態是否符合。
+| 簡報時間 | 投影片 | 指令 | Dashboard 上看到 |
+|---|---|---|---|
+| 1:45 | LabFlux at a Glance | A：`cat examples/jobs/gpu-model.json`<br>`.venv/bin/labflux submit examples/jobs/gpu-model.json --source examples/uv-gpu --wait \| tee /tmp/job.json \| jq '{state, node: .attempts[-1].node_id, why: .schedule_note}'`<br>`.venv/bin/labflux logs $(jq -r .id /tmp/job.json) \| tail -9` | 主講自己的工作，約 6.5 秒：node karma、「only karma fits」；容器裡 device_count 1、RTX 4090。**這裡不要呼叫模型**（會叫醒 gemma） |
+| 4:15 | Where a Job Runs | A：`$D scene 2` | 五張卡各一個 alice 區塊；決策欄「放得下 kayle、kindred；選 kayle：剩餘的合適 GPU 最少」。讓它繼續跑，換下一張 |
+| 5:15 | Who Goes First | （自動）5:15 bob P9；6:15 alice P5；6:30 bob P5 | 排隊表第 1 列 bob P9 head_reserved（900 + 0 − 0 起，每分鐘 +1），原因 GPU：karma 空 0／占用 1，欄頭 karma 的保留時段。6:30 起：1 bob P9 901、2 bob P5 500、3 alice P5 498 = 500 + 0 − 2；誰在用表 alice 2 分、bob 0 |
+| 約 6:55 | | A：PAUSE 時按 Ctrl-C；`$D reset` | |
+| 7:00 | Backfill | A：`$D scene 3`（自動，不要按任何鍵） | 約 7:25 起：kindred 欄頭「保留給 bob 的工作」；2 分鐘工作標 backfill；30 分鐘工作 would_delay_reservation；隊首原因 GPU：需要 2 張 A40、空 1。要看 18 核工作就切 CPU 核心軸再切回 GPU 卡 |
+| 約 8:35 | | A：Ctrl-C；`$D reset` | |
+| 8:45 | Preemption | A：`$D scene 4` | alice 每 3 秒一個 P2 可搶占工作，占滿五張卡；約 15 秒後 bob 的 P8 送出，搶占不到 2 秒就完成，所以指決策欄「搶占 …（kindred，損失最少）」；alice 的工作「被搶占 1 / 3 次」回到隊首 |
+| 約 9:50 | | A：`$D reset` | |
+| 10:00 | Shared Models | A：`$D scene 6c`；PAUSE 時到 B 按 Enter（keepalive 會一直等，這是正常的），回 A 按 Enter | 排隊表 MODEL「隊首。搶占 kindred 的 …,等它們停止後開始。」；alice 的 A40 區塊「被 gemma4-31b 搶占」；約 10 秒後 MODEL 區塊占兩張 A40，模型服務表開始計時。這一幕跑完自己結束 |
+| 11:15 | Fast Lane | A：`$D reset`；`$D scene 5`；PAUSE 時到 C 執行 `labflux shell`，再執行 `python hello.py` 兩次；回 A 按 Enter | CPU 軸全滿；session 排第 1「互動工作優先」；kayle 上的 SESSION 區塊（閒置倒數）；alice 的 4 核工作「被搶占 1 / 3 次」；第二次的容器 ID 和第一次相同 |
+| 約 12:35 | | C：`exit`；A：`$D reset` | |
+| 12:45 | When a Machine Fails | A：`$D scene 7`；PAUSE 時到 C：`$SSH $KARMA systemctl --user stop labflux-worker.service` | 約 10 秒後 karma 欄紅色斜線「失聯」；bob 的區塊「UNKNOWN · 資源保留中」；alice 的工作「沒有在線的節點放得下」。**指著講完這一句再啟動**：啟動後約 1 秒就回到 ONLINE |
+| | | C：`$SSH $KARMA systemctl --user start labflux-worker.service`；A：按 Ctrl-C（不做 (b)）；`$D reset` | RECONCILING → ONLINE，bob 的工作回到 RUNNING |
+| 約 14:15 | | 看 B：已經印出 `200` → A：`$D scene 6a`。還沒有 → 先講 Results，講完（約 16:00）再做 6a | 模型服務表「處理中 2 個請求」、已服務 +2；kindred 上只有一個 MODEL 區塊 |
+| 6a 之後 | One GPU Pool | B：Ctrl-C；A：`$D reset` | |
 
-| 時間 | 幕 | 指令 | 說 | Dashboard 上看到 | 軸 |
-|---|---|---|---|---|---|
-| 0:00 | 0＋2 開場、優先權與公平性 | A：`$D scene 2` | 三台機器、backfill 策略、兩個使用者。分數 = 優先權×100 ＋ 等待分鐘 − 近 60 分鐘用量。alice 先把五張卡占滿 | header 策略 backfill；五張卡各一個 alice 區塊；模型服務表 gemma stopped；誰在用表 alice | GPU 卡 |
-| 4:00 | 2 | （自動）bob P9 抵達 | 優先權改變就是高優先權工作抵達 | 排隊表第 1 列 bob head_reserved 900＋0−0；原因 GPU 需要 1 張、karma 空 0／占用 1；欄頭顯示 karma 的保留時段 | GPU 卡 |
-| 5:00–6:00 | 2 | （自動）alice P5，一分鐘後 bob P5 | 送出後馬上講：alice 先送、多等 1 分，但近 60 分鐘用了 6 分 | 排序 bob P9 902、bob P5 500、alice P5 495；誰在用表 alice 6、bob 0 | GPU 卡 |
-| 6:30 | 2 | A：Enter | 放出一張卡，先給隊首 | bob P9「等 kayle 上的工作停止」→ 落在 kayle A5000；bob P5 成為隊首 | GPU 卡 |
-| 8:00 | 3 backfill | A：`$D reset`；`$D scene 3` | alice 占住三張 24 GiB 的卡；bob 的 18 核工作只放得下 kindred | 三個 alice 區塊；切 CPU 核心軸看 kindred 上 18 核的區塊，再切回來 | GPU 卡 → CPU 核心 → GPU 卡 |
-| 10:00 | 3 | （自動）bob 要兩張 A40 的 P9 工作、alice 30 分與 2 分的工作，三個接連送出 | 隊首依執行中工作的時限保留 kindred；短的在保留時段前會結束，所以先跑；長的會延後保留時段，所以等 | kindred 欄頭「保留給 bob 的工作」；2 分鐘工作標 backfill；30 分鐘工作 would_delay_reservation；隊首原因變成 GPU 需要 2 張 A40、空 1 | GPU 卡 |
-| 11:40–12:50 | 3 | （自動）倒數 | FCFS 下兩個都要等，第 8 幕看圖 | 2 分鐘工作結束；18 核工作結束；隊首落在兩張 A40；30 分鐘工作成為 head_reserved | GPU 卡 |
-| 13:30 | 4 搶占（可略過） | A：`$D reset`；`$D scene 4` | 只有標了可搶占的工作會被停；選損失最少的 | alice 五個 P2 區塊；kindred 第二張 A40 變虛線「被 … 搶占 · 停止中」；bob 的區塊落下；alice 的工作「被搶占 1 / 3 次」成為隊首 | GPU 卡 |
-| 15:30 | 6c 冷啟動與搶占 | A：`$D reset`；`$D scene 6c`；暫停時在 B 執行 `$D keepalive`，再回 A 按 Enter | 第一個請求啟動模型；模型屬於互動工作，可以搶占可搶占的批次工作 | 排隊表 MODEL「隊首。搶占 kindred 的 …,等它們停止後開始。」；決策欄「gemma4-31b 搶占」；約 10 秒後 MODEL 區塊占兩張 A40（starting · 啟動 0:10），模型服務表「啟動 10 秒」計時 | GPU 卡 |
-| 17:00 | 1 抵達與異質配置 | A：`$D reset`；`$D scene 1` | 載入要 4–5 分鐘，先看別的；每個工作落在放得下的節點 | 4090 → karma；VRAM ≥ 20 GiB → kayle A5000；40 GiB RAM → kayle（kindred 被 gemma 占了 48 GiB）；8 核工作分散；點開看配置說明 | GPU 卡 → CPU 核心 → RAM |
-| 19:00 | 5 fast lane | A：`$D reset`；`$D scene 5`；暫停時在 C 執行 `labflux shell`、`python hello.py`（兩次） | 互動指令排在批次之前，必要時搶占小的可搶占工作；第二次沿用同一個容器 | CPU 全滿；session 排第 1「互動工作優先」；SESSION 區塊在 kayle（閒置倒數）；alice 的 4 核工作重新排隊 | CPU 核心 |
-| 約 21:00 | — | B 印出 200 | 冷啟動完成；之前在等的請求這時才回應 | 模型服務表 serving；已服務每分鐘約 +3 | GPU 卡 |
-| 21:00 | 7 Worker 故障 | C：`exit`；A：`$D reset`；`$D scene 7`；暫停時照畫面上的 `$SSH` 指令停止、啟動 karma 的 Worker | 失聯的節點保留資源、不重派，避免同一個工作跑兩次；(b) 容器不見才重跑 | karma 欄紅色斜線「失聯」；bob 的區塊 UNKNOWN；alice 的工作「沒有在線的節點放得下」；恢復時 RECONCILING → ONLINE。(b)：FAILED → kayle A5000，alice 拿到 4090 | GPU 卡 |
-| 24:00 | 6a 共用 | A：`$D reset`；`$D scene 6a` | 一個服務，大家共用，用量算在模型上 | 模型服務表「處理中 2 個請求」、已服務 +2；kindred 上只有一個 MODEL 區塊 | GPU 卡 |
-| 25:00 | 6b 閒置回收 | A：`$D scene 6b`；暫停時在 B 按 Ctrl-C，再回 A 按 Enter | 沒人等它的卡時留一小時；有人等時，閒置 1 分鐘就讓出來 | 「閒置 5 秒 · 59 分 … 後釋放」；約 65 秒後 alice 的工作「等 gemma4-31b 停止」，模型 stopping（決策欄「gemma4-31b 閒置 1 分 … 秒,有工作在等資源,提前回收」）→ stopped；alice 的區塊落在 A40 | GPU 卡 |
-| 27:00 | 8 比較 | A：`$D reset`；切到投影片 | M13：FCFS、priority、backfill 的平均等待時間與配置占用率 | （投影片）header 一直標示目前的策略 | — |
-| 28:00 | 結束 | | | | |
+gemma 從 B 送出第一個請求到開始服務約 4–5 分鐘（預演 4 分 18 秒），也就是簡報的 14:15–15:20 左右，所以第 7 幕結束時可能還沒好。
+`$D scene 6a` 會先檢查 gemma 是否在服務，沒有就印出 NOT READY，不會送出任何東西。
 
 ## 6. 備援
 
 - **gemma 冷啟動失敗**（健康檢查超過 600 秒，或容器結束）：模型服務表顯示「failed · N 後才會重試」，B 印出 503 或錯誤。
   B 的迴圈會繼續送請求，設了 `retry_after_failure_s = 60` 時，1 分鐘後的下一個請求就會重試。如果又失敗：
-  - 略過 6a、6b，改用 `tests/test_storyboard_model.py` 說明。
-  - 第 1、5、7 幕假設 gemma 占住 kindred，這時 `demo.py` 會顯示 NOT READY。可以加 `--force` 照常執行，但落點會不同（例如 40 GiB 的工作可能改到 kindred），要照畫面講。
+  - 略過 6a，講 Results。
+  - 第 5、7 幕假設 gemma 占住 kindred，這時 `demo.py` 會顯示 NOT READY。可以加 `--force` 照常執行，但落點會不同，要照畫面講。
   - 展示後再看 kindred 的 Worker 日誌（`docs/lab-deploy.md`）。
 - **冷啟動超過 600 秒**：第一個請求會收到 503（model_not_ready）。B 的迴圈 20 秒後再送，會接上同一個正在載入的服務，不用處理。
-- **某一幕走樣**：在 A 按 Ctrl-C，執行 `$D reset` 與 `$D check`，再重跑那一幕。
+- **某一幕走樣**：在 A 按 Ctrl-C，執行 `$D reset` 與 `$D check`，換下一張投影片。
   第 2 幕只有在 bob 的用量仍接近 0 時才重跑，否則直接進下一幕。第 3、4 幕可以直接重跑。
 - **demo.py 顯示 NOT READY**：照提示處理。有殘留工作就 `$D reset`；gemma 狀態不對，就照第 5 節的順序走；
   bob 的用量太高時加 `--force`（alice 的用量不比 bob 少，排序就仍然成立），或略過這一幕。
@@ -151,31 +185,31 @@ token 不要寫進 repo 或貼到投影片上。
   也可以改用 CLI：`labflux --config <alice 的設定> queue`、`labflux --config <alice 的設定> status --all`。
 - **第 5 幕的 session 沒有啟動**：檢查 C 的環境變數（bob 的 token、Scheduler 位址），再看 `labflux session status`。
 
-## 7. 10 分鐘精簡版
+## 7. 不在現場流程裡的幕
 
-| 時間 | 幕 | 做什麼 |
-|---|---|---|
-| 0:00 | 3（兼開場） | `$D scene 3`。利用前 2 分鐘的等待介紹 Dashboard、策略與分數公式。第 2 分鐘起講 head_reserved、would_delay、backfill，並切 CPU 核心軸看 18 核的工作。第 5 分鐘隊首開始 |
-| 5:30 | 6c | `$D reset`；`$D scene 6c`，在 B 開 keepalive：模型搶占 alice 的 A40 工作，開始冷啟動計時 |
-| 7:00 | 1 | `$D reset`；`$D scene 1`，趁 gemma 載入時看異質配置 |
-| 9:00 | 8 | 投影片的 M13 比較圖。gemma 這時可能還在載入：指著計時說明第一個請求會一直等，不會先拿到 503 |
-| 10:00 | 收尾 | B 按 Ctrl-C；`$D reset` |
-
-精簡版沒有第 2 幕：講第 3 幕時指著排隊表的分數拆解（900 ＋ … − …）帶過公平性。
+- **第 1 幕（工作抵達與異質配置）**：指定 4090、VRAM ≥ 20 GiB、40 GiB RAM 與三個 8 核工作的落點，約 2 分鐘。
+  需要 gemma 在 starting 或 serving；有人問到異質配置時，在 6a 之後做。現場改用開場的 GPU 工作說明「依卡的型號送工作」。
+- **第 6b 幕（閒置回收）**：關掉 B 的 keepalive，閒置滿 65 秒後 alice 要一張 A40，gemma 被回收。約 2 分鐘。
+  現場不做；展示前用它讓 gemma 停下來（第 2 節）。
+- **第 7 幕 (b)（容器不見才重跑）**：在 (a) 的 PAUSE 按 Enter，照畫面停止 Worker、刪掉 bob 工作的容器、再啟動。
+  bob 的工作 FAILED 後換到 kayle 的 A5000，alice 拿到 4090。現場不做：要手打三個 SSH 指令，最容易出錯。
 
 ## 8. 彩排注意事項
 
 - **第 2 幕需要 bob 的近期用量接近 0**（視窗是 60 分鐘）。完整彩排一次會讓 bob 累積約 3–4 分鐘，主要來自第 3 幕的 18 核工作和第 5 幕的訓練工作。
   所以彩排要在正式展示前 60 分鐘以上做完，或者正式展示前只彩排不含 bob 的部分。`$D check` 會顯示 bob 的用量。
+- **第 2 幕的時間**：alice 的 P5 剛好在她的五個工作開始後 2 分鐘送出，她的分數一直是 500 − 2，
+  Dashboard 四捨五入後的拆解（500 + 0 − 2）才會加得起來。間隔不是整數分鐘時會出現「499 = 500 + 0 − 2」這種畫面，改時間時要注意。
 - **第 3 幕的時間窗**：保留時段從 18 核工作開始後 300 秒起算，2 分鐘的工作必須在那之前至少 120 秒送到，否則它會延後保留時段，也就看不到 backfill。
-  `demo.py` 在 18 核工作送出 120 秒後，接連送出三個工作，大約還有 60 秒餘裕。不要手動一步一步送。
-  需要更多餘裕的話，把 `prep.json` 的時限改成 420–600 秒，並同步修改 `tests/test_demo_scenes.py` 裡的時間。
+  `demo.py` 在 18 核工作送出 20 秒後，接連送出三個工作，大約還有 160 秒餘裕。不要手動一步一步送。
+  沒有按 Ctrl-C 的話，最後倒數約 4 分半，看隊首準時拿到兩張 A40。
 - **GPU 卡是預設的軸**：只用 CPU 的工作不會畫在上面，例如第 3 幕的 18 核工作、第 1 幕的 CPU／RAM 工作、第 5 幕。
   要看就切到「CPU 核心」或「RAM」；重新整理頁面會回到 GPU 卡。
 - 第 2–4 幕進行中不要對 gemma 送任何請求，連測試用的 curl 也不行。
-- 從 6c 到 6b，B 的 keepalive 要一直開著。有工作在等、又 60 秒沒有請求時，gemma 會被回收，下一個請求又要冷啟動 5 分鐘。
+- 從 6c 到展示結束，B 的 keepalive 要一直開著。有工作在等、又 60 秒沒有請求時，gemma 會被回收，下一個請求又要冷啟動 5 分鐘。
 - 第 6b 幕要閒置滿 65 秒才送工作（`demo.py` 會等）。太早送的話，那一分鐘裡工作會顯示一小時後的保留時段（已知限制）。
 - 第 7 幕 alice 的工作優先權是 6。(b) 中 bob 重跑的工作和 alice 的工作會同時排隊；如果兩者優先權相同，順序就看近期用量，
   而到第 7 幕時 alice 用得比 bob 多很多，bob 的工作會排在前面，又把 karma 的 4090 拿回去。
 - 部署或重啟 Scheduler 後，排隊表要等第一輪排程才有內容，決策欄和「已服務」的計數會從零開始。
+- 彩排或展示後 gemma 還在服務的話，閒置 1 小時會自己停；要馬上停就照第 2 節做。
 - 排程程式有任何修改，就跑 `uv run pytest tests/test_demo_scenes.py tests/test_storyboard.py tests/test_storyboard_gpu.py tests/test_storyboard_model.py -q`。

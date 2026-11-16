@@ -184,17 +184,18 @@ def test_every_scene_and_job_file_loads():
 
 def test_the_run_order_keeps_gemma_away_from_the_gpu_scenes():
     """GPU scenes 2-4 need every card free, so they come before the cold start; the scenes that
-    assume gemma holds kindred's A40s come after it, and the idle release comes last."""
+    assume gemma holds kindred's A40s come after it. The run order is the live order; scene 1 and
+    the idle release (6b) are spares at the end."""
     needs = [(scene["id"], scene["requires"]["model"]) for scene in demo.all_scenes()]
     assert needs == [
         ("2", ["stopped"]),
         ("3", ["stopped"]),
         ("4", ["stopped"]),
         ("6c", ["stopped"]),
-        ("1", ["starting", "serving"]),
         ("5", ["starting", "serving"]),
         ("7", ["starting", "serving"]),
         ("6a", ["serving"]),
+        ("1", ["starting", "serving"]),
         ("6b", ["serving"]),
     ]
 
@@ -237,11 +238,11 @@ def test_scene_2_priority_jump_and_fairness(gpu_lab, drive):
                 "no_capacity",
                 "no_capacity",
             ]
-            assert [round(item["score"]) for item in queue["entries"]] == [902, 500, 495]
+            assert [round(item["score"]) for item in queue["entries"]] == [901, 500, 498]
             assert entry(queue, urgent)["blocker"] == gpu_blocker(1, "beta", free=0, held=1)
             want = {"job_id": urgent["id"], "node_id": "beta", "start": T0 + 1800}
             assert pick(queue["reservation"], want) == want
-            assert queue["usage_min_by_user"] == {"alice": pytest.approx(6)}
+            assert queue["usage_min_by_user"] == {"alice": pytest.approx(2.25)}
         if step["action"] == "cancel":
             [urgent], [mine], [theirs] = (jobs(labels, k) for k in ("urgent", "alice-p5", "bob-p5"))
             assert_running(lab, urgent, "delta", [A5000])
@@ -344,8 +345,9 @@ def test_scene_4_preemption_stops_the_latest_started_job(gpu_lab, drive):
 
 
 def test_the_model_scenes_in_run_order(model_lab, drive, monkeypatch):
-    """6c (cold start preempting alice's A40 jobs), then 1, 5 and 7 while gemma holds kindred's
-    A40s, then 6a (sharing) and 6b (idle release), with demo.py reset between the scenes."""
+    """6c (cold start preempting alice's A40 jobs), then 5 and 7 while gemma holds kindred's
+    A40s, then 6a (sharing), the spare scene 1 and 6b (idle release), with demo.py reset between
+    the scenes."""
     lab, runner = model_lab, drive(model_lab)
 
     def scene_6c(step, labels):
@@ -379,24 +381,6 @@ def test_the_model_scenes_in_run_order(model_lab, drive, monkeypatch):
     play(runner, "6c", scene_6c, checks=("sweep", "pause", "cancel"))
     request(lab)  # The first request is served once the model is healthy.
 
-    def scene_1(step, labels):
-        lab.settle()
-        if step.get("label") == "cpu8":
-            placed = {
-                "gpu-4090": ("beta", [RTX4090]),
-                "vram20": ("delta", [A5000]),
-                "ram40": ("delta", []),
-            }
-            for label, (node, cards) in placed.items():
-                assert_running(lab, jobs(labels, label)[0], node, cards)
-            for value, node in zip(jobs(labels, "cpu8"), ("beta", "gamma", "gamma")):
-                assert_running(lab, value, node)
-
-    assert demo.reset(runner) == 0
-    play(runner, "1", scene_1, checks=("cpu8",))
-    assert demo.reset(runner) == 0
-    request(lab)
-
     def scene_5(step, labels):
         if step["action"] == "pause":  # bob's `labflux shell` leases a session.
             response = lab.client.post(
@@ -423,6 +407,7 @@ def test_the_model_scenes_in_run_order(model_lab, drive, monkeypatch):
             for label, node in (*trains, ("sweep", "delta")):
                 assert_running(lab, jobs(labels, label)[0], node)
 
+    assert demo.reset(runner) == 0
     play(runner, "5", scene_5, checks=("waiting", "pause"))
     assert demo.reset(runner) == 0  # Also ends bob's session.
     request(lab)
@@ -482,6 +467,23 @@ def test_the_model_scenes_in_run_order(model_lab, drive, monkeypatch):
     play(runner, "6a", lambda step, labels: lab.settle())
     assert shared == [2] and gemma(lab)["served"] == served + 2
 
+    def scene_1(step, labels):
+        lab.settle()
+        if step.get("label") == "cpu8":
+            placed = {
+                "gpu-4090": ("beta", [RTX4090]),
+                "vram20": ("delta", [A5000]),
+                "ram40": ("delta", []),
+            }
+            for label, (node, cards) in placed.items():
+                assert_running(lab, jobs(labels, label)[0], node, cards)
+            for value, node in zip(jobs(labels, "cpu8"), ("beta", "gamma", "gamma")):
+                assert_running(lab, value, node)
+
+    play(runner, "1", scene_1, checks=("cpu8",))
+    assert demo.reset(runner) == 0
+    request(lab)
+
     def scene_6b(step, labels):
         if step.get("label") == "a40":
             # Sent after 65 s idle: the model is reclaimed on the next pass.
@@ -521,18 +523,18 @@ def test_dry_run_prints_the_steps_without_contacting_the_scheduler(monkeypatch, 
         "alice submits held-a5000.json",
         "alice submits held-3090.json",
         "bob submits prep.json",
-        "wait 120 s",
+        "wait 20 s",
         "bob submits head.json",
         "alice submits long.json",
         "alice submits short.json",
-        "wait 175 s",
+        "wait 275 s",
         "note",
     ]
     assert "2 GPU (A40), priority 9, limit 600 s, runs sleep 590" in out
     assert "would_delay_reservation" in out  # What the audience should see.
     assert demo.main(["scene"]) == 0
     listed = capsys.readouterr().out.splitlines()
-    assert [line.split()[2] for line in listed] == ["2", "3", "4", "6c", "1", "5", "7", "6a", "6b"]
+    assert [line.split()[2] for line in listed] == ["2", "3", "4", "6c", "5", "7", "6a", "1", "6b"]
 
 
 def test_reset_cancels_only_alice_and_bob_and_waits_for_confirmed_stops(

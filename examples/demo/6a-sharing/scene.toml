@@ -1,7 +1,7 @@
 # Scene 6 (a): alice and bob share the one gemma4-31b service. Verified in
 # tests/test_storyboard_model.py; bob's keep-alive loop keeps running.
 title = "模型服務：alice 與 bob 共用 gemma"
-run_order = 8
+run_order = 7
 axis = "GPU 卡"
 
 [requires]

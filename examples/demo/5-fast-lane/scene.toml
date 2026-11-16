@@ -2,7 +2,7 @@
 # gemma4-31b holds kindred's 8 CPU. Verified in tests/test_storyboard.py and replayed from this
 # file by tests/test_demo_scenes.py.
 title = "fast lane：session 優先，搶占小的批次工作"
-run_order = 6
+run_order = 5
 axis = "CPU 核心"
 
 [requires]

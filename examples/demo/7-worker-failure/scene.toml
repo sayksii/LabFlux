@@ -6,7 +6,7 @@
 # equal priority the order would follow recent usage. By this point in the demo alice has used
 # far more than bob, so bob's job would rank first and take karma's 4090 back.
 title = "Worker 失聯與恢復"
-run_order = 7
+run_order = 6
 axis = "GPU 卡"
 
 [requires]
@@ -28,8 +28,8 @@ say = "bob 的工作（VRAM ≥ 20 GiB，節點故障可重跑 1 次）在 karma
 pause = """
 (a) 停止 karma 的 Worker：$SSH labflux@<karma> systemctl --user stop labflux-worker.service
     約 10 秒後 karma OFFLINE、bob 的工作 UNKNOWN（資源保留、不重派），alice 的工作「沒有在線的節點放得下」，不擋後面。
-    約 20 秒後啟動：$SSH labflux@<karma> systemctl --user start labflux-worker.service
-    看到欄頭 RECONCILING → ONLINE、工作回到 RUNNING 後按 Enter（不做 (b) 就按 Ctrl-C）。"""
+    指著講完這一句再啟動（啟動後約 1 秒就回到 ONLINE）：$SSH labflux@<karma> systemctl --user start labflux-worker.service
+    看到欄頭 RECONCILING → ONLINE、工作回到 RUNNING 後按 Ctrl-C 結束（現場不做 (b)）；要做 (b) 才按 Enter。"""
 
 [[steps]]
 pause = """
