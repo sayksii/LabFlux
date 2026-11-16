@@ -1,0 +1,7 @@
+{
+  "argv": ["python", "-c", "import time; print('high-priority job', flush=True); time.sleep(60)"],
+  "resources": {"cpu": 4, "memory_mib": 4096},
+  "time_limit_s": 180,
+  "estimated_runtime_s": 60,
+  "priority": 9
+}

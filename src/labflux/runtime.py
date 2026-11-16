@@ -25,6 +25,9 @@ from labflux.models import ExecutionSpec
 log = logging.getLogger("labflux.runtime")
 ATTEMPT = re.compile(r"[a-f0-9]{32}")
 SESSION_VENV_BIN = "/workspace/.venv/bin"
+# How long a 137 exit is re-read for Docker's OOMKilled flag, and how often (settled_state).
+OOM_SETTLE_S = 1.0
+OOM_SETTLE_POLL_S = 0.1
 DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"  # Docker's own.
 
 # A session command records "<pid> <token>" and then execs the real argv. Docker starts every
@@ -57,6 +60,22 @@ def session_path(image_config: dict | None) -> str:
         if item.startswith("PATH="):
             return f"{SESSION_VENV_BIN}:{item[5:]}"
     return f"{SESSION_VENV_BIN}:{DEFAULT_PATH}"
+
+
+def settled_state(container, *, timeout: float = OOM_SETTLE_S) -> dict:
+    """The State of an exited container. Docker sets OOMKilled from containerd's separate OOM
+    event, which can arrive just after the exit, so a SIGKILL exit (137) that is not marked yet
+    is re-read for up to `timeout` seconds (seen on the lab: 1 of 12 OOM kills read as a plain
+    exit)."""
+    state = container.attrs["State"]
+    deadline = time.monotonic() + timeout
+    while (
+        state.get("ExitCode") == 137 and not state.get("OOMKilled") and time.monotonic() < deadline
+    ):
+        time.sleep(OOM_SETTLE_POLL_S)
+        container.reload()
+        state = container.attrs["State"]
+    return state
 
 
 def container_name(spec: ExecutionSpec) -> str:
@@ -281,6 +300,9 @@ class DockerExecutor:
             for reader in readers:
                 reader.join(timeout=5)
             state = container.attrs["State"]
+            if reason == "completed" and not cancel.is_set():
+                # Not a stop LabFlux sent, so a SIGKILL exit may be an OOM kill still settling.
+                state = settled_state(container)
             exit_code = state.get("ExitCode")
             oom = bool(state.get("OOMKilled"))
             if oom:

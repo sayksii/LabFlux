@@ -1316,6 +1316,144 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
   `labflux whoami` 相同，`labflux models` 看得到 gemma；登入 token 看到的工作與設定檔裡同名使用者的相同。
   karma 只確認了安裝與 socket（只有 `labflux` 帳號可用，沒有以它登入，避免多出一個使用者）。
 
+## M14：安裝說明、範例與乾淨環境驗收（14.1、14.2、14.4；kayle，2026-11-16）
+
+分支 `feat/m14-docs` 改文件、範例與 `scripts/`，另外只有使用者事後同意的 OOM 標記修正（`src/labflux/runtime.py`，見下方）。
+14.1～14.4 的驗證都在修正之前，當時 `src/` 與 main `bf86074`、實驗室部署的 `8fcab7a` 相同（乾淨 clone `3599d5e` 中
+`git diff 8fcab7a HEAD -- src/` 沒有差異）。14.3 的展示腳本由 M12 的 session 負責，不在這裡。
+使用者提醒 LabFlux 主要用來共用 GPU，所以範例與實驗室 smoke 都以 GPU 為主。
+
+**實驗室設定（遮掉真實值；實際值在被 Git 忽略的 `configs/local-lab.toml`）**
+
+| 節點 | 角色 | 可預約 | 資源池的 GPU | 驅動 | 資料集 |
+|---|---|---|---|---|---|
+| kayle | Scheduler（port 8770，防火牆 chain `LABFLUX-SCHEDULER`）+ Worker | 16 核、48 GiB | RTX 3090、RTX A5000 | 535.309.01 | — |
+| karma | Worker | 16 核、24 GiB | RTX 4090 | 580.178.04 | — |
+| kindred | Worker | 32 核、64 GiB | A40 × 2（卡 3、4；卡 0～2 屬於其他人） | 550.144.03 | `hf-models`（gemma 權重） |
+
+- 排程策略：清單沒有 `policy`，Scheduler 為預設的 `fcfs`。
+- 模型服務：`gemma4-31b`（`vllm/vllm-openai:v0.30.0`，tensor parallel 2），常駐（`persistent`），8 核、48 GiB、2 張 A40，
+  `startup_timeout_s` 600、`cold_wait_s` 600、`shm_mib` 16384。
+- 使用者：`scheduler.users` 只有部署者一人；其他人以 `labflux login` 用自己的 Linux 帳號登入。三台都有 `/opt/labflux` 的共用 CLI。
+- 以上是 14.4 執行時（09:38～09:40）的設定。09:44 起另一個 session 為 M13 試跑把實驗室的 Scheduler 換成實驗設定（另有實驗帳號）；
+  這之後本節只有 `priority-high-gpu.json` 一個工作（09:45，`schedule_note` 仍是 `fcfs`），已告知 M13 的 session 從資料中排除。
+
+### 14.1 以唯讀指令核對文件
+
+| 指令 | 結果 |
+|---|---|
+| `lab_deploy.py status` | 三台的 Worker（與 kayle 的 Scheduler、防火牆）都是 `active`，LabFlux 0.1.0、uv 0.11.8；三台 `ONLINE`，只有 kindred 有 gemma 的預約（8 核、48 GiB、2 張卡） |
+| `lab_deploy.py check` | 結束狀態 0，沒有 `FAIL`。kayle、karma 的 GPU 測試容器看到全部的卡，CPU 容器沒有 `/dev/nvidia*`。預期的 `WARN`／`SKIP`：karma 的 user systemd `degraded`（snap 的 firmware-notifier，與 LabFlux 無關）；kindred 的 `GPUs idle`（gemma 的卡 3、4 與其他人的卡 1）與 `GPU container` 跳過 |
+| `lab_deploy.py deploy --dry-run` | 依序印出三台（kayle 先）的 `ssh`／`scp` 與要寫出的設定檔；`.labflux/lab/` 的檔案與修改時間不變 |
+| `lab_deploy.py firewall-instructions` | 產生的 unit 與文件一致：`lo` 與兩台遠端 Worker `RETURN`、其餘 `DROP`，跳轉規則最後加入 |
+| 共用 CLI 的 `labflux login`（暫時的 HOME） | `Logged in as <帳號>`，登入檔權限 600；`labflux whoami`、`labflux models`（gemma `serving`）正常 |
+
+依核對結果修改的文件：
+
+- README：三台節點（原本漏了 kindred）；「測試與驗收」一節（GPU 測試另外執行、`scripts/lab_smoke.py`）；VM 已移除；範例的入口。
+- `docs/lab-deploy.md`：「兩台」改成三台或 Worker 節點；在 worktree 執行要建的 symlink；`check` 的預期 `WARN`；
+  `--dry-run` 的行為；「使用」改成先 `labflux login`；`lab_smoke.py` 的用法與安全限制；目前的策略；啟動的順序。
+- `docs/vm-lab.md`：VM 已移除、M14 沒有重建；VM 上沒有 uv 基礎映像、GPU、策略與登入（讀 `scripts/vm_lab.py` 得出，未實測）；
+  `smoke.py` 只適用於 VM；改正「M6.4～M6.7 尚未交付」。
+
+### 14.2 範例
+
+新增 10 個工作 JSON、`examples/gateway/chat.py`、`examples/fast-lane-gpu/`、`configs/lab.example.toml` 的自動釋放模型設定，
+`examples/uv-gpu/main.py` 改為列出並測試每張分到的卡；工作與快速測試都在實驗室實際提交或執行一次（`fcfs`），
+結果與指令見 [examples/README.md](../examples/README.md)。重點：
+
+- GPU：`gpu_model = "4090"` 分到 karma 的 4090；`min_vram_mib` 的工作在卡都被占用時依 FCFS 等待後分到 4090；`gpu: 2` 分到 kayle 的兩張卡，
+  兩張都算過矩陣乘法；可搶占的 MNIST（10 epoch）在 3090 上 99.18%；優先權 8 的 GPU 工作在 3090 上 5.6 秒；故障重跑的範例占著 A5000 120 秒完成。
+- 自動釋放模型：實驗室只有常駐的 gemma，改模式要重新部署，所以同樣的欄位在本機 loopback 以臨時 Scheduler、Worker 與 `examples/fake-model` 驗證：
+  `stopped` → 第一個請求冷啟動 6.6 秒 → `serving` → 閒置 20 秒（`idle_stop_s`）後停止；`cold_wait_s = 0` 時請求立即得到 503、`Retry-After: 10`，
+  稍後重送成功。結束後移除了 Worker 停止時留下的模型容器（Worker 停止不會停容器，M6.4）。
+  `docs/lab-deploy.md` 另依程式寫明：只改 `mode` 與時間設定時執行中的模型不會重啟，而且保留常駐時約一年的閒置期限，
+  要等一個請求結束後才會因閒置停止（M12 的 session 指出並在 feat/m12 以程式內測試確認；本 PR 第一版寫錯成「閒置 `idle_stop_s` 後停止」）。
+- 快速測試：`fast-lane-gpu` 的 session 排到 karma 的 4090，第一個指令（租用、從快取 `uv sync`、pytest 3 passed）8.3 秒，
+  `python train.py --smoke` 2.4 秒並寫回結果檔。
+- Gateway：`chat.py` 對 gemma 一般回應 0.73 秒、串流第一段 0.05 秒；兩個串流同時送出時進行中 2，都在約 2.3 秒完成。
+  `chat.py` 只用標準函式庫，也能用節點上的 Python 3.10（kayle 的系統 Python 沒有 `tomllib`，所以不用它）。
+- 同專案的 MNIST 第二次執行從上一個工作留下的檔案開始，沒有重新下載資料（6.1）。
+- examples/README.md 另列出展示分鏡各幕會用到的工作類型，給 14.3 改用；展示以 GPU 為主；各幕的實際大小與順序以 14.3 的 `docs/demo.md`、`examples/demo/` 與分鏡測試為準（見下方 M12、M14.3 兩節）。
+
+### 14.4 乾淨環境
+
+在 scratchpad 以 `git clone --no-local --branch feat/m14-docs` 全新 clone（commit `3599d5e`，沒有未追蹤的檔案），全部步驟的紀錄在
+[clean-env-2026-11-16.txt](evidence/clean-env-2026-11-16.txt)：
+
+| 步驟 | 結果 |
+|---|---|
+| 環境 | kayle，kernel 6.8.0-138，uv 0.11.8，Docker 29.1.3，RTX 3090 + RTX A5000（驅動 535.309.01） |
+| `uv sync --locked`、`uv run labflux version` | 通過，0.1.0 |
+| `uv run ruff check .`、`ruff format --check .` | 通過（90 個檔案） |
+| `uv run pytest -q -m "not docker and not vm and not gpu"` | **447 passed、1 skipped**（沒有 zsh）。任務說明寫的 432 是 PR #9 加入 15 個登入測試之前的數字 |
+| `sg docker -c 'uv run pytest -q -m "docker and not gpu"'` | **29 passed** |
+| `sg docker -c 'uv run pytest -q -m gpu'` | **4 passed**；執行前確認 kayle 沒有 LabFlux 工作、兩張卡閒置 |
+| `scripts/lab_smoke.py`（實驗室三台） | **11 項全部通過**，約 68 秒，17 個工作；報告 [lab-smoke-2026-11-16.json](evidence/lab-smoke-2026-11-16.json) |
+
+實驗室 smoke 的檢查（`fcfs`，閒置的卡：karma 的 4090、kayle 的 3090 與 A5000；kindred 的 A40 被 gemma 占用，不在檢查範圍）：
+
+| 檢查 | 結果 |
+|---|---|
+| 節點 | 三台 `ONLINE`，CPU／RAM／GPU 都不同 |
+| GPU 隔離與帳本 | 三張閒置的卡各給一個工作，UUID 不重複，每個容器只看到自己那張（`nvidia-smi -L` 與 `/dev/nvidiaN` 都是 1）；第四個工作排隊，第一張卡釋放後才開始（等了 8.6 秒） |
+| 兩張卡 | 分到 kayle 的 3090 與 A5000，容器裡恰好這兩張 |
+| 真實 CUDA（CLI） | `labflux submit --wait`、`logs`、`fetch` 跑 `examples/uv-gpu`：karma 的 4090，torch 2.6.0+cu124，矩陣乘法與 CPU 一致，提交到完成 6.6 秒 |
+| session 搶占 GPU 工作 | 三張卡都被優先權 2 的可搶占工作占用時，`labflux run -- nvidia-smi -L`（`.labflux.toml` 要 1 張卡）只停掉一個（`PREEMPTED`，`preempted_by` 是 session），指令 1.0 秒完成；session 關閉後被搶占的工作重跑成功，其他兩個沒有被動到 |
+| FCFS | 4090 被占用時，要 4090 的隊首等待，後面放得下的 1 核工作也等待（`waiting behind job …`）；排隊中的工作取消後直接 `CANCELLED`、沒有 attempt；4090 釋放後隊首拿到同一張卡，後面的工作在同一個交易派送 |
+| CPU 與記憶體 | `cpu.max = 25000 100000`、`memory.max = 64 MiB`、swap 0，2 秒實測 0.5 秒 CPU 時間，CPU 工作沒有 GPU 裝置；512 MiB 的配置在 64 MiB 上限被終止（exit 137）；1 秒時限停止整個容器；執行中的取消先 `STOPPING`，確認容器停止才 `CANCELLED` |
+| Gateway | gemma 一般回應 0.09 秒、串流第一段 0.06 秒 |
+| 收尾 | 每台的配置回到開始前（只有 gemma） |
+
+`lab_smoke.py` 前兩次試跑失敗，都是腳本本身的問題，已修正後才做上面這次：
+FCFS 檢查原本比較容器的開始時間，但隊首與後面的工作在同一個交易派送，CPU 容器比 GPU 容器早 0.06 秒啟動，改成比較派送時間（attempt 的 `created_at`）；
+第二次試跑遇到下一節的 OOM 標記問題，改為以 exit code 137 判斷「被限制住」，並在報告記下 `oom_reported`。
+
+### 發現的程式問題：OOM 標記（使用者選擇方案 (a)，已修正，部署後生效）
+
+**被 OOM 終止的工作偶爾沒有標成 OOM。** smoke 第二次試跑時，64 MiB 上限的 OOM 工作在 karma 結束為 `FAILED`、exit code 137，
+但 `oom_killed = false`、原因 `completed`，日誌是空的。之後同樣的工作在 karma 送 6 次、kayle 送 2 次，加上兩次 smoke 與 `examples/jobs/oom.json`，
+都正確標成 `memory limit exceeded (OOM)`：目前 12 次中 1 次。直接以 `docker run` 在三台各跑一次，`docker inspect` 都是 `OOMKilled=true`。
+
+- 推測的原因：`src/labflux/runtime.py` 在 `State.Running` 變成 false 後立刻讀一次 `State.OOMKilled`；Docker 從 containerd 另外的 OOM 事件設定這個旗標，
+  可能比結束事件晚到，所以偶爾讀到 false。`docker run` 會等到容器完全結束，所以沒有遇到。
+- 影響：資源限制本身正常（程序被終止、配置釋放），只是使用者看到的原因不對；M13 若統計 OOM 次數會少算。
+- 提出的處理：(a) exit code 137 而且 `OOMKilled` 為 false 時，在 1 秒內再讀幾次；(b) 移除容器前讀容器 cgroup 的 `memory.events`；
+  (c) 記為已知限制。使用者選 (a)。
+
+**修正。** `runtime.py` 新增 `settled_state(container)`：容器以 137 結束、`OOMKilled` 還是 false 時，每 0.1 秒重新讀一次，最多 1 秒
+（`OOM_SETTLE_S`、`OOM_SETTLE_POLL_S`），旗標出現就用它。只在不是 LabFlux 自己停止的結束時才等（原因仍是 `completed`、沒有要求取消），
+所以超時與取消不會多等；真的被別人 `SIGKILL` 的容器（不是 OOM）晚 1 秒回報，結果不變。`runtime.py` 不在 M12 的修改範圍內。
+
+- `tests/test_runtime_state.py`（3 個，用假容器）：旗標在第 3 次讀取才出現時被採用；一直沒有旗標的 137 在等待時間後照實回報；
+  其他 exit code 與已標記的 OOM 不重新讀取。反向檢查：關掉重新讀取時其中 2 個失敗。
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：450 passed、1 skipped；`sg docker -c 'uv run pytest -q -m "docker and not gpu"'`：29 passed
+  （包含真實容器的 `test_memory_excess_is_killed`）。
+- 這個競態無法在本機穩定重現（kayle 從沒遇到，只在 karma 遇過一次），所以修正只以假容器驗證。實驗室要重新部署（Worker）後才生效；
+  M13 在實驗室進行期間不部署，時機由使用者決定。部署前 `lab_smoke.py` 仍以 exit code 137 判斷被限制住。
+
+### 已知限制（M14）
+
+- `lab_smoke.py` 讀不到 Scheduler 目前的策略（實驗室跑的 `8fcab7a` 沒有回報策略的 API），要自己給 `--policy`；M12 的 `/api/queue` 會回報策略，實驗室部署 M12 之後可以改讀它。實驗室改成 `backfill` 後執行時要加 `--policy backfill`。
+- `lab_smoke.py` 不測 Worker 故障（要重啟 Worker），也不測 `priority`／`backfill` 下的批次搶占（要改策略、重新部署 kayle）；
+  這兩者見 M6.5～M6.7 與 M11 的實驗室實測。只用閒置的卡：kindred 的 A40 被 gemma 占用，smoke 沒有在 A40 上跑工作。
+- smoke 有其他人的工作時拒絕開始，但只看得到節點上的配置與自己的工作，看不到別人排隊中的工作。FCFS 檢查讓整個佇列被擋約 10 秒。
+- 範例在 `fcfs` 下執行：`priority`、`estimated_runtime_s` 沒有排序效果；可搶占的範例這次沒有被搶（session 搶占由 smoke 驗證）；
+  故障重跑的範例只跑完一次，節點故障的路徑沒有觸發。自動釋放模型只在本機以假模型驗證；使用者決定展示時把 gemma 改成 `on_demand`，
+  那需要重新部署 kayle，實驗室的 gemma 冷啟動與模式切換這次沒有實測。
+- Gateway 的「多人同時使用」以同一個帳號的兩個客戶端驗證，沒有用兩個不同的帳號。
+- `check` 看的是整台機器的卡，所以 kindred 會一直有 `GPUs idle` 的 `WARN`。
+- 範例與 smoke 留下的專案目錄（`hello`、`mnist`、`uv-gpu`）保留在節點上，每個專案每台最多 3 份，之後自動刪除。
+- VM 環境沒有重建，`docs/vm-lab.md` 新增的注意事項來自讀程式。
+
+其他階段的已知限制分別記在本文件的「PR #2 審查」、「feat/m6-m8-m9 已知限制」、「驗證時另外發現的罕見情況」、
+M10、M11、6.1、Q14 各節，以及 `docs/lab-deploy.md` 的「目前限制」。
+
+### 實驗結果（M13，待補）
+
+M13 的 FCFS／`priority`／`backfill` 對照實驗由另一個 session 進行中（2026-11-16 09:44 起在實驗室試跑），本 PR 沒有結果。
+完成後把 CSV 與圖放在 `docs/evidence/` 下（位置由 M13 決定），摘要與連結寫在這裡；展示分鏡第 8 幕使用這些結果。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。

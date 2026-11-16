@@ -53,3 +53,25 @@ datasets = ["hf-models"]
 mode = "persistent"         # default "on_demand": started by a request, stopped when idle
 startup_timeout_s = 600
 shm_mib = 8192
+
+# The default mode, on_demand: the first request starts the model and waits up to cold_wait_s for
+# its health check (after that the client gets 503 with Retry-After and retries). It stops after
+# idle_stop_s without requests, or after reclaim_idle_s when other work is waiting for resources.
+# Size cold_wait_s and startup_timeout_s to the measured start: a 31B model on two A40s took ~300 s.
+[models."small-chat"]
+image = "vllm/vllm-openai"
+argv = [
+  "Qwen/Qwen2.5-1.5B-Instruct",
+  "--served-model-name=small-chat",
+  "--host=0.0.0.0",
+  "--port=8000",
+]
+env = { HF_HUB_OFFLINE = "1", HF_HOME = "/datasets/hf-models" }
+resources = { cpu = 2, memory_mib = 8192, gpu = 1, min_vram_mib = 16000 }
+datasets = ["hf-models"]
+mode = "on_demand"
+cold_wait_s = 300
+startup_timeout_s = 600
+idle_stop_s = 300
+reclaim_idle_s = 60
+retry_after_failure_s = 300

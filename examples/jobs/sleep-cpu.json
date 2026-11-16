@@ -1,0 +1,6 @@
+{
+  "argv": ["python", "-c", "import time; print('holding 8 CPUs for 60 s', flush=True); time.sleep(60)"],
+  "resources": {"cpu": 8, "memory_mib": 4096},
+  "time_limit_s": 180,
+  "estimated_runtime_s": 60
+}

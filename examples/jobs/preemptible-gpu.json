@@ -1,0 +1,9 @@
+{
+  "argv": ["uv", "run", "--locked", "python", "main.py", "--epochs", "10"],
+  "resources": {"cpu": 4, "memory_mib": 8192, "gpu": 1},
+  "time_limit_s": 1800,
+  "estimated_runtime_s": 600,
+  "priority": 2,
+  "safe_to_rerun": true,
+  "preemptible": true
+}

@@ -1,0 +1,11 @@
+# Fast lane on a GPU: inside `labflux shell` (or with `labflux run -- ...`), python, pytest and
+# `uv run` run in a session that holds one GPU. The first command leases the session; the
+# session is released after 10 idle minutes or with `labflux session close`.
+[project]
+name = "fast-lane-gpu"
+
+[session]
+cpu = 2
+memory_mib = 8192
+gpu = 1
+# gpu_model = "4090"   # optional: ask for a specific card

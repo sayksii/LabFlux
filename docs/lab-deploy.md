@@ -19,13 +19,20 @@ LabFlux 只使用其中一部分資源，並以專屬帳號 `labflux` 執行，�
 
 ## 事前準備（已完成）
 
-- 兩台都有 `labflux` 帳號：UID/GID 2001、在 docker 群組、只能用鑰匙登入、已開 linger
-  （沒有人登入時服務也會繼續執行，開機後自動啟動）。
-- 部署鑰匙是 kayle 上的 `~/.ssh/labflux_deploy`。兩台的 host key 固定在被 Git 忽略的
+- 三台都有 `labflux` 帳號：UID/GID 2001、在 docker 群組、只能用鑰匙登入、已開 linger
+  （沒有人登入時服務也會繼續執行，開機後自動啟動）。新增節點時由管理員建立同樣的帳號，
+  host key 先在機器上核對指紋，再加到 `known_hosts`。
+- 部署鑰匙是 kayle 上的 `~/.ssh/labflux_deploy`。每台的 host key 固定在被 Git 忽略的
   `.labflux/lab/known_hosts`，腳本一律檢查 host key，不會略過驗證。
 - 節點清單在 `configs/local-lab.toml`（被 Git 忽略）；格式見 `configs/lab.example.toml`。
 
-以下指令都在 kayle 的 repository 根目錄執行。
+以下指令都在 kayle 的 repository 根目錄執行（`uv sync --locked` 之後）。在 git worktree 裡執行時，
+先把兩個被 Git 忽略的路徑以 symlink 指向主 checkout，部署狀態才會只有一份：
+
+```bash
+ln -s /path/to/LabFlux/.labflux .labflux
+ln -s /path/to/LabFlux/configs/local-lab.toml configs/local-lab.toml
+```
 
 ## 指令
 
@@ -43,6 +50,16 @@ GPU 是否閒置、uv、剩餘磁碟、Worker 狀態、能否連到 Scheduler �
 測試容器只執行 `nvidia-smi -L`，不佔 VRAM，而且只在每張卡都閒置時才會執行
 （沒有運算程式、已用 VRAM 小於 1 GiB）。有任何 `FAIL` 時以非零狀態結束。
 
+目前預期看到的 `WARN`／`SKIP`（2026-11-16 實測，結束狀態 0）：
+
+| 節點 | 項目 | 原因 |
+|---|---|---|
+| karma | `user systemd  WARN  degraded` | 一個 snap 的 user service（firmware-notifier）失敗，與 LabFlux 無關 |
+| kindred | `GPUs idle  WARN` | 卡 3、4 是常駐的 gemma（LabFlux 自己的模型服務），卡 1 是其他人的程式；檢查看的是整台機器的卡，不只資源池 |
+| kindred | `GPU container  SKIP` | 有卡在使用中，所以不跑 GPU 測試容器 |
+
+第一次部署之前另有 uv 不存在、Scheduler 尚未啟動、kayle 的防火牆尚未安裝等 `WARN`，見 `docs/verification.md` 7.1。
+
 ### `firewall-instructions`：產生防火牆指令
 
 ```bash
@@ -50,15 +67,18 @@ uv run python scripts/lab_deploy.py firewall-instructions
 ```
 
 印出要由管理員執行的完整指令（見下一節）。**為什麼：** Scheduler 必須綁在 kayle 的公開 IP
-才能讓 karma 連入，但 kayle 目前沒有啟用任何防火牆；不擋的話整個校園網路都連得到。
+才能讓其他節點的 Worker 連入，但 kayle 沒有啟用其他防火牆；不擋的話整個校園網路都連得到。
 
 ### `deploy`：安裝或更新
 
 ```bash
-uv run python scripts/lab_deploy.py deploy --dry-run   # 只印出每一個步驟，不執行
-uv run python scripts/lab_deploy.py deploy             # 兩台都部署
+uv run python scripts/lab_deploy.py deploy --dry-run   # 只印出每一個步驟，不連線、不寫檔
+uv run python scripts/lab_deploy.py deploy             # 清單上的節點全部部署，Scheduler 的節點先
 uv run python scripts/lab_deploy.py deploy --node karma
 ```
+
+`--dry-run` 依序印出每台的 `ssh`／`scp` 指令與會寫出的設定檔（路徑與大小），`.labflux/lab/` 不會有任何變動，
+可以先拿來確認這次會動到哪些節點。
 
 每台依序執行：
 
@@ -78,7 +98,7 @@ Token 只在第一次部署時以 `secrets.token_urlsafe(32)` 產生，之後重
 
 - kayle 的 `labflux-firewall.service` 不是 `active`（Scheduler 不能在沒有防火牆時綁公開 IP）。
   Scheduler 的 service 本身也有同樣的檢查，開機時防火牆還沒好就不會啟動，之後自動重試。
-- 只部署 karma 但 Scheduler 沒有在執行。
+- 只部署 Worker 節點（例如 `--node karma`）但 Scheduler 沒有在執行。
 
 有工作在執行時也可以部署：M6.4 之後 Worker 停止時工作容器會繼續執行，新的 Worker 啟動後接手；
 M6.6 之後 Scheduler 重啟時從資料庫還原，等每台 Worker 核對完才恢復派送。重啟 Scheduler 時，
@@ -131,12 +151,39 @@ Scheduler 只綁 IPv4，不會從 IPv6 被連到。
 
 ## 使用
 
+一般使用者在任一台節點登入一次（見下方「使用者登入」），之後直接用共用的 `labflux` 指令：
+
 ```bash
-uv run labflux --config .labflux/lab/cli.toml nodes
-uv run labflux --config .labflux/lab/cli.toml submit examples/jobs/mnist.json --source examples/mnist --wait --wait-timeout 1800
+labflux login
+labflux nodes
+labflux submit examples/jobs/gpu-model.json --source examples/uv-gpu --wait --wait-timeout 1800
+labflux models
 ```
 
+部署者也可以用部署產生的 `.labflux/lab/cli.toml`（`scheduler.users` 的 token）：
+`uv run labflux --config .labflux/lab/cli.toml nodes`。
+
 `--wait` 預設只等 120 秒；節點第一次執行 torch 工作要下載約 3 GB 套件，所以要加 `--wait-timeout`。
+可直接提交的 CPU、RAM、GPU、快速測試與模型服務範例，以及在實驗室實測的結果，見 [examples/README.md](../examples/README.md)。
+
+### 部署後的驗收（`scripts/lab_smoke.py`）
+
+```bash
+uv run python scripts/lab_smoke.py --config .labflux/lab/cli.toml
+```
+
+報告預設寫到被 Git 忽略的 `.labflux/lab/lab-smoke.json`；要留作驗收紀錄時再複製到 `docs/evidence/`
+（例：[lab-smoke-2026-11-16.json](evidence/lab-smoke-2026-11-16.json)）。約 1～2 分鐘，以 GPU 為主依序檢查：每個 GPU 工作只看得到自己的卡、同一張卡不會配給兩個工作、卡滿時工作排隊；
+兩張卡的工作；經 CLI 提交、看日誌、取回結果的真實 CUDA 工作（`examples/uv-gpu`）；快速測試 session 搶占可搶占的
+GPU 工作、被搶占的工作之後重跑；FCFS 隊首阻擋與排隊中取消；CPU 配額、RAM 上限、OOM、時限與執行中取消；
+以及 Gateway 的一般與串流回應。
+
+- 只使用自己建立的小工作，結束時取消剩下的；任何節點上有模型服務以外的配置、或自己還有未結束的工作時拒絕開始。
+- 不重啟 Worker 或 Scheduler，不改排程策略；實驗室不是 `fcfs` 時加 `--policy priority|backfill`（API 不回報目前的策略）。
+- GPU 檢查只用資源池裡閒置的卡（沒有被模型服務占用、沒有外部使用），沒有就跳過並記在報告的 `skipped`。
+  FCFS 檢查會讓佇列被擋約 10 秒。
+- Worker 故障需要重啟 Worker，不在這裡測（見 `docs/verification.md` M6.7）。
+- 報告不含 IP、token、GPU UUID 與使用者名稱。舊的 `scripts/smoke.py` 只適用於三台 VM（見 `docs/vm-lab.md`）。
 
 從自己的電腦看 Dashboard：先建立 SSH 轉送，再打開 http://localhost:8770/dashboard ，
 以自己的 token（`login.toml` 或 `cli.toml` 裡的 `user_token`）登入。
@@ -180,6 +227,7 @@ labflux whoami    # alice
 排程策略：在 `configs/local-lab.toml` 的 `[scheduler]` 加上 `policy = "backfill"`（可用 `fcfs`、`priority`、`backfill`，
 其他值在解析清單時就被拒絕），重新 `deploy --node kayle`，就會寫進 `scheduler.toml` 的 `scheduling_policy`。
 沒有設定時不寫這一行，Scheduler 維持預設的 `fcfs`。各模式的行為見 README 的「排程與通訊」。
+實驗室目前沒有設定 `policy`，所以是 `fcfs`。改策略要重啟 Scheduler：進行中的快速測試指令與推論請求會失敗，常駐模型不受影響。
 
 ## 所有帳號共用的 CLI
 
@@ -235,6 +283,21 @@ curl -s $OPENAI_BASE_URL/models -H "Authorization: Bearer $OPENAI_API_KEY"
 ```
 
 8770 只放行 LabFlux 節點；其他機器先建立上一節的 SSH 轉送，再改用 `http://localhost:8770/v1`。
+命令列客戶端見 `examples/gateway/chat.py`（只用標準函式庫）。
+
+**常駐與自動釋放。** `mode = "persistent"` 的模型在資源足夠時自己啟動、不因閒置停止；預設的 `on_demand` 由第一個請求啟動，
+閒置 `idle_stop_s` 後停止（範例見 `configs/lab.example.toml` 的 `small-chat`）。改模式要修改清單後 `deploy --node kayle`：
+
+- 只改 `mode` 與時間設定（`cold_wait_s`、`idle_stop_s`、`reclaim_idle_s`、`retry_after_failure_s`）不算設定改變，執行中的模型不會重啟。
+  它也保留常駐時的閒置期限（約一年後，存在資料庫裡，重新部署不會重設），所以改成 `on_demand` 後**不會因閒置停止**，
+  有工作在等它的卡時也不會提早回收；要等一個經 Gateway 的請求結束，期限才改成「現在 + `idle_stop_s`」。
+  要讓它進入冷的狀態：送一個請求、等它結束，再等 `idle_stop_s`（有工作在等資源時 `reclaim_idle_s`）；
+  或部署時同時改一個下一點列出的欄位（例如 `startup_timeout_s`），它會立刻停止，之後由下一個請求冷啟動。
+- 改了 `image`、`argv`、`env`、`resources`、`datasets`、`startup_timeout_s`、`port`、`health_path`、`shm_mib` 或 `pids_limit` 時，
+  執行中的模型立刻停止（進行中的請求中斷）並套用新設定：常駐的重新啟動，自動釋放的等下一個請求。
+- gemma4-31b 的冷啟動約 4～5 分鐘，`on_demand` 時 `cold_wait_s` 與 `startup_timeout_s` 要給 600 秒左右，否則第一個請求先得到 503。
+- 以上依程式（`Scheduler._model_changed`、`_model_lease`、`end_request`、`_idle_stop`）整理，模式切換沒有在實驗室實測；
+  `on_demand` 的欄位在本機以 `examples/fake-model` 驗證過（`examples/README.md`）。展示前讓 gemma 變冷的步驟見 14.3 的展示文件。
 `labflux --config .labflux/lab/cli.toml models` 列出每個模型的模式、狀態（`waiting`、`starting`、`serving`、
 `stopping`、`failed`、`stopped`）、所在節點與進行中的請求數。
 
@@ -247,8 +310,11 @@ $SSH labflux@192.0.2.10 journalctl --user -u labflux-scheduler -f
 $SSH labflux@192.0.2.10 systemctl --user status labflux-worker
 ```
 
-## 停止、更新與移除
+## 啟動、停止、更新與移除
 
+- **啟動：** 服務已 `enable`，開機後自動啟動（linger）。手動啟動時先啟動 kayle 的 Scheduler，再啟動各台的 Worker：
+  `$SSH labflux@192.0.2.10 systemctl --user start labflux-scheduler.service`，
+  之後每台 `$SSH labflux@<host> systemctl --user start labflux-worker.service`；`lab_deploy.py status` 確認都是 `ONLINE`。
 - **更新：** 合併新版程式後重新執行 `deploy`，再請管理員更新每台的共用 CLI（見「所有帳號共用的 CLI」）。有工作在執行時也可以照常部署：工作由新的 Worker 接手，
   Scheduler 重啟後從資料庫還原；只有進行中的快速測試指令與推論請求需要重送。
 - **停止：** `$SSH labflux@<host> systemctl --user stop labflux-worker.service`；

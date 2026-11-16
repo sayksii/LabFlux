@@ -1,0 +1,5 @@
+{
+  "argv": ["python", "-c", "import time; print('holding 40 GiB of RAM for 60 s', flush=True); time.sleep(60)"],
+  "resources": {"cpu": 2, "memory_mib": 40960},
+  "time_limit_s": 180
+}

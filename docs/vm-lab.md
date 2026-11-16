@@ -3,6 +3,16 @@
 本環境使用 Ubuntu 24.04 cloud image、KVM／libvirt、NoCloud cloud-init，
 Scheduler 執行於開發主機，三台 VM 分別執行一個 Docker Worker。
 
+**現況（2026-11-16）：** 期中驗收（M5、M6.1～M6.3）用的三台 VM 已經移除，M14 沒有重建；
+本文件保留建置方式，期中的紀錄見 `docs/verification.md` M5 與 [midterm-smoke.json](evidence/midterm-smoke.json)。
+之後的功能都在實驗室三台實體機驗收（`docs/lab-deploy.md`、`scripts/lab_smoke.py`）。重建 VM 時要注意：
+
+- `vm_lab.py deploy` 不建置 uv 基礎映像，VM 上只能執行指定 `image` 的工作（smoke 用 `python:3.12-slim`）。
+  要用 uv 模式或快速測試 session，先在每台 VM 執行 `docker build -t localhost/labflux/python-uv:3.12-uv0.11.8 images/python-uv`
+  （需要複製 `images/python-uv/`），或在 `.labflux.toml` 的 `[session]` 指定 `image`。
+- VM 沒有 GPU，也沒有設定排程策略、模型服務與 `worker_login`（`labflux login` 不能用，CLI 使用 `.labflux/vms/scheduler.toml` 的 token）。
+- 以上兩點是讀 `scripts/vm_lab.py` 得出的，沒有重建 VM 實測。
+
 | Worker | vCPU | 配置 RAM | 系統保留 RAM |
 |---|---:|---:|---:|
 | labflux-vm-a | 1 | 2 GiB | 512 MiB |
@@ -77,6 +87,9 @@ uv run labflux --config .labflux/vms/scheduler.toml fetch JOB_ID --directory out
 uv run python scripts/smoke.py --config .labflux/vms/scheduler.toml --faults
 ```
 
+`scripts/smoke.py` 只適用於這三台 VM：它要求三個 Worker 分別是 1／2／4 vCPU、每台有資料集 `demo`、
+結束時所有配置歸零，`--faults` 以 VM 的 sudo 暫停 Worker。實驗室三台改用 `scripts/lab_smoke.py`。
+
 此命令建立並追蹤自己的 18 個工作，完成 10 項檢查：
 
 1. 三台不同 CPU／RAM 配置的 Worker 均上線。
@@ -114,4 +127,6 @@ Guest 的 Worker 日誌：
 ssh -i .labflux/vms/id_ed25519 -o UserKnownHostsFile=.labflux/vms/known_hosts ubuntu@VM_IP 'sudo journalctl -u labflux-worker -n 50 --no-pager'
 ```
 
-M6.4～M6.7 的自動對帳、重排與執行中重啟恢復尚未交付；本階段的停止／重開驗證只在環境閒置時進行。
+VM 階段時 M6.4～M6.6 尚未交付，停止／重開只在環境閒置時驗證。M6.4～M6.6（Worker 與 Scheduler 重啟後接手、
+節點失聯後重跑）之後在 kayle 以 Docker 測試、實驗室實際重新部署驗證，沒有回到 VM 重測；`vm_lab.py stop` 與 `deploy`
+仍然要求環境閒置。實際關閉 VM 的故障驗證（M6.7）沒有做。

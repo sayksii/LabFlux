@@ -1,0 +1,7 @@
+{
+  "argv": ["sh", "-c", "nvidia-smi -L; echo 'holding the card for 120 s'; sleep 120"],
+  "resources": {"cpu": 2, "memory_mib": 2048, "gpu": 1, "min_vram_mib": 20480},
+  "time_limit_s": 300,
+  "safe_to_rerun": true,
+  "retries_on_node_failure": 1
+}
