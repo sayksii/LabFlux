@@ -99,9 +99,10 @@ loopback 以臨時的 Scheduler、Worker 與 `fake-model`（`python:3.12-slim`�
 
 ## 展示分鏡各幕會用到的工作類型（給 14.3）
 
-M14 的展示分鏡（M12 設計提案，9 幕）用到的工作類型與可以拿來改的範例。展示以 GPU 為主（使用者決定）。這裡只列通用的類型：
+M14 的展示分鏡（9 幕）用到的工作類型與可以拿來改的範例；展示本身（14.3）已經有自己的工作檔，這裡是通用的對照。展示以 GPU 為主（使用者決定）。這裡只列通用的類型：
 排程是 best fit、同分時依節點名稱，各幕實際的大小、時限與送出順序要先預演，
-以 feat/m12 的 `tests/test_storyboard.py`、`tests/test_storyboard_gpu.py`（第 2、3 幕的 GPU 版）與 14.3 的展示檔為準。
+以 14.3 的 [docs/demo.md](../docs/demo.md)、`examples/demo/`、`scripts/demo.py`，以及分鏡測試 `tests/test_storyboard.py`、
+`tests/test_storyboard_gpu.py`（第 2、3 幕的 GPU 版）、`tests/test_storyboard_model.py`（模型服務）、`tests/test_demo_scenes.py` 為準。
 
 | 幕 | 需要的工作類型 | 可以改的範例 | 前提或依賴 |
 |---|---|---|---|

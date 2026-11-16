@@ -1374,7 +1374,7 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
 - Gateway：`chat.py` 對 gemma 一般回應 0.73 秒、串流第一段 0.05 秒；兩個串流同時送出時進行中 2，都在約 2.3 秒完成。
   `chat.py` 只用標準函式庫，也能用節點上的 Python 3.10（kayle 的系統 Python 沒有 `tomllib`，所以不用它）。
 - 同專案的 MNIST 第二次執行從上一個工作留下的檔案開始，沒有重新下載資料（6.1）。
-- examples/README.md 另列出展示分鏡各幕會用到的工作類型，給 14.3 改用；展示以 GPU 為主；各幕的實際大小與順序以 feat/m12 的 `tests/test_storyboard.py`、`tests/test_storyboard_gpu.py` 與 14.3 為準。
+- examples/README.md 另列出展示分鏡各幕會用到的工作類型，給 14.3 改用；展示以 GPU 為主；各幕的實際大小與順序以 14.3 的 `docs/demo.md`、`examples/demo/` 與分鏡測試為準（見下方 M12、M14.3 兩節）。
 
 ### 14.4 乾淨環境
 
@@ -1434,7 +1434,7 @@ FCFS 檢查原本比較容器的開始時間，但隊首與後面的工作在同
 
 ### 已知限制（M14）
 
-- `lab_smoke.py` 讀不到 Scheduler 目前的策略（API 不回報），要自己給 `--policy`；M12 的 `/api/queue` 會回報策略，之後可以改讀它。
+- `lab_smoke.py` 讀不到 Scheduler 目前的策略（實驗室跑的 `8fcab7a` 沒有回報策略的 API），要自己給 `--policy`；M12 的 `/api/queue` 會回報策略，實驗室部署 M12 之後可以改讀它。實驗室改成 `backfill` 後執行時要加 `--policy backfill`。
 - `lab_smoke.py` 不測 Worker 故障（要重啟 Worker），也不測 `priority`／`backfill` 下的批次搶占（要改策略、重新部署 kayle）；
   這兩者見 M6.5～M6.7 與 M11 的實驗室實測。只用閒置的卡：kindred 的 A40 被 gemma 占用，smoke 沒有在 A40 上跑工作。
 - smoke 有其他人的工作時拒絕開始，但只看得到節點上的配置與自己的工作，看不到別人排隊中的工作。FCFS 檢查讓整個佇列被擋約 10 秒。
