@@ -314,7 +314,9 @@ def fig_gantt(run: dict, out: Path, title: str) -> None:
     ax.grid(axis="y", visible=False)
     ax.set_xlabel("自第一個工作送出起的秒數（含排程與容器啟動）")
     ax.set_title(title, loc="left")
-    legend = [Patch(facecolor=NEUTRAL, label="依序開始"), Patch(facecolor=COLOR["backfill"], label="backfill 先跑")]
+    legend = [Patch(facecolor=NEUTRAL, label="依序開始")]
+    if any(a["backfilled"] for a in attempts):
+        legend.append(Patch(facecolor=COLOR["backfill"], label="backfill 先跑"))
     if any(a["preempted"] for a in attempts):
         legend.append(Patch(facecolor=NEUTRAL, hatch="////", label="被搶占的執行"))
     ax.set_xlim(0, max(a["end"] for a in attempts) * 1.02)
@@ -343,7 +345,7 @@ def fig_summary(groups: dict, out: Path, footnote: str = "") -> None:
         fontweight="bold",
         color=INK,
     )
-    grid = fig.add_gridspec(2, 3, left=0.06, right=0.98, top=0.86, bottom=0.12, hspace=0.55, wspace=0.3)
+    grid = fig.add_gridspec(2, 3, left=0.06, right=0.98, top=0.86, bottom=0.15, hspace=0.55, wspace=0.3)
     panels = [
         (grid[0, 0], "gpu", "mean_wait_s", "GPU 爭用：平均等待", " s", 1),
         (grid[0, 1], "gpu", "alloc_gpu", "GPU 爭用：GPU 配置占用率", "%", 100),
@@ -371,6 +373,35 @@ def fig_summary(groups: dict, out: Path, footnote: str = "") -> None:
     plt.close(fig)
 
 
+def dispatch_mean(groups: dict, case: str, policy: str, job: str):
+    values = [
+        r["dispatch_s"]
+        for item in groups.get((case, policy, "default"), [])
+        for r in job_rows(item["run"])
+        if r["job"] == job
+    ]
+    return statistics.fmean(values) if values else None
+
+
+def summary_footnote(groups: dict) -> str:
+    """Costs and non-improvements for the slide, computed from the runs."""
+    parts = []
+    wait = {p: stat(groups.get(("contention", p, "default"), []), "mean_wait_s")[0] for p in POLICIES}
+    if wait["priority"] and wait["fcfs"]:
+        parts.append(
+            f"priority 沒有縮短等待（混合爭用 {wait['priority']:.0f} s 對 FCFS {wait['fcfs']:.0f} s）："
+            "隊首放不下時後面仍全部等待"
+        )
+    late = dispatch_mean(groups, "gpu", "backfill", "g03")
+    base = dispatch_mean(groups, "gpu", "fcfs", "g03")
+    if late is not None and base is not None:
+        parts.append(f"backfill 的代價：要 2 張卡的工作比 FCFS 晚 {late - base:.0f} s 開始（未超過保留時刻）")
+    if not parts:
+        return ""
+    parts[-1] += "。工作數：GPU 12、混合 16、使用者 30（3 人 × 10）"
+    return "註：" + "。\n　　".join(parts) + "。"
+
+
 def main() -> None:
     root = EVIDENCE / "raw"
     figures = EVIDENCE / "figures"
@@ -392,7 +423,7 @@ def main() -> None:
                 if items:
                     title = f"{CASE_TITLE[case]} · {policy} · 第 {items[0]['rep']} 次"
                     fig_gantt(items[0]["run"], figures / f"gantt_{case}_{policy}.png", title)
-        fig_summary(groups, figures / "summary_16x9.png")
+        fig_summary(groups, figures / "summary_16x9.png", summary_footnote(groups))
     sim = collect(EVIDENCE / "sim")
     sim_cases = [c for c in ("gpu", "contention", "users", "urgent", "cpu", "ram", "mixed") if any(k[0] == c for k in sim)]
     if sim_cases:

@@ -1,0 +1,207 @@
+{
+ "k01": [
+  {
+   "attempt": "2cb1dbcc",
+   "cpu_s": 90.361,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 4090"
+   ],
+   "experiment": "m13:contention-priority-r3-1794799390:k01",
+   "matmuls_per_card": 32040,
+   "mode": "gpu",
+   "node": "karma",
+   "run_s": 90.0,
+   "wall_s": 90.022
+  }
+ ],
+ "k02": [
+  {
+   "attempt": "63389450",
+   "cpu_s": 1918.863,
+   "cpus": 16.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k02",
+   "mode": "cpu",
+   "node": "kayle",
+   "run_s": 120.0,
+   "wall_s": 120.002
+  }
+ ],
+ "k03": [
+  {
+   "attempt": "3d86ed45",
+   "cpu_s": 60.389,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 3090",
+    "NVIDIA RTX A5000"
+   ],
+   "experiment": "m13:contention-priority-r3-1794799390:k03",
+   "matmuls_per_card": 7600,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 60.0,
+   "wall_s": 60.049
+  }
+ ],
+ "k04": [
+  {
+   "attempt": "79bff848",
+   "cpu_s": 179.797,
+   "cpus": 4.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k04",
+   "mode": "cpu",
+   "node": "kayle",
+   "run_s": 45.0,
+   "wall_s": 45.001
+  }
+ ],
+ "k05": [
+  {
+   "attempt": "e02e781f",
+   "cpu_s": 0.002,
+   "cpus": 2.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k05",
+   "mode": "sleep",
+   "node": "kayle",
+   "run_s": 60.0,
+   "wall_s": 60.0
+  }
+ ],
+ "k06": [
+  {
+   "attempt": "00cdfa8f",
+   "cpu_s": 179.731,
+   "cpus": 4.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k06",
+   "mode": "cpu",
+   "node": "kayle",
+   "run_s": 45.0,
+   "wall_s": 45.001
+  }
+ ],
+ "k07": [
+  {
+   "attempt": "6315b72e",
+   "cpu_s": 1438.832,
+   "cpus": 24.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k07",
+   "mode": "cpu",
+   "node": "kindred",
+   "run_s": 60.0,
+   "wall_s": 60.004
+  }
+ ],
+ "k08": [
+  {
+   "attempt": "78f7d997",
+   "cpu_s": 0.001,
+   "cpus": 2.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k08",
+   "mode": "sleep",
+   "node": "kayle",
+   "run_s": 30.0,
+   "wall_s": 30.0
+  }
+ ],
+ "k09": [
+  {
+   "attempt": "f5eae2ee",
+   "cpu_s": 0.002,
+   "cpus": 2.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k09",
+   "mode": "sleep",
+   "node": "kayle",
+   "run_s": 60.0,
+   "wall_s": 60.0
+  }
+ ],
+ "k10": [
+  {
+   "attempt": "7076804b",
+   "cpu_s": 179.764,
+   "cpus": 4.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k10",
+   "mode": "cpu",
+   "node": "karma",
+   "run_s": 45.0,
+   "wall_s": 45.001
+  }
+ ],
+ "k11": [
+  {
+   "attempt": "369e04ca",
+   "cpu_s": 45.65,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 4090"
+   ],
+   "experiment": "m13:contention-priority-r3-1794799390:k11",
+   "matmuls_per_card": 16030,
+   "mode": "gpu",
+   "node": "karma",
+   "run_s": 45.0,
+   "wall_s": 45.026
+  }
+ ],
+ "k12": [
+  {
+   "attempt": "99e9a0ad",
+   "cpu_s": 0.001,
+   "cpus": 2.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k12",
+   "mode": "sleep",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.0
+  }
+ ],
+ "k13": [
+  {
+   "attempt": "b0c31e70",
+   "cpu_s": 119.808,
+   "cpus": 4.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k13",
+   "mode": "cpu",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.001
+  }
+ ],
+ "k14": [
+  {
+   "attempt": "570f19cd",
+   "cpu_s": 179.885,
+   "cpus": 4.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k14",
+   "mode": "cpu",
+   "node": "kindred",
+   "run_s": 45.0,
+   "wall_s": 45.002
+  }
+ ],
+ "k15": [
+  {
+   "attempt": "6a90407d",
+   "cpu_s": 0.001,
+   "cpus": 2.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k15",
+   "mode": "sleep",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.0
+  }
+ ],
+ "k16": [
+  {
+   "attempt": "6d8c6a64",
+   "cpu_s": 119.905,
+   "cpus": 4.0,
+   "experiment": "m13:contention-priority-r3-1794799390:k16",
+   "mode": "cpu",
+   "node": "kindred",
+   "run_s": 30.0,
+   "wall_s": 30.002
+  }
+ ]
+}

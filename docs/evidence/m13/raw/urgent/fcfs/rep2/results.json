@@ -1,0 +1,158 @@
+{
+ "b01": [
+  {
+   "attempt": "e7c1c0fa",
+   "cpu_s": 0.003,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:b01",
+   "mode": "sleep",
+   "node": "karma",
+   "run_s": 60.0,
+   "wall_s": 60.001
+  }
+ ],
+ "b02": [
+  {
+   "attempt": "ec283333",
+   "cpu_s": 0.002,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:b02",
+   "mode": "sleep",
+   "node": "karma",
+   "run_s": 60.0,
+   "wall_s": 60.0
+  }
+ ],
+ "b03": [
+  {
+   "attempt": "522a913d",
+   "cpu_s": 0.002,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:b03",
+   "mode": "sleep",
+   "node": "kayle",
+   "run_s": 60.0,
+   "wall_s": 60.001
+  }
+ ],
+ "b04": [
+  {
+   "attempt": "d62c3bc4",
+   "cpu_s": 0.002,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:b04",
+   "mode": "sleep",
+   "node": "kayle",
+   "run_s": 60.0,
+   "wall_s": 60.0
+  }
+ ],
+ "h01": [
+  {
+   "attempt": "ea36abdc",
+   "cpu_s": 0.001,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:h01",
+   "mode": "sleep",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.001
+  }
+ ],
+ "h02": [
+  {
+   "attempt": "05631e6a",
+   "cpu_s": 0.005,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:h02",
+   "mode": "sleep",
+   "node": "kindred",
+   "run_s": 30.0,
+   "wall_s": 30.0
+  }
+ ],
+ "p01": [
+  {
+   "attempt": "97154cee",
+   "cpu_s": 0.002,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:p01",
+   "mode": "sleep",
+   "node": "karma",
+   "run_s": 60.0,
+   "wall_s": 60.001
+  }
+ ],
+ "p02": [
+  {
+   "attempt": "3ded67e3",
+   "cpu_s": 0.002,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:p02",
+   "mode": "sleep",
+   "node": "karma",
+   "run_s": 75.0,
+   "wall_s": 75.001
+  }
+ ],
+ "p03": [
+  {
+   "attempt": "38331441",
+   "cpu_s": 0.003,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:p03",
+   "mode": "sleep",
+   "node": "kayle",
+   "run_s": 90.0,
+   "wall_s": 90.001
+  }
+ ],
+ "p04": [
+  {
+   "attempt": "f959f1b5",
+   "cpu_s": 0.004,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:p04",
+   "mode": "sleep",
+   "node": "kayle",
+   "run_s": 105.0,
+   "wall_s": 105.0
+  }
+ ],
+ "p05": [
+  {
+   "attempt": "4df5c7da",
+   "cpu_s": 0.005,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:p05",
+   "mode": "sleep",
+   "node": "kindred",
+   "run_s": 120.0,
+   "wall_s": 120.0
+  }
+ ],
+ "p06": [
+  {
+   "attempt": "98c62fe7",
+   "cpu_s": 0.007,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:p06",
+   "mode": "sleep",
+   "node": "kindred",
+   "run_s": 135.0,
+   "wall_s": 135.0
+  }
+ ],
+ "p07": [
+  {
+   "attempt": "bbe449f9",
+   "cpu_s": 0.009,
+   "cpus": 8.0,
+   "experiment": "m13:urgent-fcfs-r2-1794795575:p07",
+   "mode": "sleep",
+   "node": "kindred",
+   "run_s": 150.0,
+   "wall_s": 150.0
+  }
+ ]
+}

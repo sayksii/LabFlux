@@ -125,6 +125,23 @@ class Lab:
         out = self.ssh(self.scheduler_node.name, "python3 -", stdin=script).stdout
         return [tuple(line.split("|")) for line in out.splitlines() if line.strip()]
 
+    def foreign_jobs_between(self, start: float, end: float) -> list[tuple]:
+        """Other users' jobs that existed during [start, end]: submitted by `end` and either
+        still unfinished or updated (started, finished) at or after `start`. A run they overlap
+        competed with them and is redone."""
+        script = (
+            "import sqlite3, os\n"
+            f"path = os.path.expanduser({DATABASE!r})\n"
+            "db = sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=5)\n"
+            "rows = db.execute(\"SELECT substr(id,1,8), submission_seq, state, created_at, "
+            "updated_at FROM jobs WHERE kind != 'MODEL' AND owner NOT LIKE 'm13s%' AND "
+            f"created_at <= {end} AND (updated_at >= {start} OR state NOT IN "
+            "('SUCCEEDED','FAILED','CANCELLED'))\").fetchall()\n"
+            "for r in rows: print('|'.join(map(str, r)))\n"
+        )
+        out = self.ssh(self.scheduler_node.name, "python3 -", stdin=script).stdout
+        return [tuple(line.split("|")) for line in out.splitlines() if line.strip()]
+
     def gpu_state(self) -> dict[str, dict]:
         result = {}
         for node in self.get("/api/nodes"):

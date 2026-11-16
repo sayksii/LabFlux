@@ -1,0 +1,54 @@
+{"note": "fcfs: started on karma (submission #341)", "reason": "assigned to karma", "state": "STARTING", "t": 1794796526.6238441, "wid": "p01"}
+{"note": "fcfs: started on karma (submission #341)", "reason": "executing", "state": "RUNNING", "t": 1794796527.6550214, "wid": "p01"}
+{"note": "fcfs: started on karma (submission #342)", "reason": "executing", "state": "RUNNING", "t": 1794796527.6550214, "wid": "p02"}
+{"note": "fcfs: started on kayle (submission #343)", "reason": "assigned to kayle", "state": "STARTING", "t": 1794796527.6550214, "wid": "p03"}
+{"note": "fcfs: started on kayle (submission #343)", "reason": "executing", "state": "RUNNING", "t": 1794796528.6756744, "wid": "p03"}
+{"note": "fcfs: started on kayle (submission #344)", "reason": "executing", "state": "RUNNING", "t": 1794796528.6756744, "wid": "p04"}
+{"note": "fcfs: started on kindred (submission #345)", "reason": "assigned to kindred", "state": "STARTING", "t": 1794796528.6756744, "wid": "p05"}
+{"note": "fcfs: started on kindred (submission #345)", "reason": "executing", "state": "RUNNING", "t": 1794796529.703383, "wid": "p05"}
+{"note": "fcfs: started on kindred (submission #346)", "reason": "assigned to kindred", "state": "STARTING", "t": 1794796529.703383, "wid": "p06"}
+{"note": "fcfs: started on kindred (submission #347)", "reason": "assigned to kindred", "state": "STARTING", "t": 1794796529.703383, "wid": "p07"}
+{"note": "fcfs: started on kindred (submission #346)", "reason": "executing", "state": "RUNNING", "t": 1794796530.7147703, "wid": "p06"}
+{"note": "fcfs: started on kindred (submission #347)", "reason": "executing", "state": "RUNNING", "t": 1794796530.7147703, "wid": "p07"}
+{"note": "fcfs: first in line (submission #348); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets", "state": "QUEUED", "t": 1794796536.757013, "wid": "b01"}
+{"note": "fcfs: submission #349; waiting behind job 49c334ef", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796537.808755, "wid": "b02"}
+{"note": "fcfs: submission #350; waiting behind job 49c334ef", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796537.808755, "wid": "b03"}
+{"note": "fcfs: submission #351; waiting behind job 49c334ef", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796538.851879, "wid": "b04"}
+{"note": "fcfs: submission #352; waiting behind job 49c334ef", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796557.023983, "wid": "h01"}
+{"note": "fcfs: submission #353; waiting behind job 49c334ef", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796577.2340534, "wid": "h02"}
+{"note": "fcfs: started on karma (submission #348)", "reason": "executing", "state": "RUNNING", "t": 1794796587.339828, "wid": "b01"}
+{"note": "fcfs: first in line (submission #349); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets", "state": "QUEUED", "t": 1794796587.339828, "wid": "b02"}
+{"note": "fcfs: submission #350; waiting behind job 7928143d", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796587.339828, "wid": "b03"}
+{"note": "fcfs: submission #351; waiting behind job 7928143d", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796587.339828, "wid": "b04"}
+{"note": "fcfs: submission #353; waiting behind job 7928143d", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796587.339828, "wid": "h02"}
+{"note": "fcfs: started on karma (submission #341)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796587.339828, "wid": "p01"}
+{"note": "fcfs: submission #352; waiting behind job 7928143d", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796587.339828, "wid": "h01"}
+{"note": "fcfs: started on karma (submission #349)", "reason": "executing", "state": "RUNNING", "t": 1794796603.5070133, "wid": "b02"}
+{"note": "fcfs: first in line (submission #350); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets", "state": "QUEUED", "t": 1794796603.5070133, "wid": "b03"}
+{"note": "fcfs: submission #351; waiting behind job 449c4afc", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796603.5070133, "wid": "b04"}
+{"note": "fcfs: submission #353; waiting behind job 449c4afc", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796603.5070133, "wid": "h02"}
+{"note": "fcfs: started on karma (submission #342)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796603.5070133, "wid": "p02"}
+{"note": "fcfs: submission #352; waiting behind job 449c4afc", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796603.5070133, "wid": "h01"}
+{"note": "fcfs: started on kayle (submission #350)", "reason": "executing", "state": "RUNNING", "t": 1794796618.6696005, "wid": "b03"}
+{"note": "fcfs: first in line (submission #351); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets", "state": "QUEUED", "t": 1794796618.6696005, "wid": "b04"}
+{"note": "fcfs: submission #353; waiting behind job 6a76e171", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796618.6696005, "wid": "h02"}
+{"note": "fcfs: started on kayle (submission #343)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796618.6696005, "wid": "p03"}
+{"note": "fcfs: submission #352; waiting behind job 6a76e171", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796618.6696005, "wid": "h01"}
+{"note": "fcfs: started on kayle (submission #351)", "reason": "assigned to kayle", "state": "STARTING", "t": 1794796633.81999, "wid": "b04"}
+{"note": "fcfs: submission #353; waiting behind job b3a319d2", "reason": "waiting for scheduling", "state": "QUEUED", "t": 1794796633.81999, "wid": "h02"}
+{"note": "fcfs: started on kayle (submission #344)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796633.81999, "wid": "p04"}
+{"note": "fcfs: first in line (submission #352); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets", "state": "QUEUED", "t": 1794796633.81999, "wid": "h01"}
+{"note": "fcfs: started on kayle (submission #351)", "reason": "executing", "state": "RUNNING", "t": 1794796634.8322294, "wid": "b04"}
+{"note": "fcfs: started on karma (submission #348)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796647.9752965, "wid": "b01"}
+{"note": "fcfs: first in line (submission #353); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets", "state": "QUEUED", "t": 1794796647.9752965, "wid": "h02"}
+{"note": "fcfs: started on karma (submission #352)", "reason": "executing", "state": "RUNNING", "t": 1794796647.9752965, "wid": "h01"}
+{"note": "fcfs: started on kindred (submission #353)", "reason": "assigned to kindred", "state": "STARTING", "t": 1794796650.000075, "wid": "h02"}
+{"note": "fcfs: started on kindred (submission #345)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796650.000075, "wid": "p05"}
+{"note": "fcfs: started on kindred (submission #353)", "reason": "executing", "state": "RUNNING", "t": 1794796651.0135298, "wid": "h02"}
+{"note": "fcfs: started on karma (submission #349)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796663.1451719, "wid": "b02"}
+{"note": "fcfs: started on kindred (submission #346)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796666.1762702, "wid": "p06"}
+{"note": "fcfs: started on karma (submission #352)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796678.309358, "wid": "h01"}
+{"note": "fcfs: started on kayle (submission #350)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796679.3246346, "wid": "b03"}
+{"note": "fcfs: started on kindred (submission #353)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796681.3443213, "wid": "h02"}
+{"note": "fcfs: started on kindred (submission #347)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796681.3443213, "wid": "p07"}
+{"note": "fcfs: started on kayle (submission #351)", "reason": "completed", "state": "SUCCEEDED", "t": 1794796694.4801092, "wid": "b04"}

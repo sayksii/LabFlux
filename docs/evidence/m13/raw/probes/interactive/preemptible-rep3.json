@@ -1,0 +1,158 @@
+{
+ "commands": [
+  {
+   "command": "cold",
+   "exit_code": 0,
+   "exit_s": 1.417,
+   "first_output_s": 1.376,
+   "output": [
+    "labflux: waiting for a session: waiting for matching CPU/RAM/GPU capacity or datasets"
+   ],
+   "start": 1794803083.9736946
+  },
+  {
+   "command": "warm",
+   "exit_code": 0,
+   "exit_s": 0.401,
+   "first_output_s": 0.36,
+   "output": [],
+   "start": 1794803085.3910763
+  }
+ ],
+ "fill": [
+  {
+   "attempts": [
+    {
+     "created_at": 1794803079.1934865,
+     "finished_at": 1794803086.385268,
+     "gpus": [],
+     "id": "973df515",
+     "node_id": "karma",
+     "preempted_by": null,
+     "reason": "cancelled",
+     "started_at": 1794803079.4437678,
+     "state": "CANCELLED"
+    }
+   ],
+   "job": "f01"
+  },
+  {
+   "attempts": [
+    {
+     "created_at": 1794803079.5156267,
+     "finished_at": 1794803086.4047706,
+     "gpus": [],
+     "id": "2b9989fc",
+     "node_id": "karma",
+     "preempted_by": null,
+     "reason": "cancelled",
+     "started_at": 1794803079.6877158,
+     "state": "CANCELLED"
+    }
+   ],
+   "job": "f02"
+  },
+  {
+   "attempts": [
+    {
+     "created_at": 1794803079.8306003,
+     "finished_at": 1794803086.5121868,
+     "gpus": [],
+     "id": "b3f5190b",
+     "node_id": "kayle",
+     "preempted_by": null,
+     "reason": "cancelled",
+     "started_at": 1794803080.0943465,
+     "state": "CANCELLED"
+    }
+   ],
+   "job": "f03"
+  },
+  {
+   "attempts": [
+    {
+     "created_at": 1794803080.1457484,
+     "finished_at": 1794803086.480247,
+     "gpus": [],
+     "id": "4d885257",
+     "node_id": "kayle",
+     "preempted_by": null,
+     "reason": "cancelled",
+     "started_at": 1794803080.400033,
+     "state": "CANCELLED"
+    }
+   ],
+   "job": "f04"
+  },
+  {
+   "attempts": [
+    {
+     "created_at": 1794803080.4659033,
+     "finished_at": 1794803086.750012,
+     "gpus": [],
+     "id": "350a8abf",
+     "node_id": "kindred",
+     "preempted_by": null,
+     "reason": "cancelled",
+     "started_at": 1794803081.0014713,
+     "state": "CANCELLED"
+    }
+   ],
+   "job": "f05"
+  },
+  {
+   "attempts": [
+    {
+     "created_at": 1794803080.7813978,
+     "finished_at": 1794803086.8532295,
+     "gpus": [],
+     "id": "1cd23e0c",
+     "node_id": "kindred",
+     "preempted_by": null,
+     "reason": "cancelled",
+     "started_at": 1794803081.341984,
+     "state": "CANCELLED"
+    }
+   ],
+   "job": "f06"
+  },
+  {
+   "attempts": [
+    {
+     "created_at": 1794803081.101397,
+     "finished_at": 1794803084.5664585,
+     "gpus": [],
+     "id": "c1a0a9b5",
+     "node_id": "kindred",
+     "preempted_by": "405050dd",
+     "reason": "preempted by job 405050dd (cancelled)",
+     "started_at": 1794803081.7268462,
+     "state": "PREEMPTED"
+    }
+   ],
+   "job": "f07"
+  }
+ ],
+ "full_at": 1794803081.973198,
+ "preemptible_fill": true,
+ "probe": "interactive",
+ "rep": 3,
+ "session": {
+  "node_id": "kindred",
+  "reason": "executing",
+  "state": "RUNNING"
+ },
+ "session_attempts": [
+  {
+   "created_at": 1794803084.5677369,
+   "finished_at": null,
+   "gpus": [],
+   "id": "a5ae9511",
+   "node_id": "kindred",
+   "preempted_by": null,
+   "reason": "dispatched",
+   "started_at": 1794803085.06076,
+   "state": "STOPPING"
+  }
+ ]
+}
