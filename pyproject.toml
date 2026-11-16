@@ -24,6 +24,9 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest>=8,<10", "pytest-cov>=6,<8", "ruff>=0.11,<1"]
+experiments = [
+    "matplotlib>=3.9,<4",
+]
 
 [project.scripts]
 labflux = "labflux.cli:app"

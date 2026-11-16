@@ -1,0 +1,99 @@
+{
+ "cold": {
+  "seconds": 1.542,
+  "status": 200
+ },
+ "contended": false,
+ "model_states": [
+  {
+   "attempt": "84cc0354",
+   "node": "karma",
+   "state": "starting",
+   "t": 1794803369.5324075
+  },
+  {
+   "attempt": "84cc0354",
+   "node": "karma",
+   "state": "serving",
+   "t": 1794803371.0785224
+  },
+  {
+   "attempt": "84cc0354",
+   "node": "karma",
+   "state": "stopping",
+   "t": 1794803431.602802
+  },
+  {
+   "attempt": "84cc0354",
+   "node": "karma",
+   "state": "stopped",
+   "t": 1794803431.8585935
+  }
+ ],
+ "probe": "model",
+ "reclaim": {
+  "dispatched": 1794803431.6872427,
+  "idle_before_dispatch_s": 60.5,
+  "last_request": 1794803371.1857033,
+  "submitted": 1794803371.198183,
+  "wait_s": 60.49
+ },
+ "rep": 2,
+ "waiting_attempts": [
+  {
+   "created_at": 1794803431.6872427,
+   "finished_at": 1794803452.2845345,
+   "gpus": [
+    "karma/RTX 4090"
+   ],
+   "id": "592da42e",
+   "node_id": "karma",
+   "preempted_by": null,
+   "reason": "completed",
+   "started_at": 1794803431.8946483,
+   "state": "SUCCEEDED"
+  }
+ ],
+ "warm": [
+  {
+   "seconds": 0.018,
+   "status": 200
+  },
+  {
+   "seconds": 0.012,
+   "status": 200
+  },
+  {
+   "seconds": 0.013,
+   "status": 200
+  },
+  {
+   "seconds": 0.012,
+   "status": 200
+  },
+  {
+   "seconds": 0.011,
+   "status": 200
+  },
+  {
+   "seconds": 0.012,
+   "status": 200
+  },
+  {
+   "seconds": 0.015,
+   "status": 200
+  },
+  {
+   "seconds": 0.016,
+   "status": 200
+  },
+  {
+   "seconds": 0.01,
+   "status": 200
+  },
+  {
+   "seconds": 0.017,
+   "status": 200
+  }
+ ]
+}

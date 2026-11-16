@@ -1,0 +1,162 @@
+name = "users"
+description = """User contention with equal demand (lab case). alice, bob and carol each submit ten identical
+8-core jobs, 10 s apart; seven fit at a time (kayle 2, karma 2, kindred 3). FCFS serves whoever
+arrived first; the fairness score (recent usage) lets the later users in sooner. Jobs sleep."""
+
+[defaults]
+cpu = 8
+memory_mib = 4096
+run_s = 45
+time_limit_s = 90
+priority = 5
+load = "sleep"
+
+[[jobs]]
+id = "u01"
+at = 0.0
+user = "alice"
+
+[[jobs]]
+id = "u02"
+at = 0.5
+user = "alice"
+
+[[jobs]]
+id = "u03"
+at = 1.0
+user = "alice"
+
+[[jobs]]
+id = "u04"
+at = 1.5
+user = "alice"
+
+[[jobs]]
+id = "u05"
+at = 2.0
+user = "alice"
+
+[[jobs]]
+id = "u06"
+at = 2.5
+user = "alice"
+
+[[jobs]]
+id = "u07"
+at = 3.0
+user = "alice"
+
+[[jobs]]
+id = "u08"
+at = 3.5
+user = "alice"
+
+[[jobs]]
+id = "u09"
+at = 4.0
+user = "alice"
+
+[[jobs]]
+id = "u10"
+at = 4.5
+user = "alice"
+
+[[jobs]]
+id = "u11"
+at = 10.0
+user = "bob"
+
+[[jobs]]
+id = "u12"
+at = 10.5
+user = "bob"
+
+[[jobs]]
+id = "u13"
+at = 11.0
+user = "bob"
+
+[[jobs]]
+id = "u14"
+at = 11.5
+user = "bob"
+
+[[jobs]]
+id = "u15"
+at = 12.0
+user = "bob"
+
+[[jobs]]
+id = "u16"
+at = 12.5
+user = "bob"
+
+[[jobs]]
+id = "u17"
+at = 13.0
+user = "bob"
+
+[[jobs]]
+id = "u18"
+at = 13.5
+user = "bob"
+
+[[jobs]]
+id = "u19"
+at = 14.0
+user = "bob"
+
+[[jobs]]
+id = "u20"
+at = 14.5
+user = "bob"
+
+[[jobs]]
+id = "u21"
+at = 20.0
+user = "carol"
+
+[[jobs]]
+id = "u22"
+at = 20.5
+user = "carol"
+
+[[jobs]]
+id = "u23"
+at = 21.0
+user = "carol"
+
+[[jobs]]
+id = "u24"
+at = 21.5
+user = "carol"
+
+[[jobs]]
+id = "u25"
+at = 22.0
+user = "carol"
+
+[[jobs]]
+id = "u26"
+at = 22.5
+user = "carol"
+
+[[jobs]]
+id = "u27"
+at = 23.0
+user = "carol"
+
+[[jobs]]
+id = "u28"
+at = 23.5
+user = "carol"
+
+[[jobs]]
+id = "u29"
+at = 24.0
+user = "carol"
+
+[[jobs]]
+id = "u30"
+at = 24.5
+user = "carol"

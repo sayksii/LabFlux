@@ -1,0 +1,133 @@
+{
+ "events": [
+  {
+   "event": "submitted",
+   "jobs": [
+    "w-cpu",
+    "w-gpu"
+   ],
+   "t": 1794803754.6755922
+  },
+  {
+   "event": "running",
+   "nodes": [
+    "karma",
+    "karma"
+   ],
+   "t": 1794803755.1987603
+  },
+  {
+   "event": "worker stopped",
+   "t": 1794803776.0744712
+  },
+  {
+   "event": "karma offline",
+   "states": [
+    "UNKNOWN",
+    "UNKNOWN"
+   ],
+   "t": 1794803784.6909366
+  },
+  {
+   "event": "container removed",
+   "job": "w-cpu",
+   "removed": true,
+   "t": 1794803785.0773878
+  },
+  {
+   "event": "submitted",
+   "jobs": [
+    "w-late"
+   ],
+   "t": 1794803785.0918558
+  },
+  {
+   "event": "while offline",
+   "late_note": "backfill: score 500 = priority 5, waited 0 min, recent usage 0 min; waiting for matching CPU/RAM/GPU capacity or datasets; no online node can fit it right now, so it does not block later jobs",
+   "late_reason": "waiting for matching CPU/RAM/GPU capacity or datasets",
+   "t": 1794803815.1016579
+  },
+  {
+   "event": "worker started",
+   "t": 1794803815.284036
+  },
+  {
+   "event": "karma online",
+   "states": [
+    "STARTING",
+    "RUNNING"
+   ],
+   "t": 1794803815.8085346
+  },
+  {
+   "event": "all done",
+   "t": 1794803967.389976
+  }
+ ],
+ "jobs": {
+  "w-cpu": {
+   "attempts": [
+    {
+     "created_at": 1794803754.6415498,
+     "finished_at": 1794803815.6288865,
+     "gpus": [],
+     "id": "80434532",
+     "node_id": "karma",
+     "preempted_by": null,
+     "reason": "container missing after worker restart",
+     "started_at": 1794803754.905345,
+     "state": "FAILED"
+    },
+    {
+     "created_at": 1794803815.6314049,
+     "finished_at": 1794803966.109175,
+     "gpus": [],
+     "id": "0ce527f1",
+     "node_id": "karma",
+     "preempted_by": null,
+     "reason": "completed",
+     "started_at": 1794803815.8850086,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "state": "SUCCEEDED"
+  },
+  "w-gpu": {
+   "attempts": [
+    {
+     "created_at": 1794803754.6618383,
+     "finished_at": 1794803905.3620176,
+     "gpus": [
+      "karma/RTX 4090"
+     ],
+     "id": "2e3892b5",
+     "node_id": "karma",
+     "preempted_by": null,
+     "reason": "completed",
+     "started_at": 1794803754.9643552,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "state": "SUCCEEDED"
+  },
+  "w-late": {
+   "attempts": [
+    {
+     "created_at": 1794803905.3632505,
+     "finished_at": 1794803935.9740026,
+     "gpus": [
+      "karma/RTX 4090"
+     ],
+     "id": "6c3a817f",
+     "node_id": "karma",
+     "preempted_by": null,
+     "reason": "completed",
+     "started_at": 1794803905.56184,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "state": "SUCCEEDED"
+  }
+ },
+ "probe": "failure"
+}

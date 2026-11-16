@@ -1,0 +1,107 @@
+name = "gpu"
+description = """GPU contention (lab case). Three experiment cards: kayle RTX 3090 + RTX A5000, karma RTX 4090.
+A two-card job (only kayle has two) becomes the blocked head while kayle has one card busy; one-card
+jobs, one of them requiring the 4090, keep arriving. Every job runs a matmul loop for its run time."""
+
+[defaults]
+cpu = 4
+memory_mib = 8192
+priority = 5
+load = "gpu"
+
+[[jobs]]
+id = "g01"
+at = 0
+user = "alice"
+gpu = 1
+run_s = 90
+time_limit_s = 150
+
+[[jobs]]
+id = "g02"
+at = 1
+user = "bob"
+gpu = 1
+run_s = 120
+time_limit_s = 180
+
+[[jobs]]
+id = "g03"
+at = 3
+user = "carol"
+gpu = 2
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "g04"
+at = 6
+user = "alice"
+gpu = 1
+run_s = 45
+time_limit_s = 75
+
+[[jobs]]
+id = "g05"
+at = 9
+user = "bob"
+gpu = 1
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "g06"
+at = 12
+user = "carol"
+gpu = 1
+run_s = 45
+time_limit_s = 75
+
+[[jobs]]
+id = "g07"
+at = 15
+user = "alice"
+gpu = 1
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "g08"
+at = 18
+user = "bob"
+gpu = 1
+gpu_model = "4090"
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "g09"
+at = 21
+user = "carol"
+gpu = 1
+run_s = 45
+time_limit_s = 75
+
+[[jobs]]
+id = "g10"
+at = 24
+user = "alice"
+gpu = 1
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "g11"
+at = 27
+user = "bob"
+gpu = 1
+run_s = 45
+time_limit_s = 75
+
+[[jobs]]
+id = "g12"
+at = 30
+user = "carol"
+gpu = 1
+run_s = 30
+time_limit_s = 60

@@ -1,0 +1,14 @@
+{
+ "case": "ram",
+ "mode": "sim",
+ "policy": "priority",
+ "preemptible_override": null,
+ "preemption_enabled": true,
+ "rep": 1,
+ "run_id": "sim-ram-priority-1",
+ "start_delay_s": 1.5,
+ "stop_delay_s": 1.0,
+ "t0": 1800000000.0,
+ "usage_window_s": 600,
+ "workload": "experiments/workloads/ram.toml"
+}

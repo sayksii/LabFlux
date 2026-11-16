@@ -1,0 +1,121 @@
+name = "urgent"
+description = """High-priority insertion (lab case). alice fills the seven 8-core slots with priority-2 jobs that
+are safe to rerun and preemptible, ending one by one; bob queues four priority-5 jobs; carol and
+dave then submit priority-9 jobs. FCFS keeps them behind bob; priority lets them jump the queue;
+with preemption they stop alice's most recent job instead of waiting. Jobs sleep."""
+
+[defaults]
+cpu = 8
+memory_mib = 4096
+load = "sleep"
+
+[[jobs]]
+id = "p01"
+at = 0.0
+user = "alice"
+priority = 2
+preemptible = true
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "p02"
+at = 0.5
+user = "alice"
+priority = 2
+preemptible = true
+run_s = 75
+time_limit_s = 135
+
+[[jobs]]
+id = "p03"
+at = 1.0
+user = "alice"
+priority = 2
+preemptible = true
+run_s = 90
+time_limit_s = 150
+
+[[jobs]]
+id = "p04"
+at = 1.5
+user = "alice"
+priority = 2
+preemptible = true
+run_s = 105
+time_limit_s = 165
+
+[[jobs]]
+id = "p05"
+at = 2.0
+user = "alice"
+priority = 2
+preemptible = true
+run_s = 120
+time_limit_s = 180
+
+[[jobs]]
+id = "p06"
+at = 2.5
+user = "alice"
+priority = 2
+preemptible = true
+run_s = 135
+time_limit_s = 195
+
+[[jobs]]
+id = "p07"
+at = 3.0
+user = "alice"
+priority = 2
+preemptible = true
+run_s = 150
+time_limit_s = 210
+
+[[jobs]]
+id = "b01"
+at = 10.0
+user = "bob"
+priority = 5
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "b02"
+at = 10.5
+user = "bob"
+priority = 5
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "b03"
+at = 11.0
+user = "bob"
+priority = 5
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "b04"
+at = 11.5
+user = "bob"
+priority = 5
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "h01"
+at = 30
+user = "carol"
+priority = 9
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "h02"
+at = 50
+user = "dave"
+priority = 9
+run_s = 30
+time_limit_s = 60

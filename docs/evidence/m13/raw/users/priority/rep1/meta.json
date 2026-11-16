@@ -1,0 +1,96 @@
+{
+ "case": "users",
+ "external_before": [
+  {
+   "allocated": {
+    "cpu": 0,
+    "gpu": 0,
+    "jobs": 0,
+    "memory_mib": 0
+   },
+   "available_memory_mib": 60267,
+   "cpu_percent": 0.0,
+   "gpus": [
+    {
+     "external_use": false,
+     "label": "karma/RTX 4090",
+     "memory_used_mib": 82,
+     "utilization_percent": 0.0
+    }
+   ],
+   "node": "karma",
+   "status": "ONLINE",
+   "t": 1794797263.5459177,
+   "total_cpu": 32.0
+  },
+  {
+   "allocated": {
+    "cpu": 0,
+    "gpu": 0,
+    "jobs": 0,
+    "memory_mib": 0
+   },
+   "available_memory_mib": 116387,
+   "cpu_percent": 1.0,
+   "gpus": [
+    {
+     "external_use": false,
+     "label": "kayle/RTX 3090",
+     "memory_used_mib": 12,
+     "utilization_percent": 0.0
+    },
+    {
+     "external_use": false,
+     "label": "kayle/RTX A5000",
+     "memory_used_mib": 12,
+     "utilization_percent": 0.0
+    }
+   ],
+   "node": "kayle",
+   "status": "ONLINE",
+   "t": 1794797263.5459177,
+   "total_cpu": 32.0
+  },
+  {
+   "allocated": {
+    "cpu": 8.0,
+    "gpu": 2,
+    "jobs": 1,
+    "memory_mib": 49152
+   },
+   "available_memory_mib": 230957,
+   "cpu_percent": 0.1,
+   "gpus": [
+    {
+     "external_use": false,
+     "label": "kindred/A40",
+     "memory_used_mib": 41339,
+     "utilization_percent": 0.0
+    },
+    {
+     "external_use": false,
+     "label": "kindred/A40",
+     "memory_used_mib": 41339,
+     "utilization_percent": 0.0
+    }
+   ],
+   "node": "kindred",
+   "status": "ONLINE",
+   "t": 1794797263.5459177,
+   "total_cpu": 128.0
+  }
+ ],
+ "lab_code": "8fcab7a",
+ "mode": "lab",
+ "policy": "priority",
+ "preemptible_override": null,
+ "preemption_enabled": true,
+ "rep": 1,
+ "run_id": "users-priority-r1-1794797263",
+ "started": "2026-11-16 10:47:43 +0800",
+ "t0": 1794797263.5508096,
+ "tools_commit": "88ac9bf",
+ "usage_window_s": 600,
+ "user_set": 4,
+ "workload": "experiments/workloads/users.toml"
+}

@@ -1,0 +1,223 @@
+name = "mixed"
+description = """Mixed CPU/RAM/GPU workload drawn once with random seed 13 (simulation only): 24 jobs,
+Poisson arrivals every 8 s on average, 50% small, 20% wide CPU, 15% RAM, 15% GPU."""
+
+[[jobs]]
+id = "m01"
+at = 0.0
+user = "alice"
+cpu = 2
+memory_mib = 2048
+run_s = 45
+time_limit_s = 135
+
+[[jobs]]
+id = "m02"
+at = 8.2
+user = "alice"
+cpu = 4
+memory_mib = 2048
+run_s = 30
+time_limit_s = 90
+
+[[jobs]]
+id = "m03"
+at = 12.7
+user = "alice"
+cpu = 2
+memory_mib = 24576
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "m04"
+at = 29.1
+user = "carol"
+cpu = 2
+memory_mib = 32768
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "m05"
+at = 53.0
+user = "alice"
+cpu = 2
+memory_mib = 32768
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "m06"
+at = 71.3
+user = "bob"
+cpu = 16
+memory_mib = 4096
+run_s = 90
+time_limit_s = 270
+
+[[jobs]]
+id = "m07"
+at = 79.4
+user = "carol"
+cpu = 16
+memory_mib = 4096
+run_s = 60
+time_limit_s = 180
+
+[[jobs]]
+id = "m08"
+at = 88.8
+user = "carol"
+cpu = 24
+memory_mib = 4096
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "m09"
+at = 93.5
+user = "carol"
+cpu = 4
+memory_mib = 4096
+run_s = 45
+time_limit_s = 67
+
+[[jobs]]
+id = "m10"
+at = 97.2
+user = "alice"
+cpu = 4
+memory_mib = 6144
+run_s = 60
+time_limit_s = 120
+
+[[jobs]]
+id = "m11"
+at = 99.3
+user = "bob"
+cpu = 2
+memory_mib = 2048
+run_s = 45
+time_limit_s = 135
+
+[[jobs]]
+id = "m12"
+at = 103.8
+user = "alice"
+cpu = 24
+memory_mib = 4096
+run_s = 90
+time_limit_s = 180
+
+[[jobs]]
+id = "m13"
+at = 108.3
+user = "bob"
+cpu = 4
+memory_mib = 8192
+gpu = 2
+load = "gpu"
+run_s = 45
+time_limit_s = 67
+
+[[jobs]]
+id = "m14"
+at = 122.8
+user = "bob"
+cpu = 24
+memory_mib = 4096
+run_s = 45
+time_limit_s = 135
+
+[[jobs]]
+id = "m15"
+at = 139.0
+user = "carol"
+cpu = 4
+memory_mib = 8192
+gpu = 2
+load = "gpu"
+run_s = 60
+time_limit_s = 90
+
+[[jobs]]
+id = "m16"
+at = 142.8
+user = "carol"
+cpu = 2
+memory_mib = 24576
+run_s = 45
+time_limit_s = 135
+
+[[jobs]]
+id = "m17"
+at = 153.1
+user = "carol"
+cpu = 2
+memory_mib = 4096
+run_s = 30
+time_limit_s = 90
+
+[[jobs]]
+id = "m18"
+at = 160.1
+user = "alice"
+cpu = 12
+memory_mib = 4096
+run_s = 45
+time_limit_s = 90
+
+[[jobs]]
+id = "m19"
+at = 172.4
+user = "alice"
+cpu = 16
+memory_mib = 4096
+run_s = 45
+time_limit_s = 67
+
+[[jobs]]
+id = "m20"
+at = 180.7
+user = "bob"
+cpu = 24
+memory_mib = 4096
+run_s = 30
+time_limit_s = 60
+
+[[jobs]]
+id = "m21"
+at = 181.5
+user = "bob"
+cpu = 4
+memory_mib = 4096
+run_s = 60
+time_limit_s = 90
+
+[[jobs]]
+id = "m22"
+at = 188.1
+user = "bob"
+cpu = 12
+memory_mib = 4096
+run_s = 90
+time_limit_s = 270
+
+[[jobs]]
+id = "m23"
+at = 188.2
+user = "carol"
+cpu = 4
+memory_mib = 2048
+run_s = 90
+time_limit_s = 270
+
+[[jobs]]
+id = "m24"
+at = 197.0
+user = "carol"
+cpu = 2
+memory_mib = 6144
+run_s = 30
+time_limit_s = 60

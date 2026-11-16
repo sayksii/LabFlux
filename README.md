@@ -1,7 +1,7 @@
 # LabFlux
 
 OS 課程專案：以中央 Scheduler 與多個 Docker Worker 管理 CPU／RAM／GPU 批次工作。
-實作進度與驗收條件見 [plan.md](plan.md)；驗證紀錄見 [docs/verification.md](docs/verification.md)。
+實作進度與驗收條件見 [plan.md](plan.md)；驗證紀錄見 [docs/verification.md](docs/verification.md)；排程策略的比較實驗（M13）見 [docs/experiments.md](docs/experiments.md)。
 
 ## 開發環境
 

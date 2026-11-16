@@ -1,0 +1,195 @@
+{
+ "g01": [
+  {
+   "attempt": "a264a185",
+   "cpu_s": 90.366,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 4090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g01",
+   "matmuls_per_card": 32410,
+   "mode": "gpu",
+   "node": "karma",
+   "run_s": 90.0,
+   "wall_s": 90.019
+  }
+ ],
+ "g02": [
+  {
+   "attempt": "12dae845",
+   "cpu_s": 120.645,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA RTX A5000"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g02",
+   "matmuls_per_card": 15220,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 120.0,
+   "wall_s": 120.046
+  }
+ ],
+ "g03": [
+  {
+   "attempt": "f0754c70",
+   "cpu_s": 60.343,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 3090",
+    "NVIDIA RTX A5000"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g03",
+   "matmuls_per_card": 7440,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 60.0,
+   "wall_s": 60.043
+  }
+ ],
+ "g04": [
+  {
+   "attempt": "a9757570",
+   "cpu_s": 45.544,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 3090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g04",
+   "matmuls_per_card": 7390,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 45.0,
+   "wall_s": 45.035
+  }
+ ],
+ "g05": [
+  {
+   "attempt": "48ca4e2f",
+   "cpu_s": 30.347,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 4090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g05",
+   "matmuls_per_card": 10500,
+   "mode": "gpu",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.02
+  }
+ ],
+ "g06": [
+  {
+   "attempt": "b3f75e00",
+   "cpu_s": 45.447,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 3090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g06",
+   "matmuls_per_card": 7340,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 45.0,
+   "wall_s": 45.048
+  }
+ ],
+ "g07": [
+  {
+   "attempt": "ec7df83c",
+   "cpu_s": 30.647,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 4090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g07",
+   "matmuls_per_card": 10480,
+   "mode": "gpu",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.011
+  }
+ ],
+ "g08": [
+  {
+   "attempt": "7e3fbc44",
+   "cpu_s": 30.647,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 4090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g08",
+   "matmuls_per_card": 10450,
+   "mode": "gpu",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.012
+  }
+ ],
+ "g09": [
+  {
+   "attempt": "83809811",
+   "cpu_s": 45.337,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 3090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g09",
+   "matmuls_per_card": 7270,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 45.0,
+   "wall_s": 45.017
+  }
+ ],
+ "g10": [
+  {
+   "attempt": "039c7fa9",
+   "cpu_s": 30.338,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 4090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g10",
+   "matmuls_per_card": 10450,
+   "mode": "gpu",
+   "node": "karma",
+   "run_s": 30.0,
+   "wall_s": 30.019
+  }
+ ],
+ "g11": [
+  {
+   "attempt": "44b105fa",
+   "cpu_s": 45.39,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA RTX A5000"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g11",
+   "matmuls_per_card": 5470,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 45.0,
+   "wall_s": 45.046
+  }
+ ],
+ "g12": [
+  {
+   "attempt": "d61ac982",
+   "cpu_s": 30.671,
+   "cpus": 4.0,
+   "devices": [
+    "NVIDIA GeForce RTX 3090"
+   ],
+   "experiment": "m13:gpu-backfill-r3-1794802110:g12",
+   "matmuls_per_card": 4780,
+   "mode": "gpu",
+   "node": "kayle",
+   "run_s": 30.0,
+   "wall_s": 30.043
+  }
+ ]
+}

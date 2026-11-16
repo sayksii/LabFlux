@@ -1,0 +1,963 @@
+[
+ {
+  "account": "m13s1-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000000.0,
+     "exit_code": 0,
+     "finished_at": 1800000091.5,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "a6060a55ff254749aee9535928a0bb3e",
+     "job_id": "b4833738938f4905945e8099fe3fddf9",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000001.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000000.0,
+   "current_attempt_id": "a6060a55ff254749aee9535928a0bb3e",
+   "id": "b4833738938f4905945e8099fe3fddf9",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-alice",
+   "reason": "simulated",
+   "schedule_note": "backfill: started on karma (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "90",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g01",
+     "M13_JOB": "g01"
+    },
+    "estimated_runtime_s": 90.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 150.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 2,
+   "updated_at": 1800000091.5
+  },
+  "user": "alice",
+  "wid": "g01"
+ },
+ {
+  "account": "m13s1-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000001.0,
+     "exit_code": 0,
+     "finished_at": 1800000122.5,
+     "gpu_labels": [
+      "kayle/RTX A5000"
+     ],
+     "id": "94792b9bdf6a42e095ab7f6d526e956e",
+     "job_id": "277c5472f8cc40028424f824e2303d44",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000002.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000001.0,
+   "current_attempt_id": "94792b9bdf6a42e095ab7f6d526e956e",
+   "id": "277c5472f8cc40028424f824e2303d44",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-bob",
+   "reason": "simulated",
+   "schedule_note": "backfill: started on kayle (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "120",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g02",
+     "M13_JOB": "g02"
+    },
+    "estimated_runtime_s": 120.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 180.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 3,
+   "updated_at": 1800000122.5
+  },
+  "user": "bob",
+  "wid": "g02"
+ },
+ {
+  "account": "m13s1-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000146.5,
+     "exit_code": 0,
+     "finished_at": 1800000208.5,
+     "gpu_labels": [
+      "kayle/RTX 3090",
+      "kayle/RTX A5000"
+     ],
+     "id": "082a320273a447eb9ca2f4fab6135616",
+     "job_id": "5313d6acf3a5496a8a477cc82f3314c9",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 2,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000148.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000003.0,
+   "current_attempt_id": "082a320273a447eb9ca2f4fab6135616",
+   "id": "5313d6acf3a5496a8a477cc82f3314c9",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-carol",
+   "reason": "simulated",
+   "schedule_note": "backfill: started on kayle (score 502 = priority 5, waited 2 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "60",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g03",
+     "M13_JOB": "g03"
+    },
+    "estimated_runtime_s": 60.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 2,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 120.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 4,
+   "updated_at": 1800000208.5
+  },
+  "user": "carol",
+  "wid": "g03"
+ },
+ {
+  "account": "m13s1-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000006.0,
+     "exit_code": 0,
+     "finished_at": 1800000052.5,
+     "gpu_labels": [
+      "kayle/RTX 3090"
+     ],
+     "id": "f519228f621342c8b95644fdc42e2b5d",
+     "job_id": "74bca1bc1f8e4dd08f8571934d78da3c",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000007.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000006.0,
+   "current_attempt_id": "f519228f621342c8b95644fdc42e2b5d",
+   "id": "74bca1bc1f8e4dd08f8571934d78da3c",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-alice",
+   "reason": "simulated",
+   "schedule_note": "backfill: backfilled on kayle ahead of job 5313d6ac reserved on kayle at 2027-01-15 16:03:02; its time limit ends before the reservation (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g04",
+     "M13_JOB": "g04"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 5,
+   "updated_at": 1800000052.5
+  },
+  "user": "alice",
+  "wid": "g04"
+ },
+ {
+  "account": "m13s1-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000091.5,
+     "exit_code": 0,
+     "finished_at": 1800000123.5,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "d212d7d789814bee829066e4968c34ba",
+     "job_id": "94f12216cab5490fb5a476eaae9b3e31",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000093.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000009.0,
+   "current_attempt_id": "d212d7d789814bee829066e4968c34ba",
+   "id": "94f12216cab5490fb5a476eaae9b3e31",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-bob",
+   "reason": "simulated",
+   "schedule_note": "backfill: backfilled on karma ahead of job 5313d6ac reserved on kayle at 2027-01-15 16:03:02; the reserved job waits for kayle (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g05",
+     "M13_JOB": "g05"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 6,
+   "updated_at": 1800000123.5
+  },
+  "user": "bob",
+  "wid": "g05"
+ },
+ {
+  "account": "m13s1-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000052.5,
+     "exit_code": 0,
+     "finished_at": 1800000099.5,
+     "gpu_labels": [
+      "kayle/RTX 3090"
+     ],
+     "id": "d1ec294c87d04f7988cd30027adaae42",
+     "job_id": "923c4f36d7864e8ea9df4475bb847a8e",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000054.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000012.0,
+   "current_attempt_id": "d1ec294c87d04f7988cd30027adaae42",
+   "id": "923c4f36d7864e8ea9df4475bb847a8e",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-carol",
+   "reason": "simulated",
+   "schedule_note": "backfill: backfilled on kayle ahead of job 5313d6ac reserved on kayle at 2027-01-15 16:03:02; its time limit ends before the reservation (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g06",
+     "M13_JOB": "g06"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 7,
+   "updated_at": 1800000099.5
+  },
+  "user": "carol",
+  "wid": "g06"
+ },
+ {
+  "account": "m13s1-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000123.5,
+     "exit_code": 0,
+     "finished_at": 1800000155.5,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "984199fec4c54a3b9178d5f61cef7240",
+     "job_id": "c242f3110bf54265ab052b69dd31a480",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000125.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000015.0,
+   "current_attempt_id": "984199fec4c54a3b9178d5f61cef7240",
+   "id": "c242f3110bf54265ab052b69dd31a480",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-alice",
+   "reason": "simulated",
+   "schedule_note": "backfill: backfilled on karma ahead of job 5313d6ac reserved on kayle at 2027-01-15 16:02:56; the reserved job waits for kayle (score 501 = priority 5, waited 2 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g07",
+     "M13_JOB": "g07"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 8,
+   "updated_at": 1800000155.5
+  },
+  "user": "alice",
+  "wid": "g07"
+ },
+ {
+  "account": "m13s1-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000155.5,
+     "exit_code": 0,
+     "finished_at": 1800000187.5,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "7de0259fcdaa47f58c55fe7b31542804",
+     "job_id": "f30a6962da1b4619ba974ee9bc947505",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": "4090",
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000157.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000018.0,
+   "current_attempt_id": "7de0259fcdaa47f58c55fe7b31542804",
+   "id": "f30a6962da1b4619ba974ee9bc947505",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-bob",
+   "reason": "simulated",
+   "schedule_note": "backfill: started on karma (score 502 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g08",
+     "M13_JOB": "g08"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": "4090",
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 9,
+   "updated_at": 1800000187.5
+  },
+  "user": "bob",
+  "wid": "g08"
+ },
+ {
+  "account": "m13s1-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000099.5,
+     "exit_code": 0,
+     "finished_at": 1800000146.5,
+     "gpu_labels": [
+      "kayle/RTX 3090"
+     ],
+     "id": "3ffc094977c246f48320119b75477bec",
+     "job_id": "cc0da7d8cfd742e5b93fb542513ea7f7",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000101.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000021.0,
+   "current_attempt_id": "3ffc094977c246f48320119b75477bec",
+   "id": "cc0da7d8cfd742e5b93fb542513ea7f7",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-carol",
+   "reason": "simulated",
+   "schedule_note": "backfill: backfilled on kayle ahead of job 5313d6ac reserved on kayle at 2027-01-15 16:03:02; its time limit ends before the reservation (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g09",
+     "M13_JOB": "g09"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 10,
+   "updated_at": 1800000146.5
+  },
+  "user": "carol",
+  "wid": "g09"
+ },
+ {
+  "account": "m13s1-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000187.5,
+     "exit_code": 0,
+     "finished_at": 1800000219.5,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "1a412ea66f614408a0625c6cce9ace89",
+     "job_id": "b49f5416460645d7b007992e6e44298d",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000189.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000024.0,
+   "current_attempt_id": "1a412ea66f614408a0625c6cce9ace89",
+   "id": "b49f5416460645d7b007992e6e44298d",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-alice",
+   "reason": "simulated",
+   "schedule_note": "backfill: started on karma (score 502 = priority 5, waited 3 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g10",
+     "M13_JOB": "g10"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 11,
+   "updated_at": 1800000219.5
+  },
+  "user": "alice",
+  "wid": "g10"
+ },
+ {
+  "account": "m13s1-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000208.5,
+     "exit_code": 0,
+     "finished_at": 1800000255.5,
+     "gpu_labels": [
+      "kayle/RTX A5000"
+     ],
+     "id": "84862df1549f431ea0b18a5f8ddb7dbd",
+     "job_id": "f0e3d3f0eaf8474dbc6467ac29ae3b14",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000210.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000027.0,
+   "current_attempt_id": "84862df1549f431ea0b18a5f8ddb7dbd",
+   "id": "f0e3d3f0eaf8474dbc6467ac29ae3b14",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-bob",
+   "reason": "simulated",
+   "schedule_note": "backfill: started on kayle (score 502 = priority 5, waited 3 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g11",
+     "M13_JOB": "g11"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 12,
+   "updated_at": 1800000255.5
+  },
+  "user": "bob",
+  "wid": "g11"
+ },
+ {
+  "account": "m13s1-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1800000208.5,
+     "exit_code": 0,
+     "finished_at": 1800000240.5,
+     "gpu_labels": [
+      "kayle/RTX 3090"
+     ],
+     "id": "e7077362ec0c4976bac14b883c3b28fe",
+     "job_id": "138c5b1c5f9041f285e08551eca64f1f",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "simulated",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1800000210.5,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1800000030.0,
+   "current_attempt_id": "e7077362ec0c4976bac14b883c3b28fe",
+   "id": "138c5b1c5f9041f285e08551eca64f1f",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "outputs": [],
+   "owner": "m13s1-carol",
+   "reason": "simulated",
+   "schedule_note": "backfill: started on kayle (score 502 = priority 5, waited 3 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:sim-gpu-backfill-1:g12",
+     "M13_JOB": "g12"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 13,
+   "updated_at": 1800000240.5
+  },
+  "user": "carol",
+  "wid": "g12"
+ }
+]

@@ -1,0 +1,123 @@
+name = "cpu"
+description = """CPU contention, big and small jobs (simulation only). A 24-core job only fits kindred and
+blocks the queue while small 4-core jobs could run elsewhere."""
+
+[[jobs]]
+id = "c01"
+at = 0
+user = "alice"
+cpu = 16
+memory_mib = 2048
+run_s = 90
+time_limit_s = 150
+load = "cpu"
+
+[[jobs]]
+id = "c02"
+at = 1
+user = "bob"
+cpu = 16
+memory_mib = 2048
+run_s = 120
+time_limit_s = 180
+load = "cpu"
+
+[[jobs]]
+id = "c03"
+at = 2
+user = "carol"
+cpu = 8
+memory_mib = 2048
+run_s = 60
+time_limit_s = 120
+load = "cpu"
+
+[[jobs]]
+id = "c04"
+at = 4
+user = "alice"
+cpu = 24
+memory_mib = 2048
+run_s = 60
+time_limit_s = 120
+load = "cpu"
+
+[[jobs]]
+id = "c05"
+at = 6
+user = "alice"
+cpu = 4
+memory_mib = 1024
+run_s = 30
+time_limit_s = 60
+load = "cpu"
+
+[[jobs]]
+id = "c06"
+at = 10
+user = "bob"
+cpu = 4
+memory_mib = 1024
+run_s = 45
+time_limit_s = 90
+load = "cpu"
+
+[[jobs]]
+id = "c07"
+at = 14
+user = "carol"
+cpu = 4
+memory_mib = 1024
+run_s = 60
+time_limit_s = 120
+load = "cpu"
+
+[[jobs]]
+id = "c08"
+at = 18
+user = "alice"
+cpu = 4
+memory_mib = 1024
+run_s = 30
+time_limit_s = 60
+load = "cpu"
+
+[[jobs]]
+id = "c09"
+at = 22
+user = "bob"
+cpu = 4
+memory_mib = 1024
+run_s = 45
+time_limit_s = 90
+load = "cpu"
+
+[[jobs]]
+id = "c10"
+at = 26
+user = "carol"
+cpu = 4
+memory_mib = 1024
+run_s = 60
+time_limit_s = 120
+load = "cpu"
+
+[[jobs]]
+id = "c11"
+at = 30
+user = "alice"
+cpu = 4
+memory_mib = 1024
+run_s = 30
+time_limit_s = 60
+load = "cpu"
+
+[[jobs]]
+id = "c12"
+at = 34
+user = "bob"
+cpu = 4
+memory_mib = 1024
+run_s = 45
+time_limit_s = 90
+load = "cpu"

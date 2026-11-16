@@ -1,0 +1,2312 @@
+[
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799655.1190066,
+     "exit_code": 0,
+     "finished_at": 1794799700.603854,
+     "gpu_labels": [],
+     "id": "68c41f19bc4e41a398a4a8896cfe3e50",
+     "job_id": "dc724c5b129646dbbb27f2bb7283fb2f",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799655.363784,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799655.118594,
+   "current_attempt_id": "68c41f19bc4e41a398a4a8896cfe3e50",
+   "id": "dc724c5b129646dbbb27f2bb7283fb2f",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u01",
+     "M13_JOB": "u01"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 550,
+   "updated_at": 1794799700.6040144
+  },
+  "user": "alice",
+  "wid": "u01"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799655.7509575,
+     "exit_code": 0,
+     "finished_at": 1794799701.1299841,
+     "gpu_labels": [],
+     "id": "586d6021ada14ac5afb534507a92da87",
+     "job_id": "4aa722b83c654f71a1c2c4c1f233cc7c",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799655.927884,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799655.750466,
+   "current_attempt_id": "586d6021ada14ac5afb534507a92da87",
+   "id": "4aa722b83c654f71a1c2c4c1f233cc7c",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u02",
+     "M13_JOB": "u02"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 551,
+   "updated_at": 1794799701.130175
+  },
+  "user": "alice",
+  "wid": "u02"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799656.17,
+     "exit_code": 0,
+     "finished_at": 1794799701.6610866,
+     "gpu_labels": [],
+     "id": "91c83ec20758457abd6839c55e14077b",
+     "job_id": "57598f697de641c0a349035c5e05a4b0",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799656.4167528,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799656.169553,
+   "current_attempt_id": "91c83ec20758457abd6839c55e14077b",
+   "id": "57598f697de641c0a349035c5e05a4b0",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u03",
+     "M13_JOB": "u03"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 552,
+   "updated_at": 1794799701.661237
+  },
+  "user": "alice",
+  "wid": "u03"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799656.7928846,
+     "exit_code": 0,
+     "finished_at": 1794799702.2572718,
+     "gpu_labels": [],
+     "id": "a65afb9c2e3748d3befc0d9811f3a3f9",
+     "job_id": "d9a14653010c493aada31a59666ae9de",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799657.0524094,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799656.792452,
+   "current_attempt_id": "a65afb9c2e3748d3befc0d9811f3a3f9",
+   "id": "d9a14653010c493aada31a59666ae9de",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u04",
+     "M13_JOB": "u04"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 553,
+   "updated_at": 1794799702.2574294
+  },
+  "user": "alice",
+  "wid": "u04"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799657.21164,
+     "exit_code": 0,
+     "finished_at": 1794799703.2180903,
+     "gpu_labels": [],
+     "id": "c05621682df54b7b8173d909f56a0fde",
+     "job_id": "c3f1f7e328414e20a20959f03c34bae7",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799657.7413585,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799657.2111993,
+   "current_attempt_id": "c05621682df54b7b8173d909f56a0fde",
+   "id": "c3f1f7e328414e20a20959f03c34bae7",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u05",
+     "M13_JOB": "u05"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 554,
+   "updated_at": 1794799703.218252
+  },
+  "user": "alice",
+  "wid": "u05"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799657.6403441,
+     "exit_code": 0,
+     "finished_at": 1794799703.706847,
+     "gpu_labels": [],
+     "id": "317964d920b84391808ea2744c16a7d6",
+     "job_id": "5d75929a08cf454bad5bf557e19f484f",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799658.2024043,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799657.6399064,
+   "current_attempt_id": "317964d920b84391808ea2744c16a7d6",
+   "id": "5d75929a08cf454bad5bf557e19f484f",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u06",
+     "M13_JOB": "u06"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 555,
+   "updated_at": 1794799703.7070067
+  },
+  "user": "alice",
+  "wid": "u06"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799658.258777,
+     "exit_code": 0,
+     "finished_at": 1794799704.2712476,
+     "gpu_labels": [],
+     "id": "b800cc4c6d1046a3878f12b30d4ada26",
+     "job_id": "3f56f096004446a484c277f4b70f0001",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799658.7864404,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799658.2583196,
+   "current_attempt_id": "b800cc4c6d1046a3878f12b30d4ada26",
+   "id": "3f56f096004446a484c277f4b70f0001",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 500 = priority 5, waited 0 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u07",
+     "M13_JOB": "u07"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 556,
+   "updated_at": 1794799704.2714074
+  },
+  "user": "alice",
+  "wid": "u07"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799791.3535073,
+     "exit_code": 0,
+     "finished_at": 1794799836.7143242,
+     "gpu_labels": [],
+     "id": "e00bf0732ba145b793ffb699ecf6ceae",
+     "job_id": "fd59e1abb4b2475187874464d01dc586",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799791.516442,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799658.6775777,
+   "current_attempt_id": "e00bf0732ba145b793ffb699ecf6ceae",
+   "id": "fd59e1abb4b2475187874464d01dc586",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 502 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u08",
+     "M13_JOB": "u08"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 557,
+   "updated_at": 1794799836.7144923
+  },
+  "user": "alice",
+  "wid": "u08"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799791.8166237,
+     "exit_code": 0,
+     "finished_at": 1794799837.1732519,
+     "gpu_labels": [],
+     "id": "370d90df2ad345c6a04ea43ab6a13bb4",
+     "job_id": "f27bde512fa948619f747a2c92f4496f",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799791.9764028,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799659.2894015,
+   "current_attempt_id": "370d90df2ad345c6a04ea43ab6a13bb4",
+   "id": "f27bde512fa948619f747a2c92f4496f",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 502 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u09",
+     "M13_JOB": "u09"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 558,
+   "updated_at": 1794799837.1734037
+  },
+  "user": "alice",
+  "wid": "u09"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799792.6656852,
+     "exit_code": 0,
+     "finished_at": 1794799838.1409085,
+     "gpu_labels": [],
+     "id": "6d8f4ceca5e84faa9409e037fe6d3899",
+     "job_id": "bb0f3b19ca3f474fa0b0780a54e127d5",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799792.9184098,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799659.7198215,
+   "current_attempt_id": "6d8f4ceca5e84faa9409e037fe6d3899",
+   "id": "bb0f3b19ca3f474fa0b0780a54e127d5",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 502 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u10",
+     "M13_JOB": "u10"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 559,
+   "updated_at": 1794799838.1410728
+  },
+  "user": "alice",
+  "wid": "u10"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799700.6047065,
+     "exit_code": 0,
+     "finished_at": 1794799745.9816833,
+     "gpu_labels": [],
+     "id": "58adf622096046d096e517ebe7429734",
+     "job_id": "56587ebc15de4a319330e900589a3ff2",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799700.759747,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799665.1814384,
+   "current_attempt_id": "58adf622096046d096e517ebe7429734",
+   "id": "56587ebc15de4a319330e900589a3ff2",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u11",
+     "M13_JOB": "u11"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 560,
+   "updated_at": 1794799745.9818435
+  },
+  "user": "bob",
+  "wid": "u11"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799701.1307547,
+     "exit_code": 0,
+     "finished_at": 1794799746.4755428,
+     "gpu_labels": [],
+     "id": "a7e09ee9f8d647df8578dccbeb9198f2",
+     "job_id": "d8bc6fc005724382b5ff4e482420d7ca",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799701.2925835,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799665.8163428,
+   "current_attempt_id": "a7e09ee9f8d647df8578dccbeb9198f2",
+   "id": "d8bc6fc005724382b5ff4e482420d7ca",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u12",
+     "M13_JOB": "u12"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 561,
+   "updated_at": 1794799746.475702
+  },
+  "user": "bob",
+  "wid": "u12"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799701.661901,
+     "exit_code": 0,
+     "finished_at": 1794799747.1669443,
+     "gpu_labels": [],
+     "id": "52d5f55a912343a8b48f1d34c41caff9",
+     "job_id": "45991f034fab49b283df0f177428e781",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799701.9231868,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799666.2378092,
+   "current_attempt_id": "52d5f55a912343a8b48f1d34c41caff9",
+   "id": "45991f034fab49b283df0f177428e781",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u13",
+     "M13_JOB": "u13"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 562,
+   "updated_at": 1794799747.1670995
+  },
+  "user": "bob",
+  "wid": "u13"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799702.2581139,
+     "exit_code": 0,
+     "finished_at": 1794799747.7283447,
+     "gpu_labels": [],
+     "id": "1f1d48a6276c46caba6f9bc5095f06e2",
+     "job_id": "795c181f84204cd3a481da95dbc5d37a",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799702.5026255,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799666.6665442,
+   "current_attempt_id": "1f1d48a6276c46caba6f9bc5095f06e2",
+   "id": "795c181f84204cd3a481da95dbc5d37a",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u14",
+     "M13_JOB": "u14"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 563,
+   "updated_at": 1794799747.7284958
+  },
+  "user": "bob",
+  "wid": "u14"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799703.2189093,
+     "exit_code": 0,
+     "finished_at": 1794799749.2920628,
+     "gpu_labels": [],
+     "id": "88cc5f16cbee42f8af4cc4ea68077bb4",
+     "job_id": "601414e2926f457496ee1731a1e27907",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799703.8076718,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799667.2887766,
+   "current_attempt_id": "88cc5f16cbee42f8af4cc4ea68077bb4",
+   "id": "601414e2926f457496ee1731a1e27907",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u15",
+     "M13_JOB": "u15"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 564,
+   "updated_at": 1794799749.292223
+  },
+  "user": "bob",
+  "wid": "u15"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799703.707695,
+     "exit_code": 0,
+     "finished_at": 1794799749.854155,
+     "gpu_labels": [],
+     "id": "6c3c5a28f5bc47ffbb531808386518b0",
+     "job_id": "047ef33593084d52b3062837c9b6b1b8",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799704.3798761,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799667.7262945,
+   "current_attempt_id": "6c3c5a28f5bc47ffbb531808386518b0",
+   "id": "047ef33593084d52b3062837c9b6b1b8",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u16",
+     "M13_JOB": "u16"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 565,
+   "updated_at": 1794799749.854304
+  },
+  "user": "bob",
+  "wid": "u16"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799704.2720942,
+     "exit_code": 0,
+     "finished_at": 1794799750.314715,
+     "gpu_labels": [],
+     "id": "7deeeba235f2402e89d0a1db10f7b16e",
+     "job_id": "6c01298375b9499c9d504e0cef984039",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799704.8087406,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799668.148122,
+   "current_attempt_id": "7deeeba235f2402e89d0a1db10f7b16e",
+   "id": "6c01298375b9499c9d504e0cef984039",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u17",
+     "M13_JOB": "u17"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 566,
+   "updated_at": 1794799750.314873
+  },
+  "user": "bob",
+  "wid": "u17"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799793.2168803,
+     "exit_code": 0,
+     "finished_at": 1794799838.6890004,
+     "gpu_labels": [],
+     "id": "e5670dbf5a564d868be93e55a9729ef2",
+     "job_id": "edc1d156e5d947598a26dbf4f189b6f6",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799793.462732,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799668.786099,
+   "current_attempt_id": "e5670dbf5a564d868be93e55a9729ef2",
+   "id": "edc1d156e5d947598a26dbf4f189b6f6",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 501 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u18",
+     "M13_JOB": "u18"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 567,
+   "updated_at": 1794799838.6891577
+  },
+  "user": "bob",
+  "wid": "u18"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799795.411821,
+     "exit_code": 0,
+     "finished_at": 1794799841.5484207,
+     "gpu_labels": [],
+     "id": "12735425f941451da3813e2985886c4f",
+     "job_id": "bbc6f38c4d3b4c26b3a5a5528fea775f",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799796.113442,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799669.1987767,
+   "current_attempt_id": "12735425f941451da3813e2985886c4f",
+   "id": "bbc6f38c4d3b4c26b3a5a5528fea775f",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u19",
+     "M13_JOB": "u19"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 568,
+   "updated_at": 1794799841.5486367
+  },
+  "user": "bob",
+  "wid": "u19"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799796.0918856,
+     "exit_code": 0,
+     "finished_at": 1794799842.2088718,
+     "gpu_labels": [],
+     "id": "5c7a574c80174af28eefc65792702498",
+     "job_id": "eab47c2cdf1f4b6facfbe6c75c859fe6",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799796.6849353,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799669.6209385,
+   "current_attempt_id": "5c7a574c80174af28eefc65792702498",
+   "id": "eab47c2cdf1f4b6facfbe6c75c859fe6",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u20",
+     "M13_JOB": "u20"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 569,
+   "updated_at": 1794799842.2090266
+  },
+  "user": "bob",
+  "wid": "u20"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799745.9825382,
+     "exit_code": 0,
+     "finished_at": 1794799791.3526251,
+     "gpu_labels": [],
+     "id": "7a298c9d4e1f4912a5de510ce9f6746e",
+     "job_id": "209ed68a78dd4fd8938459882e51366f",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799746.1398115,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799675.117692,
+   "current_attempt_id": "7a298c9d4e1f4912a5de510ce9f6746e",
+   "id": "209ed68a78dd4fd8938459882e51366f",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u21",
+     "M13_JOB": "u21"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 570,
+   "updated_at": 1794799791.352788
+  },
+  "user": "carol",
+  "wid": "u21"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799746.476354,
+     "exit_code": 0,
+     "finished_at": 1794799791.8157895,
+     "gpu_labels": [],
+     "id": "a5156f933a5845b88a6967cf7e155b35",
+     "job_id": "9bdc1b908b3b42ac8ea90a6db87450a3",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799746.6263807,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799675.739691,
+   "current_attempt_id": "a5156f933a5845b88a6967cf7e155b35",
+   "id": "9bdc1b908b3b42ac8ea90a6db87450a3",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u22",
+     "M13_JOB": "u22"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 571,
+   "updated_at": 1794799791.815948
+  },
+  "user": "carol",
+  "wid": "u22"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799747.1677663,
+     "exit_code": 0,
+     "finished_at": 1794799792.6648324,
+     "gpu_labels": [],
+     "id": "6c26ee61de0c4666929be43994ed6917",
+     "job_id": "d164e991b8054d8582f0d4d50239c311",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799747.430025,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799676.1771412,
+   "current_attempt_id": "6c26ee61de0c4666929be43994ed6917",
+   "id": "d164e991b8054d8582f0d4d50239c311",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u23",
+     "M13_JOB": "u23"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 572,
+   "updated_at": 1794799792.664996
+  },
+  "user": "carol",
+  "wid": "u23"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799747.729131,
+     "exit_code": 0,
+     "finished_at": 1794799793.216127,
+     "gpu_labels": [],
+     "id": "5e9dd6bbed8246d58c6c5b071990ee8f",
+     "job_id": "89895829c80a4d39a5026b48ab922c45",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799747.9871428,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799676.798277,
+   "current_attempt_id": "5e9dd6bbed8246d58c6c5b071990ee8f",
+   "id": "89895829c80a4d39a5026b48ab922c45",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on kayle (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u24",
+     "M13_JOB": "u24"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 573,
+   "updated_at": 1794799793.2162783
+  },
+  "user": "carol",
+  "wid": "u24"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799749.2929187,
+     "exit_code": 0,
+     "finished_at": 1794799795.4110303,
+     "gpu_labels": [],
+     "id": "683617d93cc74bc78ef9d53b94e93174",
+     "job_id": "269e66e9919e4a7c860c5a00e01859ae",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799749.9566007,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799677.2279782,
+   "current_attempt_id": "683617d93cc74bc78ef9d53b94e93174",
+   "id": "269e66e9919e4a7c860c5a00e01859ae",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u25",
+     "M13_JOB": "u25"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 574,
+   "updated_at": 1794799795.41124
+  },
+  "user": "carol",
+  "wid": "u25"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799749.8549063,
+     "exit_code": 0,
+     "finished_at": 1794799796.091151,
+     "gpu_labels": [],
+     "id": "d974164ef18f4feab143891174647449",
+     "job_id": "e10f23f09bd04d5fb3abf311774c79da",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799750.5447865,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799677.6496058,
+   "current_attempt_id": "d974164ef18f4feab143891174647449",
+   "id": "e10f23f09bd04d5fb3abf311774c79da",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u26",
+     "M13_JOB": "u26"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 575,
+   "updated_at": 1794799796.0912938
+  },
+  "user": "carol",
+  "wid": "u26"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799750.315561,
+     "exit_code": 0,
+     "finished_at": 1794799796.3222418,
+     "gpu_labels": [],
+     "id": "38653f23bb9b4f2293b91d0dba1e541b",
+     "job_id": "35d357a355b742d8978acaeccd50d159",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799750.864869,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799678.2848608,
+   "current_attempt_id": "38653f23bb9b4f2293b91d0dba1e541b",
+   "id": "35d357a355b742d8978acaeccd50d159",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 1 min, recent usage 0 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u27",
+     "M13_JOB": "u27"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 576,
+   "updated_at": 1794799796.3224058
+  },
+  "user": "carol",
+  "wid": "u27"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799796.3231127,
+     "exit_code": 0,
+     "finished_at": 1794799842.3169444,
+     "gpu_labels": [],
+     "id": "edf7d29a82e648389d6485b5998fa2a0",
+     "job_id": "1401c7e6af5e425db6bde562ac14ec1a",
+     "node_id": "kindred",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799796.8304946,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799678.705292,
+   "current_attempt_id": "edf7d29a82e648389d6485b5998fa2a0",
+   "id": "1401c7e6af5e425db6bde562ac14ec1a",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on kindred (score 501 = priority 5, waited 2 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u28",
+     "M13_JOB": "u28"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 577,
+   "updated_at": 1794799842.317135
+  },
+  "user": "carol",
+  "wid": "u28"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799836.7150874,
+     "exit_code": 0,
+     "finished_at": 1794799882.0660996,
+     "gpu_labels": [],
+     "id": "f8c7c6a386bf4002a2a88d768698faac",
+     "job_id": "3ffca11d69c64886bca8325532fc6347",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799836.865015,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799679.1376185,
+   "current_attempt_id": "f8c7c6a386bf4002a2a88d768698faac",
+   "id": "3ffca11d69c64886bca8325532fc6347",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 502 = priority 5, waited 3 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u29",
+     "M13_JOB": "u29"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 578,
+   "updated_at": 1794799882.066255
+  },
+  "user": "carol",
+  "wid": "u29"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794799837.17408,
+     "exit_code": 0,
+     "finished_at": 1794799882.50476,
+     "gpu_labels": [],
+     "id": "88097dba0ed4470ab112e3db1a48a8ad",
+     "job_id": "45991e142c7e4ea29c411af3627b4862",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 8.0,
+      "gpu": 0,
+      "gpu_model": null,
+      "memory_mib": 4096,
+      "min_vram_mib": null
+     },
+     "started_at": 1794799837.3207424,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794799679.7584062,
+   "current_attempt_id": "88097dba0ed4470ab112e3db1a48a8ad",
+   "id": "45991e142c7e4ea29c411af3627b4862",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "priority: started on karma (score 502 = priority 5, waited 3 min, recent usage 1 min)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "sleep",
+     "45",
+     "8",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:users-priority-r3-1794799654:u30",
+     "M13_JOB": "u30"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "python:3.12-slim",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 8.0,
+     "gpu": 0,
+     "gpu_model": null,
+     "memory_mib": 4096,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 90.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 579,
+   "updated_at": 1794799882.5049243
+  },
+  "user": "carol",
+  "wid": "u30"
+ }
+]

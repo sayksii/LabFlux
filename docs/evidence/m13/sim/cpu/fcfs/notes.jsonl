@@ -1,0 +1,57 @@
+{"t": 1800000000.0, "wid": "c01", "state": "STARTING", "note": "fcfs: started on karma (submission #2)", "reason": "assigned to karma"}
+{"t": 1800000001.0, "wid": "c02", "state": "STARTING", "note": "fcfs: started on kayle (submission #3)", "reason": "assigned to kayle"}
+{"t": 1800000001.5, "wid": "c01", "state": "RUNNING", "note": "fcfs: started on karma (submission #2)", "reason": "executing"}
+{"t": 1800000002.0, "wid": "c03", "state": "STARTING", "note": "fcfs: started on kindred (submission #4)", "reason": "assigned to kindred"}
+{"t": 1800000002.5, "wid": "c02", "state": "RUNNING", "note": "fcfs: started on kayle (submission #3)", "reason": "executing"}
+{"t": 1800000003.5, "wid": "c03", "state": "RUNNING", "note": "fcfs: started on kindred (submission #4)", "reason": "executing"}
+{"t": 1800000004.0, "wid": "c04", "state": "QUEUED", "note": "fcfs: first in line (submission #5); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets"}
+{"t": 1800000006.0, "wid": "c05", "state": "QUEUED", "note": "fcfs: submission #6; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000010.0, "wid": "c06", "state": "QUEUED", "note": "fcfs: submission #7; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000014.0, "wid": "c07", "state": "QUEUED", "note": "fcfs: submission #8; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000018.0, "wid": "c08", "state": "QUEUED", "note": "fcfs: submission #9; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000022.0, "wid": "c09", "state": "QUEUED", "note": "fcfs: submission #10; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000026.0, "wid": "c10", "state": "QUEUED", "note": "fcfs: submission #11; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000030.0, "wid": "c11", "state": "QUEUED", "note": "fcfs: submission #12; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000034.0, "wid": "c12", "state": "QUEUED", "note": "fcfs: submission #13; waiting behind job e04027af", "reason": "waiting for scheduling"}
+{"t": 1800000063.5, "wid": "c03", "state": "SUCCEEDED", "note": "fcfs: started on kindred (submission #4)", "reason": "simulated"}
+{"t": 1800000063.5, "wid": "c04", "state": "STARTING", "note": "fcfs: started on kindred (submission #5)", "reason": "assigned to kindred"}
+{"t": 1800000063.5, "wid": "c05", "state": "QUEUED", "note": "fcfs: first in line (submission #6); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets"}
+{"t": 1800000063.5, "wid": "c06", "state": "QUEUED", "note": "fcfs: submission #7; waiting behind job 90b8c056", "reason": "waiting for scheduling"}
+{"t": 1800000063.5, "wid": "c07", "state": "QUEUED", "note": "fcfs: submission #8; waiting behind job 90b8c056", "reason": "waiting for scheduling"}
+{"t": 1800000063.5, "wid": "c08", "state": "QUEUED", "note": "fcfs: submission #9; waiting behind job 90b8c056", "reason": "waiting for scheduling"}
+{"t": 1800000063.5, "wid": "c09", "state": "QUEUED", "note": "fcfs: submission #10; waiting behind job 90b8c056", "reason": "waiting for scheduling"}
+{"t": 1800000063.5, "wid": "c10", "state": "QUEUED", "note": "fcfs: submission #11; waiting behind job 90b8c056", "reason": "waiting for scheduling"}
+{"t": 1800000063.5, "wid": "c11", "state": "QUEUED", "note": "fcfs: submission #12; waiting behind job 90b8c056", "reason": "waiting for scheduling"}
+{"t": 1800000063.5, "wid": "c12", "state": "QUEUED", "note": "fcfs: submission #13; waiting behind job 90b8c056", "reason": "waiting for scheduling"}
+{"t": 1800000065.5, "wid": "c04", "state": "RUNNING", "note": "fcfs: started on kindred (submission #5)", "reason": "executing"}
+{"t": 1800000091.5, "wid": "c01", "state": "SUCCEEDED", "note": "fcfs: started on karma (submission #2)", "reason": "simulated"}
+{"t": 1800000091.5, "wid": "c05", "state": "STARTING", "note": "fcfs: started on karma (submission #6)", "reason": "assigned to karma"}
+{"t": 1800000091.5, "wid": "c06", "state": "STARTING", "note": "fcfs: started on karma (submission #7)", "reason": "assigned to karma"}
+{"t": 1800000091.5, "wid": "c07", "state": "STARTING", "note": "fcfs: started on karma (submission #8)", "reason": "assigned to karma"}
+{"t": 1800000091.5, "wid": "c08", "state": "STARTING", "note": "fcfs: started on karma (submission #9)", "reason": "assigned to karma"}
+{"t": 1800000091.5, "wid": "c09", "state": "QUEUED", "note": "fcfs: first in line (submission #10); waiting for matching CPU/RAM/GPU capacity or datasets", "reason": "waiting for matching CPU/RAM/GPU capacity or datasets"}
+{"t": 1800000091.5, "wid": "c10", "state": "QUEUED", "note": "fcfs: submission #11; waiting behind job 3533482d", "reason": "waiting for scheduling"}
+{"t": 1800000091.5, "wid": "c11", "state": "QUEUED", "note": "fcfs: submission #12; waiting behind job 3533482d", "reason": "waiting for scheduling"}
+{"t": 1800000091.5, "wid": "c12", "state": "QUEUED", "note": "fcfs: submission #13; waiting behind job 3533482d", "reason": "waiting for scheduling"}
+{"t": 1800000093.5, "wid": "c05", "state": "RUNNING", "note": "fcfs: started on karma (submission #6)", "reason": "executing"}
+{"t": 1800000093.5, "wid": "c06", "state": "RUNNING", "note": "fcfs: started on karma (submission #7)", "reason": "executing"}
+{"t": 1800000093.5, "wid": "c07", "state": "RUNNING", "note": "fcfs: started on karma (submission #8)", "reason": "executing"}
+{"t": 1800000093.5, "wid": "c08", "state": "RUNNING", "note": "fcfs: started on karma (submission #9)", "reason": "executing"}
+{"t": 1800000122.5, "wid": "c02", "state": "SUCCEEDED", "note": "fcfs: started on kayle (submission #3)", "reason": "simulated"}
+{"t": 1800000122.5, "wid": "c09", "state": "STARTING", "note": "fcfs: started on kayle (submission #10)", "reason": "assigned to kayle"}
+{"t": 1800000122.5, "wid": "c10", "state": "STARTING", "note": "fcfs: started on kayle (submission #11)", "reason": "assigned to kayle"}
+{"t": 1800000122.5, "wid": "c11", "state": "STARTING", "note": "fcfs: started on kayle (submission #12)", "reason": "assigned to kayle"}
+{"t": 1800000122.5, "wid": "c12", "state": "STARTING", "note": "fcfs: started on kayle (submission #13)", "reason": "assigned to kayle"}
+{"t": 1800000123.5, "wid": "c05", "state": "SUCCEEDED", "note": "fcfs: started on karma (submission #6)", "reason": "simulated"}
+{"t": 1800000123.5, "wid": "c08", "state": "SUCCEEDED", "note": "fcfs: started on karma (submission #9)", "reason": "simulated"}
+{"t": 1800000124.5, "wid": "c09", "state": "RUNNING", "note": "fcfs: started on kayle (submission #10)", "reason": "executing"}
+{"t": 1800000124.5, "wid": "c10", "state": "RUNNING", "note": "fcfs: started on kayle (submission #11)", "reason": "executing"}
+{"t": 1800000124.5, "wid": "c11", "state": "RUNNING", "note": "fcfs: started on kayle (submission #12)", "reason": "executing"}
+{"t": 1800000124.5, "wid": "c12", "state": "RUNNING", "note": "fcfs: started on kayle (submission #13)", "reason": "executing"}
+{"t": 1800000125.5, "wid": "c04", "state": "SUCCEEDED", "note": "fcfs: started on kindred (submission #5)", "reason": "simulated"}
+{"t": 1800000138.5, "wid": "c06", "state": "SUCCEEDED", "note": "fcfs: started on karma (submission #7)", "reason": "simulated"}
+{"t": 1800000153.5, "wid": "c07", "state": "SUCCEEDED", "note": "fcfs: started on karma (submission #8)", "reason": "simulated"}
+{"t": 1800000154.5, "wid": "c11", "state": "SUCCEEDED", "note": "fcfs: started on kayle (submission #12)", "reason": "simulated"}
+{"t": 1800000169.5, "wid": "c09", "state": "SUCCEEDED", "note": "fcfs: started on kayle (submission #10)", "reason": "simulated"}
+{"t": 1800000169.5, "wid": "c12", "state": "SUCCEEDED", "note": "fcfs: started on kayle (submission #13)", "reason": "simulated"}
+{"t": 1800000184.5, "wid": "c10", "state": "SUCCEEDED", "note": "fcfs: started on kayle (submission #11)", "reason": "simulated"}

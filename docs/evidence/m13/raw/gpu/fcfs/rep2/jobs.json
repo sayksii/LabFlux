@@ -1,0 +1,951 @@
+[
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794797.5990033,
+     "exit_code": 0,
+     "finished_at": 1794794888.2758994,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "20fd138e8e8140f0aa60484039a7da66",
+     "job_id": "434d94a7d3324411bf3128e24d567da4",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794797.8850942,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794797.598673,
+   "current_attempt_id": "20fd138e8e8140f0aa60484039a7da66",
+   "id": "434d94a7d3324411bf3128e24d567da4",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on karma (submission #212)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "90",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g01",
+     "M13_JOB": "g01"
+    },
+    "estimated_runtime_s": 90.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 150.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 212,
+   "updated_at": 1794794888.2760637
+  },
+  "user": "alice",
+  "wid": "g01"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794798.6301413,
+     "exit_code": 0,
+     "finished_at": 1794794919.4099574,
+     "gpu_labels": [
+      "kayle/RTX A5000"
+     ],
+     "id": "40f578fac99646658d1f4d88c2819e6e",
+     "job_id": "f2ba5a67e1934bc09160fc70fdd76a7a",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794799.0126956,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794798.6296115,
+   "current_attempt_id": "40f578fac99646658d1f4d88c2819e6e",
+   "id": "f2ba5a67e1934bc09160fc70fdd76a7a",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on kayle (submission #213)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "120",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g02",
+     "M13_JOB": "g02"
+    },
+    "estimated_runtime_s": 120.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 180.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 213,
+   "updated_at": 1794794919.4101076
+  },
+  "user": "bob",
+  "wid": "g02"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794919.410249,
+     "exit_code": 0,
+     "finished_at": 1794794980.1998987,
+     "gpu_labels": [
+      "kayle/RTX 3090",
+      "kayle/RTX A5000"
+     ],
+     "id": "485ed86bf38d4594934b6fafef50f432",
+     "job_id": "90d7deb12a4b4e9d8b86957bf0886f1f",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 2,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794919.7850275,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794800.6596189,
+   "current_attempt_id": "485ed86bf38d4594934b6fafef50f432",
+   "id": "90d7deb12a4b4e9d8b86957bf0886f1f",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on kayle (submission #214)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "60",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g03",
+     "M13_JOB": "g03"
+    },
+    "estimated_runtime_s": 60.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 2,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 120.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 214,
+   "updated_at": 1794794980.2000444
+  },
+  "user": "carol",
+  "wid": "g03"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794919.410249,
+     "exit_code": 0,
+     "finished_at": 1794794965.047872,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "816dc41f0f4148f3a9ed4652c5055a3f",
+     "job_id": "95eb259b17e94811bbab44708f1b9169",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794919.645315,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794803.6958094,
+   "current_attempt_id": "816dc41f0f4148f3a9ed4652c5055a3f",
+   "id": "95eb259b17e94811bbab44708f1b9169",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on karma (submission #215)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g04",
+     "M13_JOB": "g04"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 215,
+   "updated_at": 1794794965.048013
+  },
+  "user": "alice",
+  "wid": "g04"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794965.048148,
+     "exit_code": 0,
+     "finished_at": 1794794995.6550546,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "9a008c0f960f40109edbd81593ca4743",
+     "job_id": "d569ca58c3214725a5a6a64015a48981",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794965.26721,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794806.7384737,
+   "current_attempt_id": "9a008c0f960f40109edbd81593ca4743",
+   "id": "d569ca58c3214725a5a6a64015a48981",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on karma (submission #216)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g05",
+     "M13_JOB": "g05"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 216,
+   "updated_at": 1794794995.6552372
+  },
+  "user": "bob",
+  "wid": "g05"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794980.2001808,
+     "exit_code": 0,
+     "finished_at": 1794795026.0462594,
+     "gpu_labels": [
+      "kayle/RTX A5000"
+     ],
+     "id": "0ed435ff7afb40daa36de5efb9dde800",
+     "job_id": "9ce43454049b4f38b79e44c915bfcc65",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794980.6719337,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794809.7748156,
+   "current_attempt_id": "0ed435ff7afb40daa36de5efb9dde800",
+   "id": "9ce43454049b4f38b79e44c915bfcc65",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on kayle (submission #217)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g06",
+     "M13_JOB": "g06"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 217,
+   "updated_at": 1794795026.0464182
+  },
+  "user": "carol",
+  "wid": "g06"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794980.2001808,
+     "exit_code": 0,
+     "finished_at": 1794795011.05887,
+     "gpu_labels": [
+      "kayle/RTX 3090"
+     ],
+     "id": "5d88ecee38d74ecf9f178f95ad219e95",
+     "job_id": "03655fc6749841fbad4aee2fdb39df9c",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794980.6399174,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794812.6174169,
+   "current_attempt_id": "5d88ecee38d74ecf9f178f95ad219e95",
+   "id": "03655fc6749841fbad4aee2fdb39df9c",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on kayle (submission #218)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g07",
+     "M13_JOB": "g07"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 218,
+   "updated_at": 1794795011.0590174
+  },
+  "user": "alice",
+  "wid": "g07"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794794995.6553736,
+     "exit_code": 0,
+     "finished_at": 1794795026.2379775,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "92bb30dfb9d9424a88ecc54e9778cfcc",
+     "job_id": "66b8a3c146c8443bac42d19e8d5b4b6c",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": "4090",
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794794995.848885,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794815.6520684,
+   "current_attempt_id": "92bb30dfb9d9424a88ecc54e9778cfcc",
+   "id": "66b8a3c146c8443bac42d19e8d5b4b6c",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on karma (submission #219)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g08",
+     "M13_JOB": "g08"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": "4090",
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 219,
+   "updated_at": 1794795026.2381122
+  },
+  "user": "bob",
+  "wid": "g08"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794795011.0591638,
+     "exit_code": 0,
+     "finished_at": 1794795056.9374444,
+     "gpu_labels": [
+      "kayle/RTX 3090"
+     ],
+     "id": "c48e11e6f00a47e086d49d88125f24cf",
+     "job_id": "63da8c21fe214b8792a6087b3c162bef",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794795011.4190464,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794818.697346,
+   "current_attempt_id": "c48e11e6f00a47e086d49d88125f24cf",
+   "id": "63da8c21fe214b8792a6087b3c162bef",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on kayle (submission #220)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g09",
+     "M13_JOB": "g09"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 220,
+   "updated_at": 1794795056.9375954
+  },
+  "user": "carol",
+  "wid": "g09"
+ },
+ {
+  "account": "m13s2-alice",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794795026.0465689,
+     "exit_code": 0,
+     "finished_at": 1794795056.9775555,
+     "gpu_labels": [
+      "kayle/RTX A5000"
+     ],
+     "id": "160155a92fa24ac9abc6d350905d9b03",
+     "job_id": "1acf0708ee304040ae1d812e14480db0",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794795026.4032938,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794821.7348807,
+   "current_attempt_id": "160155a92fa24ac9abc6d350905d9b03",
+   "id": "1acf0708ee304040ae1d812e14480db0",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-alice",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on kayle (submission #221)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g10",
+     "M13_JOB": "g10"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 221,
+   "updated_at": 1794795056.9777272
+  },
+  "user": "alice",
+  "wid": "g10"
+ },
+ {
+  "account": "m13s2-bob",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794795026.2382503,
+     "exit_code": 0,
+     "finished_at": 1794795071.832491,
+     "gpu_labels": [
+      "karma/RTX 4090"
+     ],
+     "id": "687ce8af46474c3386569213604adf5e",
+     "job_id": "754f78ae661b49b6a24a3e2c06550205",
+     "node_id": "karma",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794795026.4480813,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794824.7746618,
+   "current_attempt_id": "687ce8af46474c3386569213604adf5e",
+   "id": "754f78ae661b49b6a24a3e2c06550205",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-bob",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on karma (submission #222)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "45",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g11",
+     "M13_JOB": "g11"
+    },
+    "estimated_runtime_s": 45.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 75.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 222,
+   "updated_at": 1794795071.8327181
+  },
+  "user": "bob",
+  "wid": "g11"
+ },
+ {
+  "account": "m13s2-carol",
+  "job": {
+   "attempts": [
+    {
+     "created_at": 1794795056.9377317,
+     "exit_code": 0,
+     "finished_at": 1794795087.7089138,
+     "gpu_labels": [
+      "kayle/RTX 3090"
+     ],
+     "id": "30c48ff437f04371a1277200ccbe0245",
+     "job_id": "6e9121fd566d41bba154a4b693cf2478",
+     "node_id": "kayle",
+     "oom_killed": false,
+     "preempted_by": null,
+     "reason": "completed",
+     "released": true,
+     "resources": {
+      "cpu": 4.0,
+      "gpu": 1,
+      "gpu_model": null,
+      "memory_mib": 8192,
+      "min_vram_mib": null
+     },
+     "started_at": 1794795057.317075,
+     "state": "SUCCEEDED"
+    }
+   ],
+   "cancel_requested": false,
+   "created_at": 1794794827.6127849,
+   "current_attempt_id": "30c48ff437f04371a1277200ccbe0245",
+   "id": "6e9121fd566d41bba154a4b693cf2478",
+   "kind": "BATCH",
+   "lease_expires_at": null,
+   "owner": "m13s2-carol",
+   "reason": "completed",
+   "schedule_note": "fcfs: started on kayle (submission #223)",
+   "service": null,
+   "spec": {
+    "argv": [
+     "python",
+     "-c",
+     "<m13_load.py>",
+     "gpu",
+     "30",
+     "4",
+     "m13"
+    ],
+    "datasets": [],
+    "env": {
+     "HOME": "/tmp",
+     "LABFLUX_EXPERIMENT": "m13:gpu-fcfs-r2-1794794797:g12",
+     "M13_JOB": "g12"
+    },
+    "estimated_runtime_s": 30.0,
+    "image": "pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime",
+    "preemptible": false,
+    "priority": 5,
+    "project": null,
+    "resources": {
+     "cpu": 4.0,
+     "gpu": 1,
+     "gpu_model": null,
+     "memory_mib": 8192,
+     "min_vram_mib": null
+    },
+    "retries_on_node_failure": 0,
+    "safe_to_rerun": false,
+    "source_id": null,
+    "time_limit_s": 60.0
+   },
+   "state": "SUCCEEDED",
+   "submission_seq": 223,
+   "updated_at": 1794795087.7091393
+  },
+  "user": "carol",
+  "wid": "g12"
+ }
+]

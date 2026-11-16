@@ -1,0 +1,139 @@
+{
+ "cold": {
+  "seconds": 2.047,
+  "status": 200
+ },
+ "contended": true,
+ "holder_attempts": [
+  {
+   "created_at": 1794803543.8471634,
+   "finished_at": 1794803547.722023,
+   "gpus": [
+    "karma/RTX 4090"
+   ],
+   "id": "5d260bed",
+   "node_id": "karma",
+   "preempted_by": "371c4176",
+   "reason": "preempted by job 371c4176 (cancelled)",
+   "started_at": 1794803544.15577,
+   "state": "PREEMPTED"
+  },
+  {
+   "created_at": 1794803630.748213,
+   "finished_at": 1794803751.1519744,
+   "gpus": [
+    "karma/RTX 4090"
+   ],
+   "id": "5dd6d1af",
+   "node_id": "karma",
+   "preempted_by": null,
+   "reason": "completed",
+   "started_at": 1794803630.9624023,
+   "state": "SUCCEEDED"
+  }
+ ],
+ "model_states": [
+  {
+   "attempt": "870c226d",
+   "node": "karma",
+   "state": "stopped",
+   "t": 1794803543.8638303
+  },
+  {
+   "attempt": "",
+   "node": null,
+   "state": "waiting",
+   "t": 1794803547.4604304
+  },
+  {
+   "attempt": "365a961b",
+   "node": "karma",
+   "state": "starting",
+   "t": 1794803547.9753592
+  },
+  {
+   "attempt": "365a961b",
+   "node": "karma",
+   "state": "serving",
+   "t": 1794803548.9979806
+  },
+  {
+   "attempt": "365a961b",
+   "node": "karma",
+   "state": "stopping",
+   "t": 1794803610.055078
+  },
+  {
+   "attempt": "365a961b",
+   "node": "karma",
+   "state": "stopped",
+   "t": 1794803610.3107703
+  }
+ ],
+ "probe": "model",
+ "reclaim": {
+  "dispatched": 1794803610.1195035,
+  "idle_before_dispatch_s": 60.53,
+  "last_request": 1794803549.584885,
+  "submitted": 1794803549.5907607,
+  "wait_s": 60.53
+ },
+ "rep": 1,
+ "waiting_attempts": [
+  {
+   "created_at": 1794803610.1195035,
+   "finished_at": 1794803630.7469127,
+   "gpus": [
+    "karma/RTX 4090"
+   ],
+   "id": "1578ad4a",
+   "node_id": "karma",
+   "preempted_by": null,
+   "reason": "completed",
+   "started_at": 1794803610.345769,
+   "state": "SUCCEEDED"
+  }
+ ],
+ "warm": [
+  {
+   "seconds": 0.018,
+   "status": 200
+  },
+  {
+   "seconds": 0.011,
+   "status": 200
+  },
+  {
+   "seconds": 0.012,
+   "status": 200
+  },
+  {
+   "seconds": 0.02,
+   "status": 200
+  },
+  {
+   "seconds": 0.009,
+   "status": 200
+  },
+  {
+   "seconds": 0.024,
+   "status": 200
+  },
+  {
+   "seconds": 0.02,
+   "status": 200
+  },
+  {
+   "seconds": 0.012,
+   "status": 200
+  },
+  {
+   "seconds": 0.011,
+   "status": 200
+  },
+  {
+   "seconds": 0.012,
+   "status": 200
+  }
+ ]
+}
