@@ -289,10 +289,27 @@ def _source_project(source: Path) -> str | None:
 
 
 @app.command()
-def status(ctx: typer.Context, job_id: str | None = typer.Argument(None)) -> None:
-    """List your jobs, or inspect one job including all attempts and outputs."""
+def status(
+    ctx: typer.Context,
+    job_id: str | None = typer.Argument(None),
+    all_users: bool = typer.Option(False, "--all", help="Summaries of every user's jobs"),
+) -> None:
+    """List your jobs, or inspect one job including all attempts and outputs. --all lists every
+    user's unfinished jobs and those that ended in the last 24 hours, without argv, env, image
+    or source."""
+    if job_id and all_users:
+        raise typer.BadParameter("give a job ID or --all, not both")
+    path = f"/api/jobs/{job_id}" if job_id else "/api/jobs"
     with api_client(ctx.obj) as client:
-        show(checked(client.get(f"/api/jobs/{job_id}" if job_id else "/api/jobs")).json())
+        show(checked(client.get(path, params={"scope": "all"} if all_users else None)).json())
+
+
+@app.command()
+def queue(ctx: typer.Context) -> None:
+    """Show the queue as the Scheduler's last pass saw it: order, scores, decisions, what each
+    job waits for, the backfill reservation and the recent scheduling decisions."""
+    with api_client(ctx.obj) as client:
+        show(checked(client.get("/api/queue")).json())
 
 
 @app.command()

@@ -7,11 +7,12 @@ import hmac
 import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, Query, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 
-from labflux import __version__, inference, relay
+from labflux import __version__, inference, relay, views
 from labflux.artifacts import ArtifactStore
 from labflux.config import Settings
 from labflux.hub import Hub
@@ -107,8 +108,16 @@ def create_app(
         return service.submit(owner, spec)
 
     @app.get("/api/jobs")
-    def list_jobs(owner: str = Depends(user)):
+    def list_jobs(scope: Literal["mine", "all"] = "mine", owner: str = Depends(user)):
+        """Your own jobs in full; scope=all: a summary of every user's jobs (M12)."""
+        if scope == "all":
+            return views.job_summaries(service, owner)
         return service.list_jobs(owner)
+
+    @app.get("/api/queue")
+    def queue(owner: str = Depends(user)):
+        """The Scheduler's last pass: queue order, scores, decisions, blockers (M12)."""
+        return service.queue_view(owner)
 
     @app.get("/api/jobs/{job_id}")
     def get_job(job_id: str, owner: str = Depends(user)):
@@ -155,7 +164,7 @@ def create_app(
 
     @app.get("/api/nodes")
     def list_nodes(owner: str = Depends(user)):
-        return service.list_nodes()
+        return views.list_nodes(service, owner)
 
     @app.get("/api/models")
     def list_models(owner: str = Depends(user)):

@@ -8,7 +8,9 @@ import secrets
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
+from functools import partial
 
 from pydantic import ValidationError
 from sqlalchemy import and_, func, literal_column, or_, select
@@ -27,6 +29,7 @@ from labflux.database import (
     project_results,
     user_tokens,
 )
+from labflux.explain import blocker, placement, who
 from labflux.models import (
     MODEL_KIND,
     MODEL_OWNER,
@@ -90,6 +93,8 @@ MODEL_STATES = {
 PERSISTENT_LEASE_S = 365 * 24 * 3600.0
 # The state of an attempt whose termination was confirmed after a preemption stop (M11).
 PREEMPTED = "PREEMPTED"
+# Scheduling decisions kept in memory for the queue view (M12).
+RECENT_DECISIONS = 50
 
 
 def stop_reason(attempt: dict) -> str:
@@ -138,6 +143,16 @@ class Scheduler:
         # Owners of the tokens issued by `labflux login`, by SHA-256 (Q14). This process is the
         # only writer, so the copy stays exact and authenticating never reads the database.
         self.token_owners: dict[str, str] = {}
+        # Relayed requests begun, and when one last began or ended, per model service job (M12).
+        # In memory only, like service_inflight: they count from the Scheduler's start.
+        self.service_served: dict[str, int] = {}
+        self.service_activity: dict[str, float] = {}
+        # The result of the last scheduling pass and the latest decisions (M12), served by
+        # queue_view. In memory only: empty again after a restart until the first pass. A pass
+        # replaces the snapshot as a whole once its transaction commits.
+        self.queue_snapshot: dict = self._queue_snapshot(None, [], None, {})
+        self.decisions: deque[dict] = deque(maxlen=RECENT_DECISIONS)
+        self.decisions_lock = threading.Lock()
         self.restore()
 
     def restore(self) -> None:
@@ -323,6 +338,12 @@ class Scheduler:
                 )
             else:
                 connection.execute(nodes.insert().values(id=payload.worker_id, **values))
+            if status == "ONLINE":
+                self._decide(
+                    "node_online",
+                    f"node {payload.worker_id} is online: a Worker instance registered",
+                    node_id=payload.worker_id,
+                )
             # Reconciled in this transaction, so nothing is dispatched to an unreconciled node.
             reconciled = {} if legacy else self._reconcile(connection, payload)
             self._schedule(connection)
@@ -522,6 +543,17 @@ class Scheduler:
                     f"preempted by job {short(preempted_by)}; queued to run again "
                     f"(preemption {count} of {self.settings.max_preemptions_per_job})"
                 )
+                self._decide(
+                    "requeued_after_preemption",
+                    f"{who(job)}: {reason}",
+                    job=job,
+                    node_id=attempt["node_id"],
+                    detail={
+                        "attempt_id": attempt["id"],
+                        "preempted_by": preempted_by,
+                        "preemptions": count,
+                    },
+                )
             elif lost and outcome != "CANCELLED":
                 limit = JobSpec.model_validate(job["spec"]).retries_on_node_failure
                 # Earlier attempts lost to the infrastructure; preemptions do not count.
@@ -538,6 +570,13 @@ class Scheduler:
                     # ahead of everything submitted after it. Dispatch adds a new attempt.
                     state = "QUEUED"
                     reason = f"{reason}; queued for retry {used + 1} of {limit}"
+                    self._decide(
+                        "retried_after_node_failure",
+                        f"{who(job)}: {reason}",
+                        job=job,
+                        node_id=attempt["node_id"],
+                        detail={"attempt_id": attempt["id"], "retry": used + 1, "limit": limit},
+                    )
             connection.execute(
                 jobs.update()
                 .where(jobs.c.id == job["id"])
@@ -632,6 +671,13 @@ class Scheduler:
             if status in ("OFFLINE", RECONCILING):
                 # The same instance is back after its heartbeats lapsed or the Scheduler
                 # restarted; its records are intact, so the instance check reconciles it.
+                after = "a Scheduler restart" if status == RECONCILING else "its heartbeats lapsed"
+                self._decide(
+                    "node_online",
+                    f"node {node_id} is online again: the same Worker instance is back after "
+                    f"{after}",
+                    node_id=node_id,
+                )
                 status = "ONLINE"
                 self._resume(connection, node_id, set(payload.active_attempts))
                 self._ring(node_id)  # START commands are handed out again.
@@ -880,16 +926,17 @@ class Scheduler:
         held: set,
         usage: dict,
         now: float,
-    ) -> str | None:
+    ) -> tuple[str, list[str]] | None:
         """Let the blocked head job stop preemptible batch jobs to make room for it (M11).
 
-        Returns a note when the head waits for preempted jobs or for resources already on their
-        way back, or None when nothing is preempted for it. Interactive work (sessions, model
-        services) may preempt under every policy, a batch job only under policies that allow
-        it. One round at a time: while any attempt is still stopping for a preemption, no new
-        one starts. Resources already on their way back count as free: if the head fits once
-        they are released it preempts nothing, otherwise it needs fewer victims. The resources
-        are released, and the head dispatched, only by the victims' confirmed termination.
+        Returns a note, and the jobs it names (M12), when the head waits for preempted jobs or
+        for resources already on their way back, or None when nothing is preempted for it.
+        Interactive work (sessions, model services) may preempt under every policy, a batch job
+        only under policies that allow it. One round at a time: while any attempt is still
+        stopping for a preemption, no new one starts. Resources already on their way back count
+        as free: if the head fits once they are released it preempts nothing, otherwise it needs
+        fewer victims. The resources are released, and the head dispatched, only by the victims'
+        confirmed termination.
         """
         job, spec = entry.job, entry.spec
         if not self.settings.preemption_enabled or not (
@@ -924,22 +971,34 @@ class Scheduler:
             elif chosen:
                 options[node["id"]] = chosen
         if ready:
-            return "waiting for " + ", ".join(release.what for release in releases[min(ready)])
+            freeing = releases[min(ready)]
+            note = "waiting for " + ", ".join(release.what for release in freeing)
+            return note, [release.job_id for release in freeing]
         best = cheapest_preemption(options)
         if best is None:
             return None
-        for victim in best[1]:
+        node_id, chosen = best
+        for victim in chosen:
             self._request_stop(
                 connection,
                 self._job(connection, victim.job_id),
                 f"preempted by job {short(job['id'])}; {STOP_WAIT}",
                 preempted_by=job["id"],
             )
+        lost = sum(victim.lost_s for victim in chosen)
+        self._decide(
+            "preempting",
+            f"{who(job)}: preempting job {', '.join(short(v.job_id) for v in chosen)} on "
+            f"{node_id}, the least work lost ({lost:.0f}s); it starts once they stop",
+            job=job,
+            node_id=node_id,
+            detail={"victims": [v.job_id for v in chosen], "node_id": node_id, "lost_s": lost},
+        )
         return self._preemption_in_progress(connection, job)
 
     @staticmethod
-    def _preemption_in_progress(connection, job: dict) -> str | None:
-        """A note naming the attempts still stopping for a preemption, if any."""
+    def _preemption_in_progress(connection, job: dict) -> tuple[str, list[str]] | None:
+        """A note naming the attempts still stopping for a preemption, and their jobs, if any."""
         rows = connection.execute(
             select(attempts.c.job_id, attempts.c.node_id, attempts.c.preempted_by)
             .where(attempts.c.released.is_(False), attempts.c.preempted_by.is_not(None))
@@ -952,7 +1011,7 @@ class Scheduler:
         others = sorted({short(row.preempted_by) for row in rows if row.preempted_by != job["id"]})
         if others:
             note += f" (preempted for job {', '.join(others)})"
-        return note
+        return note, [row.job_id for row in rows]
 
     def _releases(self, connection, available: list, now: float) -> dict[str, list[Release]]:
         """Resources already on their way back, per available node: attempts stopping for a
@@ -1001,6 +1060,7 @@ class Scheduler:
                     cpu=job["resources"]["cpu"],
                     memory_mib=job["resources"]["memory_mib"],
                     cards=frozenset(cards.get(job["attempt_id"], ())),
+                    job_id=job["id"],
                 )
             )
         return result
@@ -1104,17 +1164,90 @@ class Scheduler:
                 jobs.update().where(jobs.c.id == job["id"]).values(schedule_note=note)
             )
 
+    def _decide(
+        self,
+        kind: str,
+        text: str,
+        job: dict | None = None,
+        node_id: str | None = None,
+        detail: dict | None = None,
+    ) -> None:
+        """Remember a scheduling decision for the queue view (M12) once the transaction
+        commits, so a rolled-back one is never shown. In memory only."""
+        decision = {
+            "at": self.clock(),
+            "kind": kind,
+            "job_id": job["id"] if job else None,
+            "owner": job["owner"] if job else None,
+            "node_id": node_id,
+            "detail": detail or {},
+            "text": text,
+        }
+        self.db.after_commit(partial(self._remember, decision))
+
+    def _remember(self, decision: dict) -> None:
+        with self.decisions_lock:
+            self.decisions.appendleft(decision)
+
+    def _queue_snapshot(
+        self,
+        now: float | None,
+        entries: list[dict],
+        reservation: Reservation | None,
+        usage: dict[str, float],
+    ) -> dict:
+        s = self.settings
+        if reservation is not None:
+            request = reservation.request
+            reservation = {
+                "job_id": reservation.job_id,
+                "node_id": reservation.node_id,
+                "start": reservation.start,
+                "cpu": request["cpu"],
+                "memory_mib": request["memory_mib"],
+                "gpu": request["gpu"],
+            }
+        return {
+            "policy": self.policy.name,
+            "computed_at": now,
+            "weights": {
+                "priority": s.score_priority_weight,
+                "wait": s.score_wait_weight,
+                "usage": s.score_usage_weight,
+            },
+            "entries": entries,
+            "reservation": reservation,
+            "usage_min_by_user": dict(usage),
+        }
+
+    def _publish_queue(self, snapshot: dict) -> None:
+        """Replace the queue snapshot as a whole once this pass's transaction commits."""
+        self.db.after_commit(partial(setattr, self, "queue_snapshot", snapshot))
+
+    def queue_view(self, viewer: str) -> dict:
+        """The queue as the last scheduling pass left it, and the latest decisions, newest
+        first (GET /api/queue, M12). Every user sees every entry; `mine` marks the viewer's."""
+        snapshot = self.queue_snapshot
+        with self.decisions_lock:
+            decisions = list(self.decisions)
+        return {
+            **snapshot,
+            "entries": [
+                {**entry, "mine": entry["owner"] == viewer} for entry in snapshot["entries"]
+            ],
+            "recent_decisions": decisions,
+        }
+
     def _schedule(self, connection) -> None:
         """Consider queued jobs in policy order and dispatch every job allowed to start now.
 
         Without backfilling, the first job that cannot start blocks every later job, unless it is a
         model service. With it, that head job gets a reservation and a later job starts only if it
-        cannot delay it (EASY).
+        cannot delay it (EASY). Every job left queued gets a queue entry that explains the
+        decision with the facts it was made from (M12).
         """
         now = self.clock()
-        queued = connection.execute(select(jobs).where(jobs.c.state == "QUEUED")).all()
-        if not queued:
-            return
+        policy = self.policy
         available = [
             row_dict(row)
             for row in connection.execute(
@@ -1124,14 +1257,60 @@ class Scheduler:
                 )
             )
         ]
+        # Also with an empty queue, so the queue view keeps showing recent usage.
+        usage = self._recent_usage(connection, now, available) if policy.uses_usage else {}
+        queued = connection.execute(select(jobs).where(jobs.c.state == "QUEUED")).all()
+        if not queued:
+            self._publish_queue(self._queue_snapshot(now, [], None, usage))
+            return
         allocated = {node["id"]: self._allocations(connection, node["id"]) for node in available}
         held = self._held_gpus(connection)
-        policy = self.policy
-        usage = self._recent_usage(connection, now, available) if policy.uses_usage else {}
         bookings = self._bookings(connection, available, now) if policy.backfill else {}
         entries = [(row_dict(row), JobSpec.model_validate(row.spec)) for row in queued]
         head: dict | None = None
         reservation: Reservation | None = None
+        explained: list[dict] = []
+
+        def explain(
+            entry: Ranked,
+            decision: str,
+            note: str,
+            behind: dict | None = None,
+            waiting_for: list[str] | None = None,
+        ) -> None:
+            """Write the job's schedule note and add its queue entry (M12)."""
+            job, spec = entry.job, entry.spec
+            self._note(connection, job, note)
+            batch = class_rank(job) != INTERACTIVE_CLASS
+            parts = policy.score_parts(job, spec, now, usage) if batch else None
+            priority = self.settings.default_priority if spec.priority is None else spec.priority
+            explained.append(
+                {
+                    "position": len(explained) + 1,
+                    "job_id": job["id"],
+                    "owner": job["owner"],
+                    "kind": job["kind"],
+                    "service": job["service"],
+                    "priority": priority if batch else None,
+                    "score": None
+                    if parts is None
+                    else parts["priority"] + parts["waited_min"] - parts["usage_min"],
+                    "score_parts": parts,
+                    "decision": decision,
+                    "blocker": blocker(
+                        spec.resources.model_dump(),
+                        spec.datasets,
+                        available,
+                        allocated,
+                        held,
+                        self.settings.max_parallel_jobs,
+                    ),
+                    "head_job_id": behind["id"] if behind else None,
+                    "waiting_for": waiting_for or [],
+                    "note": note,
+                }
+            )
+
         for entry in policy.order(entries, now, usage):
             job, spec = entry.job, entry.spec
             if job["kind"] == MODEL_KIND and job["service"] not in self.settings.models:
@@ -1140,7 +1319,7 @@ class Scheduler:
             limit = spec.time_limit_s or self.settings.job_time_limit_s
             if head is not None and not policy.backfill:
                 waiting = f"waiting behind job {short(head['id'])}"
-                self._note(connection, job, f"{policy.name}: {entry.why}; {waiting}")
+                explain(entry, "behind_head", f"{policy.name}: {entry.why}; {waiting}", head)
                 continue
             candidates = self._candidates(spec, available, allocated, held)
             fits_now = bool(candidates)
@@ -1171,9 +1350,17 @@ class Scheduler:
                             jobs.update().where(jobs.c.id == job["id"]).values(reason=reason)
                         )
                     note = f"{policy.name}: first in line ({entry.why}); {reason}"
-                    waiting = self._preempt(
+                    waiting, waiting_for = self._preempt(
                         connection, entry, available, allocated, held, usage, now
-                    )
+                    ) or (None, [])
+                    # For the queue view, no online worker explains a head job first, then
+                    # waiting for resources on their way back, then what its policy does.
+                    if not available:
+                        decision = "no_worker"
+                    elif waiting:
+                        decision = "waiting_for_release"
+                    else:
+                        decision = "head_reserved" if policy.backfill else "head_blocked"
                     if job["kind"] == MODEL_KIND and not policy.backfill:
                         # A model service ranks ahead of every batch job, so as the head it
                         # would stop even jobs that fit on idle nodes, for as long as it waits.
@@ -1181,9 +1368,10 @@ class Scheduler:
                         note = f"{policy.name}: {entry.why}; {reason}"
                         if waiting:
                             note += f"; {waiting}"
-                        self._note(
-                            connection, job, f"{note}; model services do not hold up later jobs"
-                        )
+                        if decision == "head_blocked":
+                            decision = "does_not_block"
+                        note += "; model services do not hold up later jobs"
+                        explain(entry, decision, note, waiting_for=waiting_for)
                         continue
                     if waiting:
                         note += f"; {waiting}"
@@ -1199,7 +1387,9 @@ class Scheduler:
                                 f"{policy.name}: {entry.why}; {reason}; no online node can fit "
                                 "it right now, so it does not block later jobs"
                             )
-                            self._note(connection, job, note)
+                            if available:
+                                decision = "does_not_block"
+                            explain(entry, decision, note, waiting_for=waiting_for)
                             continue
                         if reservation.start <= now and waiting:
                             note += f"; reserved on {reservation.node_id} as soon as they stop"
@@ -1213,6 +1403,7 @@ class Scheduler:
                                 f"; reserved on {reservation.node_id} at "
                                 f"{clock_text(reservation.start)}"
                             )
+                    explain(entry, decision, note, waiting_for=waiting_for)
                     head = job
                 elif fits_now:
                     estimate = (
@@ -1225,36 +1416,49 @@ class Scheduler:
                         f"job {short(head['id'])} reserved on {reservation.node_id} at "
                         f"{clock_text(reservation.start)}{estimate}"
                     )
+                    explain(entry, "would_delay_reservation", note, head)
                 else:
                     note = (
                         f"{policy.name}: {entry.why}; no matching capacity now; job "
                         f"{short(head['id'])} is first in line"
                     )
-                self._note(connection, job, note)
+                    explain(entry, "no_capacity", note, head)
                 continue
             # Nodes holding the project's files go first, the one with the best source first
             # (a retry's own attempt, then the latest run): a preference among the nodes that
-            # fit now, never a wait (6.1 P0c).
+            # fit now, never a wait (6.1 P0c). Then best fit; explain.PLACEMENT_CRITERIA names
+            # each part of the key.
             results = self._project_results(connection, job, spec)
             rank: dict[str, int] = {}
             for position, row in enumerate(results):
                 rank.setdefault(row.node_id, position)
-            node, cards = min(
-                candidates,
-                key=lambda c: (
-                    rank.get(c[0]["id"], len(results)),
-                    len(c[1]) - request["gpu"],
-                    c[0]["capacity"]["cpu"] - allocated[c[0]["id"]]["cpu"] - request["cpu"],
-                    c[0]["capacity"]["cpu"],
-                    c[0]["capacity"]["memory_mib"]
-                    - allocated[c[0]["id"]]["memory_mib"]
-                    - request["memory_mib"],
-                    c[0]["id"],
-                ),
-            )
+            ranked = [
+                (
+                    (
+                        rank.get(node["id"], len(results)),
+                        len(cards) - request["gpu"],
+                        node["capacity"]["cpu"] - allocated[node["id"]]["cpu"] - request["cpu"],
+                        node["capacity"]["cpu"],
+                        node["capacity"]["memory_mib"]
+                        - allocated[node["id"]]["memory_mib"]
+                        - request["memory_mib"],
+                        node["id"],
+                    ),
+                    node,
+                    cards,
+                )
+                for node, cards in candidates
+            ]
+            ranked.sort(key=lambda item: item[0])
+            _, node, cards = ranked[0]
             gpu_uuids = [gpu["uuid"] for gpu in cards[: request["gpu"]]]
+            chosen = placement(
+                [(key, candidate["id"]) for key, candidate, _ in ranked],
+                gpu=request["gpu"] > 0,
+                project=bool(results),
+            )
             if head is None:
-                note = f"{policy.name}: started on {node['id']} ({entry.why})"
+                note = f"{policy.name}: started on {node['id']} ({entry.why}); {chosen}"
             else:
                 if node["id"] != reservation.node_id:
                     safe = f"the reserved job waits for {reservation.node_id}"
@@ -1265,7 +1469,7 @@ class Scheduler:
                 note = (
                     f"{policy.name}: backfilled on {node['id']} ahead of job "
                     f"{short(head['id'])} reserved on {reservation.node_id} at "
-                    f"{clock_text(reservation.start)}; {safe} ({entry.why})"
+                    f"{clock_text(reservation.start)}; {safe} ({entry.why}); {chosen}"
                 )
             source = next((row for row in results if row.node_id == node["id"]), None)
             if source is not None:
@@ -1282,6 +1486,17 @@ class Scheduler:
                 note,
                 source.attempt_id if source is not None else None,
             )
+            self._decide(
+                "started" if head is None else "backfilled",
+                f"{who(job)}: {note}",
+                job=job,
+                node_id=node["id"],
+                detail={
+                    "candidates": sorted(candidate["id"] for _, candidate, _ in ranked),
+                    "gpu_uuids": gpu_uuids,
+                    **({} if head is None else {"ahead_of": head["id"]}),
+                },
+            )
             held.update(gpu_uuids)
             allocated[node["id"]]["cpu"] += request["cpu"]
             allocated[node["id"]]["memory_mib"] += request["memory_mib"]
@@ -1292,6 +1507,7 @@ class Scheduler:
                         now + limit, request["cpu"], request["memory_mib"], frozenset(gpu_uuids)
                     )
                 )
+        self._publish_queue(self._queue_snapshot(now, explained, reservation, usage))
 
     def _dispatch(
         self,
@@ -1386,6 +1602,19 @@ class Scheduler:
                         attempts.c.node_id == node_id, attempts.c.released.is_(False)
                     )
                 ).all()
+                text = (
+                    f"node {node_id} is offline: no heartbeat for "
+                    f"{self.settings.offline_timeout_s:g}s"
+                )
+                if assigned:
+                    names = ", ".join(short(attempt.job_id) for attempt in assigned)
+                    text += f"; its jobs ({names}) are UNKNOWN and keep their resources"
+                self._decide(
+                    "node_offline",
+                    text,
+                    node_id=node_id,
+                    detail={"jobs": [attempt.job_id for attempt in assigned]},
+                )
                 for attempt in assigned:
                     connection.execute(
                         attempts.update()
@@ -2035,6 +2264,19 @@ class Scheduler:
 
     def _model_view(self, connection, name: str, job: dict | None) -> dict:
         config = self.settings.models[name]
+        with self.service_lock:
+            served, activity = dict(self.service_served), dict(self.service_activity)
+        # Counted per service job (every served one has an activity time); the model's earlier
+        # services since the Scheduler started count too.
+        mine = []
+        if activity:
+            mine = (
+                connection.execute(
+                    select(jobs.c.id).where(jobs.c.id.in_(list(activity)), jobs.c.service == name)
+                )
+                .scalars()
+                .all()
+            )
         view = {
             "name": name,
             "mode": config.mode,
@@ -2047,6 +2289,8 @@ class Scheduler:
             "idle_stop_at": None,
             "retry_at": None,
             "resources": config.resources.model_dump(),
+            "served": sum(served.get(job_id, 0) for job_id in mine),
+            "last_activity_at": max((activity[job_id] for job_id in mine), default=None),
         }
         if job is None:
             return view
@@ -2100,6 +2344,8 @@ class Scheduler:
     def begin_request(self, job_id: str) -> None:
         with self.service_lock:
             self.service_inflight[job_id] = self.service_inflight.get(job_id, 0) + 1
+            self.service_served[job_id] = self.service_served.get(job_id, 0) + 1
+            self.service_activity[job_id] = self.clock()
 
     def end_request(self, job_id: str) -> None:
         """A relayed request ended (completed, failed or abandoned): the idle time restarts."""
@@ -2109,6 +2355,7 @@ class Scheduler:
                 self.service_inflight[job_id] = count
             else:
                 self.service_inflight.pop(job_id, None)
+            self.service_activity[job_id] = self.clock()
         with self.db.transaction() as connection:
             row = connection.execute(
                 select(jobs.c.service).where(jobs.c.id == job_id, jobs.c.state == "RUNNING")

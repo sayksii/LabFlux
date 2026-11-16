@@ -298,3 +298,34 @@ def test_cli_session_files_prints_the_list_and_close_removes_it(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     outside = runner.invoke(cli.app, ["session", "files"])
     assert outside.exit_code == 1 and "no .labflux.toml found above" in outside.output
+
+
+# Views for every user (M12) ----------------------------------------------------------------
+
+
+def test_cli_status_all_lists_every_users_job_summaries(client, monkeypatch):
+    theirs = submit(client, user="bob", env={"API_KEY": "env-secret"})
+    runner = configure(monkeypatch, client)
+    result = runner.invoke(cli.app, ["status", "--all"])
+    assert result.exit_code == 0, result.output
+    [summary] = json.loads(result.stdout)
+    assert summary["id"] == theirs["id"] and summary["owner"] == "bob" and not summary["mine"]
+    assert "argv" not in summary and "env-secret" not in result.stdout
+    assert json.loads(runner.invoke(cli.app, ["status"]).stdout) == []  # Still only your own.
+    both = runner.invoke(cli.app, ["status", theirs["id"], "--all"])
+    assert both.exit_code == 2 and "not both" in both.output
+
+
+def test_cli_queue_shows_the_last_scheduling_pass(monkeypatch):
+    queue = {"policy": "backfill", "computed_at": 1000.0, "entries": [], "recent_decisions": []}
+    paths = []
+
+    def handler(request):
+        paths.append((request.method, request.url.path))
+        return httpx.Response(200, json=queue)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+    monkeypatch.setattr(cli, "api_client", lambda _: nullcontext(client))
+    result = CliRunner().invoke(cli.app, ["queue"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == queue and paths == [("GET", "/api/queue")]

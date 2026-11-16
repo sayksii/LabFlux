@@ -124,10 +124,11 @@ class Release:
     session end or a model stop, or an idle model service about to be reclaimed. A blocked head
     job waits for these instead of preempting for them."""
 
-    what: str  # for the head job's schedule note, e.g. "job 1a2b3c4d on kayle to stop"
+    what: str  # for the head job's schedule note, e.g. "job 1a2b3c4d on beta to stop"
     cpu: float
     memory_mib: int
     cards: frozenset[str] = frozenset()
+    job_id: str = ""  # the job whose attempt frees them, for the queue view (M12)
 
 
 def lost_seconds(started_at: float | None, now: float) -> float:
@@ -233,6 +234,11 @@ class FcfsPolicy:
     def rank(self, job: dict, spec: JobSpec, now: float, usage: dict) -> tuple[float, str]:
         return 0.0, f"submission #{job['submission_seq']}"
 
+    def score_parts(self, job: dict, spec: JobSpec, now: float, usage: dict) -> dict | None:
+        """The weighted terms of a batch job's score, score = priority + waited_min -
+        usage_min (M12); None when the policy does not score jobs."""
+        return None
+
     def order(self, entries: list[tuple[dict, JobSpec]], now: float, usage: dict) -> list[Ranked]:
         ranked = []
         for job, spec in entries:
@@ -260,16 +266,22 @@ class PriorityPolicy(FcfsPolicy):
     uses_usage = True
     batch_preemption = True
 
+    def score_parts(self, job: dict, spec: JobSpec, now: float, usage: dict) -> dict:
+        s = self.settings
+        priority = s.default_priority if spec.priority is None else spec.priority
+        return {
+            "priority": s.score_priority_weight * priority,
+            "waited_min": s.score_wait_weight * (max(0.0, now - job["created_at"]) / 60),
+            "usage_min": s.score_usage_weight * usage.get(job["owner"], 0.0),
+        }
+
     def rank(self, job: dict, spec: JobSpec, now: float, usage: dict) -> tuple[float, str]:
         s = self.settings
         priority = s.default_priority if spec.priority is None else spec.priority
         waited = max(0.0, now - job["created_at"]) / 60
         used = usage.get(job["owner"], 0.0)
-        score = (
-            s.score_priority_weight * priority
-            + s.score_wait_weight * waited
-            - s.score_usage_weight * used
-        )
+        parts = self.score_parts(job, spec, now, usage)
+        score = parts["priority"] + parts["waited_min"] - parts["usage_min"]
         return score, (
             f"score {score:.0f} = priority {priority}, waited {waited:.0f} min, "
             f"recent usage {used:.0f} min"
