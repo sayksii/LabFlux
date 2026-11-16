@@ -265,6 +265,7 @@ def worker_toml(inventory: Inventory, node: Node, worker_token: str) -> str:
         f"allocatable_cpu = {toml_value(node.allocatable_cpu)}",
         f"allocatable_memory_mib = {toml_value(node.allocatable_memory_mib)}",
         f"gpus = {toml_value(list(node.gpus))}",
+        "worker_login = true",  # `labflux login` for this machine's accounts (Q14)
     ]
     if node.datasets:
         lines.append("[datasets]")

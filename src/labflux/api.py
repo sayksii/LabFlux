@@ -15,7 +15,14 @@ from labflux import __version__, inference, relay
 from labflux.artifacts import ArtifactStore
 from labflux.config import Settings
 from labflux.hub import Hub
-from labflux.models import Heartbeat, JobSpec, LogUpload, WorkerEvent, WorkerRegistration
+from labflux.models import (
+    Heartbeat,
+    JobSpec,
+    LoginRequest,
+    LogUpload,
+    WorkerEvent,
+    WorkerRegistration,
+)
 from labflux.scheduler import Scheduler, ServiceError
 from labflux.session_protocol import SessionRequest
 
@@ -66,10 +73,12 @@ def create_app(
         return authorization[7:]
 
     def identify(token: str) -> str | None:
+        """Configured users first, then tokens issued by `labflux login` (Q14); a configured
+        user and a Unix account with the same name are the same identity."""
         for identity, expected in settings.users.items():
             if hmac.compare_digest(token, expected):
                 return identity
-        return None
+        return service.token_owner(token)
 
     def user(authorization: str | None = Header(default=None)) -> str:
         identity = identify(bearer(authorization))
@@ -84,6 +93,10 @@ def create_app(
     @app.get("/health")
     def health():
         return {"status": "ok", "version": __version__}
+
+    @app.get("/api/whoami")
+    def whoami(owner: str = Depends(user)):
+        return {"user": owner}
 
     @app.get("/dashboard", include_in_schema=False)
     def dashboard():
@@ -199,6 +212,11 @@ def create_app(
             service._attempt(connection, attempt_id, node_id, instance_id)
         upload = await store.receive(request, settings.max_output_bytes)
         return store.store_output(node_id, attempt_id, instance_id, upload)
+
+    @app.post("/internal/workers/{node_id}/logins", dependencies=[Depends(worker)])
+    def issue_login(node_id: str, request: LoginRequest):
+        """The Worker on node_id vouches for a local account (labflux login, Q14)."""
+        return service.issue_token(node_id, request.user)
 
     @app.websocket("/internal/workers/{node_id}/ws")
     async def worker_socket(websocket: WebSocket, node_id: str, instance_id: str = ""):

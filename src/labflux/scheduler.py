@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import secrets
 import threading
 import time
 import uuid
 from collections.abc import Callable
 
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, literal_column, or_, select
 
 from labflux.config import Settings
 from labflux.database import (
@@ -23,6 +25,7 @@ from labflux.database import (
     logs,
     nodes,
     project_results,
+    user_tokens,
 )
 from labflux.models import (
     MODEL_KIND,
@@ -107,6 +110,10 @@ def row_dict(row) -> dict:
     return dict(row._mapping)
 
 
+def token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 class Scheduler:
     def __init__(self, settings: Settings, clock: Callable[[], float] = time.time):
         self.settings = settings
@@ -128,6 +135,9 @@ class Scheduler:
         # Queued model services: when a request last asked for them (ensure_model). Like
         # session_polled, in memory only: after a restart each one gets a full window again.
         self.model_polled: dict[str, float] = {}
+        # Owners of the tokens issued by `labflux login`, by SHA-256 (Q14). This process is the
+        # only writer, so the copy stays exact and authenticating never reads the database.
+        self.token_owners: dict[str, str] = {}
         self.restore()
 
     def restore(self) -> None:
@@ -143,6 +153,48 @@ class Scheduler:
                 .where(nodes.c.status == "ONLINE")
                 .values(status=RECONCILING, last_seen=self.clock())
             )
+            self.token_owners = {
+                row.token_sha256: row.owner
+                for row in connection.execute(
+                    select(user_tokens.c.token_sha256, user_tokens.c.owner)
+                )
+            }
+
+    def issue_token(self, node_id: str, user: str) -> dict:
+        """A new token for an account that node_id's Worker identified (labflux login, Q14).
+        The user's newest login_tokens_per_user tokens stay valid, e.g. the copy on another
+        machine; older ones are deleted."""
+        token = secrets.token_urlsafe(32)
+        digest = token_digest(token)
+        # Holding the lock past the commit keeps token_owners in step with concurrent logins.
+        with self.db.lock:
+            with self.db.transaction() as connection:
+                connection.execute(
+                    user_tokens.insert().values(
+                        token_sha256=digest, owner=user, node_id=node_id, created_at=self.clock()
+                    )
+                )
+                # SQLite gives each insert a larger rowid than every row left, so this is
+                # issue order, and the new token always survives.
+                stale = list(
+                    connection.execute(
+                        select(user_tokens.c.token_sha256)
+                        .where(user_tokens.c.owner == user)
+                        .order_by(literal_column("rowid").desc())
+                        .offset(self.settings.login_tokens_per_user)
+                    ).scalars()
+                )
+                if stale:
+                    connection.execute(
+                        user_tokens.delete().where(user_tokens.c.token_sha256.in_(stale))
+                    )
+            self.token_owners[digest] = user
+            for old in stale:
+                self.token_owners.pop(old, None)
+        return {"user": user, "token": token}
+
+    def token_owner(self, token: str) -> str | None:
+        return self.token_owners.get(token_digest(token))
 
     def _ring(self, node_id: str) -> None:
         """Call next to every command insert or redelivery: rings once the transaction commits.

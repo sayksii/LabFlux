@@ -124,6 +124,16 @@ attempt_gpus = Table(
     Column("node_id", String, ForeignKey("nodes.id"), nullable=False, index=True),
     Column("released", Boolean, nullable=False, default=False),
 )
+# User tokens issued by `labflux login` (Q14): only a SHA-256 of each token is stored. A user
+# may hold several (one per login); deleting a row revokes it after a Scheduler restart.
+user_tokens = Table(
+    "user_tokens",
+    metadata,
+    Column("token_sha256", String, primary_key=True),
+    Column("owner", String, nullable=False, index=True),
+    Column("node_id", String, nullable=False),
+    Column("created_at", Float, nullable=False),
+)
 # A card may have any number of released rows but at most one unreleased allocation.
 Index(
     "attempt_gpus_active",
@@ -181,6 +191,7 @@ MIGRATIONS = {
     6: add_preempted_by,
     # checkfirst: tests simulate older databases from a current one that already has it.
     7: lambda connection: project_results.create(connection, checkfirst=True),
+    8: lambda connection: user_tokens.create(connection, checkfirst=True),
 }
 SCHEMA_VERSION = max(MIGRATIONS)
 

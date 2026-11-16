@@ -79,6 +79,116 @@ def db_upgrade(ctx: typer.Context) -> None:
     database.close()
 
 
+def listener_uid(connection) -> int:
+    """The UID that opened the listening end of a connected Unix socket (SO_PEERCRED)."""
+    import socket
+    import struct
+
+    credentials = connection.getsockopt(
+        socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+    )
+    return struct.unpack("3i", credentials)[1]
+
+
+@app.command()
+def login(ctx: typer.Context) -> None:
+    """Log in as this machine's account: the local Worker gets your token from the Scheduler."""
+    import pwd
+    import socket
+
+    from labflux.config import login_path
+
+    settings = ctx.obj
+    me = pwd.getpwuid(os.getuid()).pw_name
+    path = login_path()
+
+    def fail(message: str):
+        typer.echo(f"labflux: {message}", err=True)
+        raise typer.Exit(1)
+
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    connection.settimeout(settings.request_timeout_s + 10)
+    with connection:
+        try:
+            connection.connect("\0" + settings.login_socket)
+        except OSError:
+            fail(
+                "no LabFlux Worker accepts logins on this machine; run `labflux login` on a "
+                f"LabFlux node, then copy {path} to the same path here"
+            )
+        # Any account can bind the name first (e.g. while the Worker restarts) and hand out its
+        # own Scheduler URL, so only root, you or the Worker's deploy account are trusted.
+        owner = listener_uid(connection)
+        trusted = {0, os.getuid()}
+        try:
+            trusted.add(pwd.getpwnam(settings.login_worker_user).pw_uid)
+        except KeyError:
+            pass
+        if owner not in trusted:
+            try:
+                holder = f"{pwd.getpwuid(owner).pw_name} (UID {owner})"
+            except KeyError:
+                holder = f"UID {owner}"
+            fail(
+                f"the login socket {settings.login_socket} is held by {holder}, not by root, "
+                f"you or {settings.login_worker_user}; refusing a possible fake Worker"
+            )
+        data = b""
+        try:
+            while chunk := connection.recv(65536):
+                data += chunk
+        except OSError as exc:
+            fail(f"the local Worker did not answer ({type(exc).__name__})")
+    try:
+        reply = json.loads(data)
+    except ValueError:
+        reply = None
+    if not isinstance(reply, dict):
+        fail("the local Worker sent an unreadable answer")
+    if "error" in reply:
+        fail(f"login failed: {reply['error']}")
+    url, token = reply.get("scheduler_url"), reply.get("token")
+    if reply.get("user") != me or not isinstance(url, str) or not isinstance(token, str):
+        fail("the answer on the login socket is not for this account; is it a LabFlux Worker?")
+    # Catches a token the Scheduler does not know (e.g. a Worker of another Scheduler). The URL
+    # comes from the answer, so this is no defence against a stand-in; the owner check is.
+    try:
+        response = httpx.get(
+            url.rstrip("/") + "/api/whoami",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+            trust_env=False,
+        )
+    except httpx.HTTPError as exc:
+        fail(f"cannot reach the Scheduler at {url}: {exc}")
+    if response.status_code != 200 or response.json().get("user") != me:
+        fail(f"the Scheduler at {url} did not accept the token")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        stream.write(
+            "# Written by `labflux login`; keep it private.\n"
+            f"scheduler_url = {json.dumps(url)}\nuser_token = {json.dumps(token)}\n"
+        )
+    os.replace(temp, path)
+    typer.echo(f"Logged in as {me} ({url}); saved to {path}")
+    explicit = ctx.parent.params.get("config") if ctx.parent else None
+    if load_settings(Path(explicit) if explicit else None).user_token != token:
+        typer.echo(
+            "labflux: your configuration (--config, LABFLUX_CONFIG or LABFLUX_USER_TOKEN) sets "
+            "its own user_token, which still takes precedence over this login",
+            err=True,
+        )
+
+
+@app.command()
+def whoami(ctx: typer.Context) -> None:
+    """Show the LabFlux identity your token belongs to."""
+    with api_client(ctx.obj) as client:
+        typer.echo(checked(client.get("/api/whoami")).json()["user"])
+
+
 @contextmanager
 def api_client(settings):
     try:

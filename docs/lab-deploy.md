@@ -139,14 +139,42 @@ uv run labflux --config .labflux/lab/cli.toml submit examples/jobs/mnist.json --
 `--wait` 預設只等 120 秒；節點第一次執行 torch 工作要下載約 3 GB 套件，所以要加 `--wait-timeout`。
 
 從自己的電腦看 Dashboard：先建立 SSH 轉送，再打開 http://localhost:8770/dashboard ，
-以 `cli.toml` 裡的 `user_token` 登入。
+以自己的 token（`login.toml` 或 `cli.toml` 裡的 `user_token`）登入。
 
 ```bash
 ssh -L 8770:192.0.2.10:8770 kayle
 ```
 
-新增使用者：把名稱加進 `configs/local-lab.toml` 的 `scheduler.users`，重新 `deploy --node kayle`，
-再從 `.labflux/lab/scheduler.toml` 把該使用者的 Token 私下交給他。從清單移除的使用者，Token 會在下次部署時失效。
+## 使用者登入（Q14）
+
+LabFlux 的使用者就是節點上的 Linux 帳號，不用改設定或重新部署。在任一台 LabFlux 節點裝好 CLI 後執行：
+
+```bash
+labflux login     # Logged in as alice (http://192.0.2.10:8770); saved to ~/.config/labflux/login.toml
+labflux whoami    # alice
+```
+
+- CLI 連到這台 Worker 的本機 socket（Linux abstract socket `labflux-login`），kernel 告訴 Worker 對方的 UID，
+  Worker 查出帳號名稱，再向 Scheduler 申請這個名稱的 token。CLI 會再向 Scheduler 確認 token 屬於自己，才存檔。
+- 任何帳號都能搶先佔用 socket 名稱（例如 Worker 重啟時）。所以 CLI 也向 kernel 查開 socket 的帳號，
+  只接受 root、自己或 `login_worker_user`（預設 `labflux`，即部署帳號），其他帳號一律拒絕、不存檔。
+  清單的 `account` 不是 `labflux` 時，使用者的 CLI 設定（`--config` 或 `LABFLUX_CONFIG`）
+  要把 `login_worker_user` 設成同一個名稱。Worker 開不了 socket 時記錄 error，這台節點就不能登入。
+- token 存在 `~/.config/labflux/login.toml`（權限 600，內含 Scheduler 位址），之後的指令與 `labflux shell`
+  自動帶上；Dashboard 登入與 Gateway 的金鑰也貼上它（`user_token` 那一行）。
+- 身分是帳號名稱，不是 UID：同一個人在每台機器的 UID 不同，名稱相同就是同一個人。
+  `scheduler.users` 裡的名稱與 Linux 帳號同名時，也是同一個身分。
+- 每次登入都多發一個 token，舊的繼續有效（例如複製到別台的那份）。每個帳號只保留最新的 20 個
+  （Scheduler 設定 `login_tokens_per_user`），更舊的 token 會失效。目前沒有撤銷指令：要撤銷就刪掉
+  Scheduler 資料庫 `user_tokens` 表格裡那一列，再重啟 Scheduler。
+- 已知限制：docker 群組等同 root，成員可用 `docker run --network host --user <UID>` 以任何 UID 連上 socket；
+  一般使用者若在 docker 群組，登入無法防止他們互相冒用。
+- 不是 LabFlux 節點的機器沒有 Worker：在節點上登入後，把 `login.toml` 複製到同一個路徑，
+  再把 `scheduler_url` 改成 SSH 轉送的位址（8770 只放行 LabFlux 節點）。
+- 設定檔（`--config`、`LABFLUX_CONFIG`）或 `LABFLUX_USER_TOKEN` 裡的 `user_token` 優先於登入檔。
+
+`scheduler.users` 仍保留給部署者自己的 `cli.toml`。從清單移除的名稱，設定裡的 Token 會在下次部署時失效，
+但同名帳號以 `labflux login` 拿到的 token 不受影響。
 
 排程策略：在 `configs/local-lab.toml` 的 `[scheduler]` 加上 `policy = "backfill"`（可用 `fcfs`、`priority`、`backfill`，
 其他值在解析清單時就被拒絕），重新 `deploy --node kayle`，就會寫進 `scheduler.toml` 的 `scheduling_policy`。
@@ -172,7 +200,8 @@ datasets = { hf-models = "/srv/models/hf" }
 列出的資料集沒有任何節點提供時，腳本會拒絕部署。容器以 `labflux` 帳號執行、`HOME=/workspace`，
 所以權重目錄要讓 `labflux` 讀得到。搭配 `HF_HUB_OFFLINE=1` 與 `HF_HOME=/datasets/hf-models`，vLLM 只讀本機快取。
 
-Gateway 在 `http://192.0.2.10:8770/v1`，與 OpenAI API 相容，金鑰就是自己的 LabFlux 使用者 Token：
+Gateway 在 `http://192.0.2.10:8770/v1`，與 OpenAI API 相容，金鑰就是自己的 LabFlux 使用者 Token
+（`labflux login` 存在 `~/.config/labflux/login.toml` 的 `user_token`）：
 
 ```bash
 export OPENAI_BASE_URL=http://192.0.2.10:8770/v1
