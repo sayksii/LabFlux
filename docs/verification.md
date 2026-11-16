@@ -1318,8 +1318,9 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
 
 ## M14：安裝說明、範例與乾淨環境驗收（14.1、14.2、14.4；kayle，2026-11-16）
 
-分支 `feat/m14-docs` 只改文件、範例與 `scripts/`；`src/` 與 main `bf86074`、實驗室部署的 `8fcab7a` 相同
-（乾淨 clone 中 `git diff 8fcab7a HEAD -- src/` 沒有差異）。14.3 的展示腳本由 M12 的 session 負責，不在這裡。
+分支 `feat/m14-docs` 改文件、範例與 `scripts/`，另外只有使用者事後同意的 OOM 標記修正（`src/labflux/runtime.py`，見下方）。
+14.1～14.4 的驗證都在修正之前，當時 `src/` 與 main `bf86074`、實驗室部署的 `8fcab7a` 相同（乾淨 clone `3599d5e` 中
+`git diff 8fcab7a HEAD -- src/` 沒有差異）。14.3 的展示腳本由 M12 的 session 負責，不在這裡。
 使用者提醒 LabFlux 主要用來共用 GPU，所以範例與實驗室 smoke 都以 GPU 為主。
 
 **實驗室設定（遮掉真實值；實際值在被 Git 忽略的 `configs/local-lab.toml`）**
@@ -1407,7 +1408,7 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
 FCFS 檢查原本比較容器的開始時間，但隊首與後面的工作在同一個交易派送，CPU 容器比 GPU 容器早 0.06 秒啟動，改成比較派送時間（attempt 的 `created_at`）；
 第二次試跑遇到下一節的 OOM 標記問題，改為以 exit code 137 判斷「被限制住」，並在報告記下 `oom_reported`。
 
-### 發現的程式問題（未修改 `src/`，待使用者判斷）
+### 發現的程式問題：OOM 標記（使用者選擇方案 (a)，已修正，部署後生效）
 
 **被 OOM 終止的工作偶爾沒有標成 OOM。** smoke 第二次試跑時，64 MiB 上限的 OOM 工作在 karma 結束為 `FAILED`、exit code 137，
 但 `oom_killed = false`、原因 `completed`，日誌是空的。之後同樣的工作在 karma 送 6 次、kayle 送 2 次，加上兩次 smoke 與 `examples/jobs/oom.json`，
@@ -1416,8 +1417,19 @@ FCFS 檢查原本比較容器的開始時間，但隊首與後面的工作在同
 - 推測的原因：`src/labflux/runtime.py` 在 `State.Running` 變成 false 後立刻讀一次 `State.OOMKilled`；Docker 從 containerd 另外的 OOM 事件設定這個旗標，
   可能比結束事件晚到，所以偶爾讀到 false。`docker run` 會等到容器完全結束，所以沒有遇到。
 - 影響：資源限制本身正常（程序被終止、配置釋放），只是使用者看到的原因不對；M13 若統計 OOM 次數會少算。
-- 可能的處理：(a) exit code 137 而且 `OOMKilled` 為 false 時，在 1 秒內再讀幾次（`runtime.py` 幾行）；
-  (b) 移除容器前讀容器 cgroup 的 `memory.events`；(c) 記為已知限制。等使用者決定；`runtime.py` 不在 M12 的修改範圍內。
+- 提出的處理：(a) exit code 137 而且 `OOMKilled` 為 false 時，在 1 秒內再讀幾次；(b) 移除容器前讀容器 cgroup 的 `memory.events`；
+  (c) 記為已知限制。使用者選 (a)。
+
+**修正。** `runtime.py` 新增 `settled_state(container)`：容器以 137 結束、`OOMKilled` 還是 false 時，每 0.1 秒重新讀一次，最多 1 秒
+（`OOM_SETTLE_S`、`OOM_SETTLE_POLL_S`），旗標出現就用它。只在不是 LabFlux 自己停止的結束時才等（原因仍是 `completed`、沒有要求取消），
+所以超時與取消不會多等；真的被別人 `SIGKILL` 的容器（不是 OOM）晚 1 秒回報，結果不變。`runtime.py` 不在 M12 的修改範圍內。
+
+- `tests/test_runtime_state.py`（3 個，用假容器）：旗標在第 3 次讀取才出現時被採用；一直沒有旗標的 137 在等待時間後照實回報；
+  其他 exit code 與已標記的 OOM 不重新讀取。反向檢查：關掉重新讀取時其中 2 個失敗。
+- `uv run pytest -q -m "not docker and not vm and not gpu"`：450 passed、1 skipped；`sg docker -c 'uv run pytest -q -m "docker and not gpu"'`：29 passed
+  （包含真實容器的 `test_memory_excess_is_killed`）。
+- 這個競態無法在本機穩定重現（kayle 從沒遇到，只在 karma 遇過一次），所以修正只以假容器驗證。實驗室要重新部署（Worker）後才生效；
+  M13 在實驗室進行期間不部署，時機由使用者決定。部署前 `lab_smoke.py` 仍以 exit code 137 判斷被限制住。
 
 ### 已知限制（M14）
 

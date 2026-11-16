@@ -94,7 +94,8 @@ loopback 以臨時的 Scheduler、Worker 與 `fake-model`（`python:3.12-slim`�
 | `jobs/timeout.json` | karma，印出 `running` 後在 2 秒時限 `FAILED`（`time limit exceeded`） |
 | `jobs/mnist.json` | kayle 的 A5000，20.8 秒，準確率 98.91%；`schedule_note` 寫 `starts from the files of job 9df4a2cf`：沿用同一台上同專案（`mnist`）的 `preemptible-gpu.json` 留下的資料，沒有重新下載（程式總時間 13.4 秒，前一次含下載 120.8 秒） |
 
-被 OOM 終止的工作偶爾會被記成 `FAILED`、原因 `completed`、`oom_killed: false`（exit code 仍是 137），見 `docs/verification.md` 的 M14 一節。
+修正前，被 OOM 終止的工作偶爾會被記成 `FAILED`、原因 `completed`、`oom_killed: false`（exit code 仍是 137）；
+已在 `runtime.py` 修正，Worker 重新部署後生效，見 `docs/verification.md` 的 M14 一節。
 
 ## 展示分鏡各幕會用到的工作類型（給 14.3）
 

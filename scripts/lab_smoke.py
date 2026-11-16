@@ -384,8 +384,8 @@ class Smoke:
         self.passed("CPU quota, RAM limit, no swap and no GPU devices in a CPU job", **values)
         value = self.wait(oom)
         oom_attempt = value["attempts"][-1]
-        # Killed at the limit = contained. The OOM flag comes from Docker and is occasionally
-        # still false when the Worker reads it right after the exit (docs/verification.md, M14).
+        # Killed at the limit = contained. Workers older than the M14 fix (runtime.settled_state)
+        # occasionally report the OOM flag as false (docs/verification.md, M14).
         assert value["state"] == "FAILED" and oom_attempt["exit_code"] == 137, value["reason"]
         value = self.wait(timeout)
         assert value["state"] == "FAILED" and "time limit" in value["reason"], value["reason"]
