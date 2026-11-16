@@ -1325,3 +1325,196 @@ Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_doc
 - 環境閒置時，三台 VM 正常關機、Scheduler 程序群組停止，再重新啟動及部署成功；未以此宣稱執行中故障恢復已完成。
 - 本次完成 50 個編號 checklist 項目，對應 M0～M5、M6.1～M6.3。
 - Git 僅追蹤程式、範例、規劃、測試與去除認證資料的驗收紀錄；私鑰、Token、VM 磁碟與即時資料目錄均被忽略。
+
+## M12：監控與決策說明（kayle，2026-11-16）
+
+在 `feat/m12` 分支實作（第一版 commit `a6e78b5`，接在 main `8fcab7a` 之上；之後依兩輪審查做的修正見下方「審查後的修正」），
+只用單元測試、假 Worker 與本機的 headless Chromium 驗證；**還沒有部署到實驗室實測**。不改資料庫、沒有 migration。以 M14 的展示分鏡當驗收標準，設計提案經使用者確認的決定：
+
+- 每個登入的使用者都看得到所有人工作的摘要（擁有者、類別、狀態、資源、節點、優先權、分數、排程說明）；
+  指令、環境變數、映像、程式來源、日誌、輸出與取消仍只限擁有者（原本的端點不變）。
+- Scheduler 把最近一輪排程的結果留在記憶體，由 `GET /api/queue` 提供；瀏覽器不再自己推算排隊順序、分數、等待原因或保留時段。
+- Scheduler 在記憶體保留最近 50 筆排程決定，放在 `/api/queue` 裡一起回傳。
+
+**實作。**
+
+- `_schedule` 每一輪替每個仍在排隊的工作留下一筆 entry：位置、分數與拆解（優先權、等待分鐘、近期占用分鐘，已乘上權重）、
+  `decision`、`blocker`、它在等的隊首或停止中的工作，以及這一輪寫進 `schedule_note` 的原文；連同策略、權重、backfill 的保留時段
+  與各使用者的近期占用，在交易提交後整份換上。`decision` 為 `head_blocked`、`head_reserved`、`behind_head`、
+  `would_delay_reservation`、`no_capacity`、`does_not_block`、`waiting_for_release`、`no_worker`。這一輪派送出去的工作不在其中，出現在最近的決定。
+- 等待原因從 Dashboard 的 JavaScript 移到 `src/labflux/explain.py`，用和 `_candidates` 相同的空間、相同的順序檢查：沒有在線的節點、
+  資料集、GPU（數量、型號、VRAM，分開計算已預約、外部使用與尚未回報的卡）、CPU、RAM、同時執行數，最後是沒有單一節點同時放得下。
+- 派送的 `schedule_note` 加上候選節點與選擇理由（例如 `fits on beta, delta; chose beta: least spare CPU`；
+  專案檔案決定節點時寫明），原本的前綴不變，所以既有的測試與 CLI 照常。
+- 最近的排程決定：`started`、`backfilled`、`preempting`、`requeued_after_preemption`、`retried_after_node_failure`、
+  `node_offline`、`node_online`（每次註冊都會記一筆，不只是失聯後恢復），都在交易提交後才加入。
+- `GET /api/nodes` 每台多 `allocations`（每個未釋放的 attempt：擁有者、類別、模型名稱、CPU／RAM／卡、預計結束時間、
+  `placement`、`preempted_by`）。`GET /api/jobs?scope=all` 回傳所有人的工作摘要：未結束的全部，加上 24 小時內結束的（最多 200 筆），
+  不含 argv、env、image、source_id；未知的 scope 回 422。`/api/models` 多 `served` 與 `last_activity_at`。所有人可見的部分集中在 `src/labflux/views.py`。
+- CLI：`labflux queue`（`/api/queue`）、`labflux status --all`（所有人的工作摘要），和其他指令一樣印出 JSON。
+- Dashboard 改讀這些端點，每 3 秒 5 個請求，不再對每個執行中的工作各打一次 `/api/jobs/{id}`：header 的排程策略、
+  範圍「所有人／我的」、節點欄頭的保留時段、SESSION／MODEL／backfill 標記、排隊順序表（分數拆解與排程器的決定）、
+  最近的排程決定、「模型服務」與「誰在用」、別人工作的唯讀摘要、attempt 表的原因欄；有節點回報 GPU 時預設顯示 GPU 卡。
+  設計系統的更新見 `DESIGN.md`。
+
+| Checklist | 驗證 |
+|---|---|
+| 12.1 | 節點欄頭的容量、已預約、即時使用量與心跳沿用原本的課表；`tests/test_views_api.py` 的 `test_allocations_show_every_users_work_with_kind_placement_and_end` 檢查 `allocations` 的類別、模型名稱、`placement` 與結束時間；headless 執行中失聯節點的欄頭顯示「失聯 · 最後心跳 … 前」 |
+| 12.2 | `test_all_users_summaries_never_show_argv_env_image_or_source`、`test_all_users_summaries_name_the_node_of_running_jobs`、`test_all_users_summaries_keep_ended_jobs_for_24_hours`、`test_unknown_scope_is_rejected`；分鏡第 4、7 幕檢查 `PREEMPTED`、`UNKNOWN` 與重跑 |
+| 12.3 | `tests/test_queue_view.py` 的 `test_blockers_name_the_missing_dataset_memory_or_combination`、`test_gpu_blocker_counts_held_external_and_missing_cards`、`test_no_worker`；headless 執行中排隊表顯示「沒有在線的節點有資料集 missing-data」「需要 1 張 4090 GPU,可用 0 張」 |
+| 12.4 | `test_fcfs_head_blocks_and_later_jobs_wait_behind_it`、`test_priority_entries_follow_the_score_and_split_it_into_parts`、`test_backfill_reservation_and_the_jobs_around_it`、`test_waiting_for_release_names_the_preempted_jobs`、`test_dispatch_note_names_the_candidates_and_why_the_chosen_node_won`、`test_placement_says_when_the_project_files_picked_the_node`、`test_node_offline_online_and_retry_decisions_newest_first`、`test_recent_decisions_keep_the_latest_fifty`；分鏡第 2～4 幕 |
+| 12.5 | `test_models_count_served_requests_and_last_activity`、`test_a_queued_model_service_does_not_block_and_has_no_score`；分鏡第 5 幕檢查 session 的 allocation 帶 `lease_expires_at`（Dashboard 的閒置到期倒數依它計算；headless 執行中的 session 還在 `STARTING`，倒數沒有實際畫出來）；headless 執行中模型服務表顯示進行中、已服務與閒置時間 |
+| 12.6 | 日誌與 attempt 表沿用原本的細節面板，加上原因欄（被哪個工作搶占、失敗原因）；分鏡第 4 幕（`PREEMPTED` 的 attempt，工作重新排隊）、第 7 幕（容器遺失後 attempt `FAILED`，重跑到別台）；最近的決定列出重新排隊與節點故障重跑 |
+| CLI | `tests/test_cli.py` 的 `test_cli_status_all_lists_every_users_job_summaries`、`test_cli_queue_shows_the_last_scheduling_pass` |
+
+**分鏡測試（`tests/test_storyboard.py`，6 個）。** 以 HTTP API 重播 M14 展示分鏡的第 1～5、7 幕：backfill 策略、使用者 alice 與 bob、
+三個依實驗室容量設定的假節點（beta 16 核／24 GiB／RTX 4090；delta 16 核／48 GiB／RTX 3090＋RTX A5000；gamma 32 核／64 GiB／
+兩張 A40 與資料集 `hf-models`，上面有**常駐**的 gemma4-31b 占 8 核、48 GiB 與兩張 A40）、假 Worker 與假時鐘。
+每一幕先以 attempt 確認工作落在預期的節點，再檢查 Dashboard 讀的內容：`/api/queue` 的決定、等待原因、保留時段、分數與最近的決定，
+`/api/nodes` 的 allocations，以及工作的 reason。排程邏輯一改讓展示工作換了節點，會在設定階段就失敗，提醒重新預演。
+
+**GPU 與模型服務的分鏡（`tests/test_storyboard_gpu.py` 2 個、`tests/test_storyboard_model.py` 4 個）。** 展示以 GPU 為主，
+gemma4-31b 改用 `on_demand`（`startup_timeout_s`、`cold_wait_s` 600 秒）。所以用同一組假節點、gemma 一開始是 `stopped`，另外重播：
+
+- 第 2 幕 GPU 版：bob 的優先權 9 單卡工作插隊並取得保留時段；同為優先權 5 時，alice 早送 1 分鐘，但 GPU 近期占用 6 分，排在 bob 後面（500 + 1 − 6 對 500 + 0 − 0）；
+  alice 取消一個工作後，空出的卡給優先權 9 的工作。
+- 第 3 幕 GPU 版：bob 要兩張 A40 的工作在 gamma 取得保留時段；2 分鐘的單卡工作在保留時段前結束，標成 backfill；30 分鐘的工作現在放得下，
+  但決定是「會延後保留時段」；倒數結束後隊首落在兩張 A40。
+- 第 6 幕 (a) 冷啟動與共用：stopped → starting（gamma 的 A40 空著，不經過佇列）→ serving，兩個請求共用同一個服務；
+  (b) 閒置回收，兩種順序（請求還在送時工作已在等；閒置 1 分鐘後才送工作）：有工作在等時閒置 60 秒（`reclaim_idle_s`）就 stopping，
+  工作的決定是等模型停止；(c) 冷啟動搶占 alice 兩個可搶占的優先權 2 A40 工作，被搶占的工作重新排隊。
+
+第 8 幕（和 FCFS 比較）是投影片，不在測試中。
+
+**headless Chromium。** 以真的 app 與 Scheduler（`create_app`，假時鐘）和測試用的假 Worker 建出兩個場景，再以本機的 headless Chromium
+（CDP）開 Dashboard（臨時腳本，沒有放進 repo）：
+
+- 第 3 幕：backfill 的保留時段、先跑的工作、「會延後保留時段」與「現在沒有放得下的節點」的工作、一個已完成的工作、常駐的 gemma4-31b。
+- 搶占：停止中的被搶占工作、session、等 4090 的工作、缺資料集的工作、gamma 失聯後 `UNKNOWN` 的模型服務。
+
+兩個場景各以 alice、bob 登入（共 4 次），每次檢查預設畫面、GPU 軸、「我的」範圍、每個分頁、打開每個有區塊或列的工作
+（自己的看完整細節，別人的看唯讀摘要）、一次 3 秒的更新、390 px 寬的手機畫面與投影模式。以 `a6e78b5` 執行：4 次都沒有 JavaScript 錯誤，
+1440 px、390 px 與投影模式都沒有橫向捲動；有 GPU 的節點時預設畫面為 GPU 卡；「我的」只留自己的排隊列，位置維持 Scheduler 的編號。
+
+審查修正後，以同樣的方式（gemma4-31b 為 `on_demand`）重跑三個場景，以 alice 登入，時區 Asia/Taipei、語系 zh-TW：
+(a) GPU backfill，gemma 在 gamma 冷啟動中；(b) 搶占的工作還在停止中，加上 beta 失聯、它的工作 `UNKNOWN`；
+(c) 有工作在等 A40 時，閒置的 gemma 被提前回收（stopping）。每個場景量 1440×900、投影模式 1280×720 與 1024×768、390×844 四種尺寸的 DOM：
+
+- 12 次都沒有 JavaScript 錯誤，都沒有頁面橫向捲動。
+- 投影模式 1280×720：保留時段（換行顯示）的時間、模型名稱都完整；模型服務表不再超出面板。
+- 投影模式 1024×768：排隊表緊接在課表之後。1440×900 沒有任何文字被截斷。
+- 投影模式 1280×720 仍被截斷的只有場景 (b) 的兩行區塊次要行：`UNKNOWN · 節點失聯,資源保留` 與 `alice · RTX A5000 · 24 GiB`（完整文字在滑鼠提示）。
+
+**審查後的修正（`a6e78b5` 之後，經使用者同意）。**
+
+- **模型服務停止也是排程決定。**Scheduler 停止執行中的模型服務時（閒置到期、有工作在等時提前回收、設定改變、從設定移除），
+  記一筆 `model_stopping`，`detail` 帶服務名稱與原因，節點是它的 attempt 所在；每次停止只記一次。Dashboard 的最近決定顯示為
+  「gemma4-31b 閒置 1 分 5 秒,有工作在等資源,提前回收」（閒置到期則是「逾時自動釋放」）。
+  `tests/test_m12_fixes.py` 的 `test_reclaiming_an_idle_model_is_a_decision_naming_its_node_and_reason`、`test_a_configuration_change_records_the_stop_too`。
+- **別人工作的原因。**`views.public_reason` 只放行 Scheduler 與 Worker 以固定文字、節點名稱、工作 ID 與次數組成的原因（`PUBLIC_REASONS`）；
+  其他原因（例如可能引用映像或指令的 Docker 錯誤）對擁有者以外的人只顯示狀態的小寫（`failed`）。擁有者照舊看到原文；
+  模型服務的原因本來就由 `GET /api/models` 給所有人看，維持原文。`test_others_see_a_failure_that_could_quote_the_image_only_as_failed`、
+  `test_known_scheduler_and_worker_reasons_stay_visible`（參數化）、`test_other_reasons_become_the_state`（參數化）。
+- **排程迴圈不會因一次例外停止。**`scheduling_loop` 包住每一輪：例外以 `labflux.api` logger 記下（`scheduling pass failed`，JSON 日誌），
+  下一個間隔照常排程，失聯偵測、lease 到期與模型管理不會悄悄停止。`test_a_failed_scheduling_pass_is_logged_and_the_loop_goes_on`。
+- **GPU 工作的等待原因只點名有卡的節點。**要 GPU 的工作，CPU、RAM 與同時執行數只比較有足夠可用卡的節點，所以說明不會點名一台根本跑不了它的節點；
+  原本寫「combination」的情況可能改成 CPU 或 RAM。`blocker` 為 None 若且唯若現在放得下，這點不變。
+  `test_a_gpu_jobs_cpu_blocker_names_only_a_node_with_the_cards`、`test_a_gpu_jobs_memory_blocker_names_only_a_node_with_the_cards`、
+  `test_a_job_without_gpus_still_compares_every_node`。
+- **Dashboard（第二輪審查的 12 項）。**
+  - 冷啟動中的 MODEL 區塊寫「starting · 啟動 m:ss」，模型服務表寫「啟動 13 分 9 秒」，不再重複節點。
+  - `UNKNOWN` 的區塊寫「UNKNOWN · 節點失聯,資源保留」，滑鼠提示加「無法確認容器已停止,所以不會重派」。
+  - 搶占別人的隊首寫「隊首。搶占 delta 的 22a372,等它停止後開始。」，下一行「選它是因為損失最少」。
+  - backfill 工作的細節寫出為什麼安全（「時限在保留時段開始前結束」等）。最近的決定在開始時寫出選擇節點的理由。
+  - 模型的閒置停止原因改成中文。
+  - 區塊的時間改成 m:ss 與 24 小時制 HH:MM（「執行 15:12 · 時限到 10:58」）；全頁的時間都用 24 小時制，不看瀏覽器語系。
+  - 擁有者以墨色粗體放在區塊次要行的最前面。GPU 欄頭寫「GPU 3 · 0%」。導覽列上的鍵盤焦點改成白色外框。
+  - 投影模式：保留時段換行不截斷；MODEL 區塊省略「模型服務 · 」；模型服務表縮小間距；整頁一起捲動，最近的決定不再擠在內層捲動區；
+    1080 px 以上課表欄放寬到 1.5fr。1080 px 以下（不論投影模式）排隊表緊接在課表之後。
+  - `tests/test_dashboard.py` 的 `test_dashboard_uses_one_24_hour_clock_and_names_model_reclaims` 與上方的 headless 量測。
+  - 設計系統的對應更新見 `DESIGN.md`。
+
+指令與結果（`a6e78b5` 加上審查後的修正與 M14.3 的展示腳本，2026-11-16）：
+
+- `uv run pytest -m 'not docker and not vm' -q`：522 passed、1 skipped（沒有 zsh）、33 deselected。比 `a6e78b5` 的 475 多 47 個：
+  `tests/test_m12_fixes.py` 30、`tests/test_demo_scenes.py` 10（M14.3，見下一節）、`tests/test_storyboard_model.py` 4、
+  `tests/test_storyboard_gpu.py` 2、`tests/test_dashboard.py` 1。
+- M12 共新增 65 個：`tests/test_queue_view.py` 13、`tests/test_views_api.py` 6、`tests/test_storyboard.py` 6、`tests/test_storyboard_gpu.py` 2、
+  `tests/test_storyboard_model.py` 4、`tests/test_m12_fixes.py` 30、`tests/test_dashboard.py` 2、`tests/test_cli.py` 2。
+- 修正期間有一次全跑，`tests/test_session_worker.py::test_remote_only_files_stay_listed_until_written_back_or_deleted` 失敗一次，
+  單獨重跑 3 次與之後的全跑都通過；和這次的修改無關，沒有再追。
+- `uv run ruff check .`、`uv run ruff format --check .`：通過（97 個檔案）。
+
+未驗證：實驗室三台實測（真實 GPU、投影機、Worker 故障）、Docker 端到端。展示時 gemma4-31b 改用 `on_demand` 以呈現冷啟動
+（兩張 A40 約 4～5 分鐘，`startup_timeout_s`、`cold_wait_s` 都設 600 秒）。冷啟動、共用、閒置回收與搶占只在 `tests/test_storyboard_model.py`
+以假 Worker 重播過，真實的 vLLM 與 Gateway 還沒有在 M12 的 Dashboard 上實測。展示用的投影機解析度也還沒確認。
+
+已知限制（依「少見情況記為限制」的原則，不另加機制）：
+
+- **只在記憶體。**排隊表（`/api/queue` 的 entries、保留時段與近期占用）、最近 50 筆決定、模型的已服務次數與最後活動時間
+  都在 Scheduler 的記憶體；Scheduler 重啟後清空，已服務從 0 算起，最近的決定重新累積。
+- **第一輪之前是空的。**重啟後到第一輪排程（0.25 秒）完成前，`computed_at` 為 null、排隊表是空的，
+  Dashboard 顯示「Scheduler 剛啟動,還沒有完成第一輪排程」。
+- **提交後才發布，順序可能前後顛倒。**快照與決定在交易提交、釋放鎖之後才換上，回滾的決定不會出現；
+  但兩個幾乎同時提交的交易，發布的先後可能和提交相反：較舊的快照可能短暫蓋過較新的（下一輪 0.25 秒後更正），
+  最近的決定也可能有一兩筆不完全照時間排序。
+- **backfill 標記讀目前的 `schedule_note`。**`allocations` 的 `placement` 是看工作現在的 `schedule_note` 是否含 `backfilled on`；
+  之後改寫這個說明的事件會讓標記消失，資料庫沒有另外記錄。
+- **「近 60 分」是固定文字。**「誰在用」的欄名與說明寫「近 60 分」，假設 `usage_window_s` 是預設的 3600 秒；改了設定，數字照設定算，文字不變。
+- **中文說明是解析英文原文。**排程說明、搶占與重跑原因的中文由 Dashboard 以固定句型解析英文的 `schedule_note`、`reason`；
+  Scheduler 的句型一改，中文那一行就不出現，細節面板永遠附上英文原文，排隊表與最近的決定以滑鼠提示顯示原文。
+- **GPU 卡軸看不到只用 CPU 的工作。**有節點回報 GPU 時課表預設為 GPU 卡（使用者決定，展示以 GPU 為主），只用 CPU 的工作與 session
+  要切到「CPU 核心」才看得到；選擇只在這個頁面有效，重新整理後回到預設。
+- **別人看到的原因可能只有狀態。**`PUBLIC_REASONS` 以外的原因，擁有者以外的人只看到 `failed`、`stopping`、`unknown` 這類小寫狀態
+  （英文，和狀態名稱一樣不翻譯）。Scheduler 或 Worker 之後新增的固定原因要加進這份清單，否則別人只看到狀態（偏向少給，不會多給）。
+- **冷啟動不顯示上限。**模型服務表顯示「啟動 13 分 9 秒」，但 `/api/models` 沒有提供 `startup_timeout_s`，所以沒有「上限 N 分」。
+- **1280 px 寬的投影機仍有區塊行會截斷。**投影模式 1280 px 時區塊的文字寬約 181 px：`UNKNOWN · 節點失聯,資源保留` 需要約 209 px，
+  顯示成「UNKNOWN · 節點失聯,資…」；擁有者名稱有 5 個字元以上、又配上較長的卡名時，資源行的尾端也會截斷（例如 `alice · RTX A5000 · 24 G…`）。
+  擁有者在最前面，所以仍看得到；完整文字在滑鼠提示與「全部」分頁。1920×1080 不截斷。
+- **排程迴圈一直失敗時每輪都記一筆。**例外記下後下一輪照常重試，不另外節流；一直失敗時日誌每 0.25 秒（`scheduler_interval_s`）一筆。
+
+## M14.3：展示腳本（kayle，2026-11-16）
+
+在 `feat/m12` 分支，接在 M12 之後實作；**只在測試環境重播過，還沒有在實驗室預演**。
+
+**內容。**
+
+- `docs/demo.md`：現場展示的操作手冊（前置條件、展示用的 Scheduler 設定與讓 gemma 先停下的步驟、終端機分工、T−10 分鐘檢查清單、
+  逐分鐘流程、備援、10 分鐘精簡版、彩排注意事項、展示後還原常駐的 gemma）。
+- `examples/demo/`：9 幕的資料夾（1、2、3、4、5、6a、6b、6c、7；第 8 幕是 M13 的比較圖，放在投影片）。
+  每幕的 `scene.toml` 依序列出步驟（誰送出哪個工作檔、等待、手動操作的暫停、取消、等模型狀態、聊天請求）、每一步觀眾該看到什麼、
+  用哪個課表軸，以及開始前的條件（gemma 的狀態、沒有殘留工作、bob 的近期占用）。工作檔只用 `JobSpec` 欄位，
+  以 `python:3.12-slim` 執行在時限前自己結束的 `sleep`。
+- `scripts/demo.py`（標準函式庫加 httpx）：`check`、`scene [ID]`（沒有 ID 時依展示順序列出；`--dry-run` 不送出任何東西，
+  條件不符時停下，`--force` 強制執行）、`reset`（取消 alice、bob 所有未結束的工作，包括 bob 的 session，等到每個停止都確認）、
+  `keepalive [--once]`（bob 每 20 秒對 gemma4-31b 送一個請求，逾時 900 秒）。Scheduler 位址與 token 來自 `--config`
+  （部署產生的 Scheduler 設定可以直接用）或環境變數。
+- 展示順序由 gemma 決定：第 2、3、4 幕需要五張卡都空著，排在最前面（第 2 幕需要 bob 還沒有用量，排第一）；
+  接著第 6c 幕冷啟動，載入的 4～5 分鐘用來做第 1、5、7 幕；gemma 服務後做第 6a 幕，最後第 6b 幕閒置回收。
+
+**測試（`tests/test_demo_scenes.py`，10 個）。** `demo.py` 本身在測試程序裡，以 alice、bob 對分鏡測試的假節點、假 Worker 與假時鐘把每一幕跑一遍，
+檢查每一幕要展示的決定：
+
+- 第 2 幕：排序 902／500／495，取消後空出的卡給隊首。
+- 第 3 幕：`head_reserved`、`would_delay_reservation` 與 `backfilled` 同時在畫面上，倒數後隊首落在兩張 A40。
+- 第 4 幕：被搶占的是最晚開始的工作。
+- 依展示順序 6c → 1 → 5 → 7 → 6a → 6b，每幕之間清場：模型搶占、配置、session 搶占、Worker 失聯與重跑、共用、閒置回收。
+- 每個場景與工作檔都載入得了；展示順序讓 gemma 不影響 GPU 幕；`check` 比對的節點容量就是分鏡的；
+  `--dry-run` 的輸出；`reset` 只取消 alice、bob 並等到停止確認；`check` 回報準備好的環境與 bob 的用量。
+
+檢查到的步驟改名時測試會失敗，不會悄悄略過。把第 3 幕短工作的時限改成 300 秒的測試複本會如預期失敗。
+
+指令與結果：`uv run pytest tests/test_demo_scenes.py tests/test_storyboard.py tests/test_storyboard_gpu.py tests/test_storyboard_model.py -q`：22 passed；
+全部的數字見 M12 一節（522 passed）。`uv run ruff check .`、`uv run ruff format --check .`：通過。
+
+**未驗證。**沒有對實驗室執行 `demo.py`：`check`、各幕、`keepalive` 與第 6a 幕的聊天請求第一次碰到真的 Scheduler、Gateway 與 vLLM 會是預演。
+測試裡聊天請求以直接呼叫 Scheduler 代替。第 4 幕在五張卡都空著時的落點（kindred 的第二張 A40 被搶占），以及 gemma 已在服務時的第 1、5、7 幕，
+只在測試環境重播過。完整版約 28 分鐘（略過第 4 幕與第 7 幕 (b) 約 24 分鐘），比分鏡的 20 分鐘長，主要是第 2 幕的 4 分鐘等待。
+
+**已知限制。**
+
+- **原本常駐的 gemma 不會因改成 `on_demand` 而停下。**以常駐模式啟動的 gemma 保留一年的期限，直到切換後有一個請求結束；
+  在那之前不會因閒置停止，有工作在等它的卡時也不會被回收。`docs/demo.md` 第 2 節寫了展示前讓它停下的步驟（或改 `startup_timeout_s` 讓它立刻停止）。
+- **第 7 幕 alice 的工作優先權是 6。**優先權相同時，(b) 中 bob 重跑的工作會因 alice 的近期占用較多排在前面，拿回 karma 的 4090，看不到工作換節點。
+- **第 3 幕的時間窗約 60 秒。**18 核工作的時限是驗證過的 300 秒；`demo.py` 在它送出 120 秒後接連送出三個工作，手動逐步送會錯過。
+- 三台都要先有 `python:3.12-slim` 映像，否則第一個工作要先下載，時間會對不上。

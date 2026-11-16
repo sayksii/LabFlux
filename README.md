@@ -54,8 +54,14 @@ uv run labflux --config configs/demo.toml results ls
 `cancel` 對排隊工作立即生效；執行中的工作會先變成 `STOPPING`，確認容器停止才變成 `CANCELLED`。
 
 Scheduler 在 `/dashboard` 提供監控頁（例如 `http://127.0.0.1:8000/dashboard`），以使用者 Token 登入。
-節點以課表呈現已預約的 CPU／RAM，清單顯示自己的工作與等待原因；點選工作可看執行紀錄、即時日誌及取消。
-設計脈絡與設計系統見 `PRODUCT.md`、`DESIGN.md`。
+header 顯示目前的排程策略。節點以課表呈現已預約的 CPU／RAM／GPU 卡（有節點回報 GPU 時預設顯示 GPU 卡），
+backfill 隊首的保留時段標在節點欄頭，session、模型服務與 backfill 先跑的工作各有標記。
+「排隊順序」照 Scheduler 最近一輪排程實際考慮的順序，列出排隊的工作、分數拆解與排程器的決定（為什麼還不能開始），
+下方是最近的排程決定（派送、backfill、搶占、重新排隊、節點失聯與上線、模型服務停止）；
+「模型服務」顯示狀態、進行中與已服務的請求數和閒置時間，「誰在用」顯示每位使用者已預約的資源、執行／排隊數與近期占用。
+範圍可選「所有人」（預設）或「我的」：每個登入的使用者都看得到所有人工作的摘要（擁有者、類別、狀態、資源、節點、
+優先權、分數與排程說明），點開別人的工作也只顯示這份摘要；指令、環境變數、日誌、輸出與取消仍只限擁有者。
+點選自己的工作可看執行紀錄、即時日誌及取消。設計脈絡與設計系統見 `PRODUCT.md`、`DESIGN.md`。
 
 ## 工作與資料
 
@@ -165,6 +171,7 @@ uv run labflux --config CONFIG fetch JOB_ID --directory outputs/mnist
 權重為 `score_priority_weight`、`score_wait_weight`、`score_usage_weight`（預設 100、1、1）。
 每個排隊工作的決策說明（例如「waiting behind job」、「reserved on 節點 at 時間」、「backfilled」）
 出現在工作的 `schedule_note`。互動 session 排在批次工作之前。
+`labflux queue` 顯示 Scheduler 最近一輪排程的排隊順序、分數、決定與 backfill 保留時段；`labflux status --all` 列出所有使用者工作的摘要（不含指令、環境變數與日誌）。
 同一節點可同時執行多個工作，但所有預約不得超過其 CPU／RAM 可分配容量。
 預約與派送在同一個 SQLite 交易完成；即時負載另外記錄，不與預約重複扣除。
 
@@ -202,8 +209,12 @@ Worker 收到 SIGTERM／SIGINT 時只停止自己的執行緒，工作容器繼�
   超過 `offline_timeout_s` 仍未出現則照常變成 `OFFLINE`，工作 `UNKNOWN`。
 - 網路中斷期間 Worker 的結果留在本機 outbox，恢復連線後送出，不會重複執行。
 
-使用者 API 為 `/api/jobs`、`/api/nodes`、`/api/artifacts`、`/api/sessions`、`/api/results`，以使用者 Bearer Token 驗證；
-內部 `/internal/workers` 使用獨立 Worker Token。使用者只能查看、取消與下載自己的工作。
+使用者 API 為 `/api/jobs`、`/api/nodes`、`/api/queue`、`/api/models`、`/api/artifacts`、`/api/sessions`、`/api/results`，以使用者 Bearer Token 驗證；
+內部 `/internal/workers` 使用獨立 Worker Token。每個登入的使用者都看得到所有人工作的摘要（`/api/jobs?scope=all`、
+`/api/nodes` 的 `allocations`、`/api/queue`）：擁有者、類別、狀態、資源、節點、優先權、分數與排程說明。
+工作的指令、環境變數、映像、程式來源、attempt 紀錄、日誌與輸出只有擁有者看得到（模型服務的日誌例外，所有人都能讀），也只有擁有者能取消與下載；
+別人工作的原因只在是 Scheduler 或 Worker 的固定說明（例如 `time limit exceeded`、`preempted by job …`）時照原文顯示，
+其他原因（例如可能引用映像或指令的 Docker 錯誤）只顯示狀態（`failed`）。
 `/health` 不需認證，`/docs` 提供 API 規格。
 
 SQLite schema 在啟動時依序套用編號 migration（目前為版本 8）；也可執行 `uv run labflux db-upgrade`。
@@ -369,5 +380,9 @@ uv run python scripts/lab_deploy.py status
 M9 的門鈴長連線與快速測試 session（已實測 Claude Code 從 `labflux shell` 啟動後使用替身），
 M10 的共享模型服務與推論 Gateway（`docs/architecture.md` 第 9 節）、M11 的搶占，
 以及專案目錄保留在節點、下一次同專案的工作接著開始（`docs/architecture.md` 6.1；被搶占的專案工作重跑時也從這裡接著跑）。
+M12 的監控與決策說明（排隊順序、分數、等待原因、backfill 保留時段與最近的排程決定由 Scheduler 的 `/api/queue` 提供，
+Dashboard 與 CLI 呈現）已以單元測試、展示分鏡測試與 headless Chromium 驗證，實驗室實測尚未進行。
+展示腳本（M14.3）的操作手冊見 [docs/demo.md](docs/demo.md)，各幕的工作檔在 `examples/demo/`，以 `scripts/demo.py` 執行；
+已在測試環境逐幕重播，實驗室預演尚未進行。
 故障驗證（M6.7）缺少實際 VM 關機。
 已知限制見 [docs/verification.md](docs/verification.md)。

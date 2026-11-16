@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-26T10:08:34+00:00",
+  "generatedAt": "2026-11-16T02:46:47+00:00",
   "title": "Design System: LabFlux",
   "extensions": {
     "colorMeta": {
@@ -642,11 +642,11 @@
       },
       "headline": {
         "displayName": "Headline",
-        "purpose": "Panel titles and the job ID in the detail header."
+        "purpose": "Panel titles (timetable, model services, who is using, jobs) and the job ID in the detail header."
       },
       "title": {
         "displayName": "Title",
-        "purpose": "Node names and detail subsections."
+        "purpose": "Node names, detail subsections and the decision feed heading."
       },
       "body": {
         "displayName": "Body",
@@ -654,19 +654,19 @@
       },
       "data": {
         "displayName": "Data",
-        "purpose": "Roster cells, facts, buttons, cluster line."
+        "purpose": "Roster and model-table cells, facts, buttons, cluster line."
       },
       "note": {
         "displayName": "Note",
-        "purpose": "Subtitles, queue explanations, tabs, segmented options."
+        "purpose": "Subtitles, list explanations, queue decisions, feed entries, tabs, segmented options, policy chip."
       },
       "label": {
         "displayName": "Label",
-        "purpose": "Table headers, period numerals, legend, block secondary lines."
+        "purpose": "Table headers, period numerals, queue positions, score breakdowns, decision detail lines, legend, block secondary lines (the owner leading them in ink at 700), the raw note."
       },
       "stamp": {
         "displayName": "Stamp",
-        "purpose": "State stamps; English state names as reported by the API."
+        "purpose": "State stamps (uppercase for jobs and nodes, lowercase for model services) and the SESSION, MODEL and backfill tags."
       },
       "mono": {
         "displayName": "Mono",
@@ -689,7 +689,7 @@
       {
         "name": "refresh-interval",
         "value": "3000ms",
-        "purpose": "Cluster and roster polling cadence; the live status shows the last good update time."
+        "purpose": "Polling cadence for nodes, jobs, the queue view and models (five requests per tick); the live status shows the last good update time."
       },
       {
         "name": "log-interval",
@@ -758,9 +758,9 @@
       "name": "Portal Bar",
       "kind": "nav",
       "refersTo": "portal-bar",
-      "description": "Navy header: wordmark, cluster line (reserved figures), live status, ghost buttons.",
-      "html": "<header class=\"ds-bar\"><b class=\"ds-bar-mark\">LabFlux</b><dl class=\"ds-bar-cluster\"><div><dt>節點</dt><dd>3 / 3 上線</dd></div><div><dt>CPU 已預約</dt><dd>6 / 7 核</dd></div><div><dt>排隊</dt><dd>2</dd></div></dl><span class=\"ds-bar-live\"><i></i>即時 · 18:04:42 更新</span><button class=\"ds-ghost\" aria-pressed=\"false\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"1.5\" y=\"3\" width=\"13\" height=\"8\" rx=\"1\"/><path d=\"M5 14h6M8 11v3\"/></svg>投影模式</button></header>",
-      "css": ".ds-bar { font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; background: #1f3a5f; color: #ffffff; display: flex; align-items: center; flex-wrap: wrap; gap: 24px; padding: 12px 24px; } .ds-bar-mark { font-size: 22px; font-weight: 700; letter-spacing: .01em; } .ds-bar-cluster { display: flex; flex-wrap: wrap; gap: 6px 21px; margin: 0; color: #c9d6ea; font-size: 14px; flex: 1; } .ds-bar-cluster div { display: flex; gap: 6px; } .ds-bar-cluster dt { margin: 0; } .ds-bar-cluster dd { margin: 0; color: #ffffff; font-weight: 500; } .ds-bar-live { display: flex; align-items: center; gap: 7px; color: #c9d6ea; font-size: 13px; } .ds-bar-live i { width: 7.5px; height: 7.5px; border-radius: 50%; background: #6fd39a; } .ds-ghost { font-family: inherit; font-size: 13px; background: transparent; border: 1px solid #36577f; color: #ffffff; border-radius: 6px; padding: 4.5px 11px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; } .ds-ghost svg { width: 15px; height: 15px; } .ds-ghost:hover { background: #2a4b75; } .ds-ghost[aria-pressed=\"true\"] { background: #ffffff; color: #1f3a5f; border-color: #ffffff; } .ds-ghost:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }"
+      "description": "Navy header: wordmark with the policy chip, cluster line (reserved figures), live status, ghost buttons.",
+      "html": "<header class=\"ds-bar\"><b class=\"ds-bar-mark\">LabFlux</b><span class=\"ds-policy\" title=\"backfill: 依分數排序;隊首取得保留時段\">策略 <b>backfill</b></span><dl class=\"ds-bar-cluster\"><div><dt>節點</dt><dd>3 / 3 上線</dd></div><div><dt>CPU 已預約</dt><dd>6 / 7 核</dd></div><div><dt>排隊</dt><dd>2</dd></div></dl><span class=\"ds-bar-live\"><i></i>即時 · 18:04:42 更新</span><button class=\"ds-ghost\" aria-pressed=\"false\"><svg viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"><rect x=\"1.5\" y=\"3\" width=\"13\" height=\"8\" rx=\"1\"/><path d=\"M5 14h6M8 11v3\"/></svg>投影模式</button></header>",
+      "css": ".ds-bar { font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; background: #1f3a5f; color: #ffffff; display: flex; align-items: center; flex-wrap: wrap; gap: 24px; padding: 12px 24px; } .ds-bar-mark { font-size: 22px; font-weight: 700; letter-spacing: .01em; } .ds-bar-cluster { display: flex; flex-wrap: wrap; gap: 6px 21px; margin: 0; color: #c9d6ea; font-size: 14px; flex: 1; } .ds-bar-cluster div { display: flex; gap: 6px; } .ds-bar-cluster dt { margin: 0; } .ds-bar-cluster dd { margin: 0; color: #ffffff; font-weight: 500; } .ds-bar-live { display: flex; align-items: center; gap: 7px; color: #c9d6ea; font-size: 13px; } .ds-bar-live i { width: 7.5px; height: 7.5px; border-radius: 50%; background: #6fd39a; } .ds-ghost { font-family: inherit; font-size: 13px; background: transparent; border: 1px solid #36577f; color: #ffffff; border-radius: 6px; padding: 4.5px 11px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; } .ds-ghost svg { width: 15px; height: 15px; } .ds-ghost:hover { background: #2a4b75; } .ds-ghost[aria-pressed=\"true\"] { background: #ffffff; color: #1f3a5f; border-color: #ffffff; } .ds-ghost:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; } .ds-policy { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #36577f; border-radius: 6px; padding: 1.5px 8px; color: #c9d6ea; font-size: 13px; white-space: nowrap; cursor: help; } .ds-policy b { color: #ffffff; font-weight: 500; }"
     },
     {
       "name": "Resource Axis Segmented Control",
@@ -790,9 +790,9 @@
       "name": "Timetable Column with Course Blocks",
       "kind": "custom",
       "refersTo": "course-block",
-      "description": "Signature: one node column, ruled periods, own job blocks in their hue, others in grey, system-reserved capacity hatched.",
-      "html": "<div class=\"ds-tt\"><div class=\"ds-tt-gutter\"><span style=\"top:0\">1</span><span style=\"top:48px\">2</span><span style=\"top:96px\">3</span><span style=\"top:144px\">4</span></div><div class=\"ds-tt-col\"><div class=\"ds-tt-cells\"></div><button class=\"ds-blk\" style=\"top:1px;height:94px;--fill:#dbe7fb;--line:#7fa6e3\"><b>8ea57f</b><span>2 核 · 1 GiB</span><span>執行 10 分 42 秒</span></button><div class=\"ds-blk ds-others\" style=\"top:97px;height:46px\"><b>其他使用者</b><span>1 核</span></div><div class=\"ds-tt-reserve\">系統保留</div></div></div>",
-      "css": ".ds-tt { display: grid; grid-template-columns: 39px 160px; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; background: #ffffff; border: 1px solid #cfd5df; border-radius: 6px; overflow: hidden; } .ds-tt-gutter { position: relative; height: 192px; border-right: 1px solid #e6e9ef; } .ds-tt-gutter span { position: absolute; right: 7px; font-size: 12px; color: #6b7486; transform: translateY(3px); } .ds-tt-col { position: relative; height: 192px; } .ds-tt-cells { position: absolute; inset: 0 0 48px 0; background-image: linear-gradient(#e6e9ef 1px, transparent 1px); background-size: 100% 48px; } .ds-tt-reserve { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: repeating-linear-gradient(135deg, #f1f3f6 0 5px, #e4e8ee 5px 10px); border-top: 1px solid #cfd5df; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #5b6577; } .ds-blk { position: absolute; left: 6px; right: 6px; border-radius: 4px; padding: 4.5px 8px; border: 1px solid var(--line); background: var(--fill); color: #1d2433; display: flex; flex-direction: column; text-align: left; line-height: 1.3; font: inherit; cursor: pointer; overflow: hidden; } .ds-blk b { font-size: 14px; font-weight: 700; } .ds-blk span { font-size: 12px; color: color-mix(in oklab, var(--line) 40%, #1d2433); white-space: nowrap; } button.ds-blk:hover, button.ds-blk:focus-visible { outline: none; box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #1f3a5f; z-index: 2; } .ds-others { --fill: #e9ecf1; --line: #c5cad3; cursor: default; }"
+      "description": "Signature: one node column, ruled periods, course blocks in their hue with the owner leading the first secondary line in ink at 700 (所有人) and compact times (執行 m:ss · 時限到 HH:MM), unnamed reservations merged in grey (我的), system-reserved capacity hatched.",
+      "html": "<div class=\"ds-tt\"><div class=\"ds-tt-gutter\"><span style=\"top:0\">1</span><span style=\"top:48px\">2</span><span style=\"top:96px\">3</span><span style=\"top:144px\">4</span></div><div class=\"ds-tt-col\"><div class=\"ds-tt-cells\"></div><button class=\"ds-blk\" style=\"top:1px;height:94px;--fill:#dbe7fb;--line:#7fa6e3\"><b>8ea57f</b><span><strong>alice</strong> · 2 核 · 1 GiB</span><span>執行 10:42 · 時限到 14:05</span></button><div class=\"ds-blk ds-others\" style=\"top:97px;height:46px\"><b>其他使用者</b><span>1 核</span></div><div class=\"ds-tt-reserve\">系統保留</div></div></div>",
+      "css": ".ds-tt { display: grid; grid-template-columns: 39px 160px; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; background: #ffffff; border: 1px solid #cfd5df; border-radius: 6px; overflow: hidden; } .ds-tt-gutter { position: relative; height: 192px; border-right: 1px solid #e6e9ef; } .ds-tt-gutter span { position: absolute; right: 7px; font-size: 12px; color: #6b7486; transform: translateY(3px); } .ds-tt-col { position: relative; height: 192px; } .ds-tt-cells { position: absolute; inset: 0 0 48px 0; background-image: linear-gradient(#e6e9ef 1px, transparent 1px); background-size: 100% 48px; } .ds-tt-reserve { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: repeating-linear-gradient(135deg, #f1f3f6 0 5px, #e4e8ee 5px 10px); border-top: 1px solid #cfd5df; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #5b6577; } .ds-blk { position: absolute; left: 6px; right: 6px; border-radius: 4px; padding: 4.5px 8px; border: 1px solid var(--line); background: var(--fill); color: #1d2433; display: flex; flex-direction: column; text-align: left; line-height: 1.3; font: inherit; cursor: pointer; overflow: hidden; } .ds-blk b { font-size: 14px; font-weight: 700; } .ds-blk span { font-size: 12px; color: color-mix(in oklab, var(--line) 40%, #1d2433); white-space: nowrap; } .ds-blk span strong { color: #1d2433; font-weight: 700; } button.ds-blk:hover, button.ds-blk:focus-visible { outline: none; box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #1f3a5f; z-index: 2; } .ds-others { --fill: #e9ecf1; --line: #c5cad3; cursor: default; }"
     },
     {
       "name": "Token Input",
@@ -809,15 +809,33 @@
       "description": "The one dark surface: job stdout/stderr, monospace, stderr tinted.",
       "html": "<pre class=\"ds-log\">epoch 1/3 loss=0.412\nepoch 2/3 loss=0.288\n<span class=\"ds-log-err\">warning: dataset cache miss</span></pre>",
       "css": ".ds-log { margin: 0; font-family: var(--mono, ui-monospace, 'Cascadia Mono', SFMono-Regular, Consolas, monospace); font-size: 13px; line-height: 1.5; background: #17202e; color: #dfe6f0; border-radius: 6px; padding: 12px 13.5px; max-height: 330px; overflow: auto; white-space: pre-wrap; } .ds-log-err { color: #ffb4a9; }"
+    },
+    {
+      "name": "Kind Tags and Reservation Chip",
+      "kind": "chip",
+      "refersTo": "stamp-queued",
+      "description": "SESSION / MODEL / backfill tags (stamp face, solid outline, white fill; keyline-tinted inside a block) and the dashed amber backfill reservation chip of a node head, which wraps at spaces instead of truncating.",
+      "html": "<div class=\"ds-marks\"><span class=\"ds-tag\">SESSION</span><span class=\"ds-tag\">MODEL</span><span class=\"ds-tag\">backfill</span><span class=\"ds-blk-name\" style=\"--fill:#fde3d3;--line:#e9a17a\"><b>e07b3d</b><span class=\"ds-tag ds-tag-in\">backfill</span></span><span class=\"ds-resv\" title=\"backfill 隊首的保留時段\">保留給 b71e02 · 14:05:10 起</span></div>",
+      "css": ".ds-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; } .ds-tag { display: inline-block; font-size: 11.25px; font-weight: 700; letter-spacing: .03em; line-height: 1.35; padding: 0 4px; border: 1px solid currentColor; border-radius: 3px; background: #ffffff; color: #5b6577; white-space: nowrap; } .ds-blk-name { display: inline-flex; align-items: center; gap: 4.5px; padding: 4.5px 8px; border-radius: 4px; border: 1px solid var(--line); background: var(--fill); color: #1d2433; font-size: 14px; } .ds-blk-name b { font-weight: 700; } .ds-tag-in { color: color-mix(in oklab, var(--line) 45%, #1d2433); } .ds-resv { display: inline-block; border: 1px dashed #9a5b00; color: #9a5b00; border-radius: 3px; padding: 0 6px; font-size: 12px; font-weight: 500; line-height: 1.5; white-space: normal; word-break: keep-all; overflow-wrap: anywhere; max-width: 100%; }"
+    },
+    {
+      "name": "Queue Table",
+      "kind": "custom",
+      "refersTo": "job-table-row-hover",
+      "description": "The Scheduler's queue in its own order: faint position numerals, score over its breakdown, a decision sentence over a muted detail line.",
+      "html": "<table class=\"ds-q\"><thead><tr><th class=\"pos\">#</th><th>工作</th><th>擁有者</th><th>分數</th><th>排程器的決定</th></tr></thead><tbody><tr><td class=\"pos\">1</td><td><i class=\"ds-sw\"></i>b71e02</td><td>bob</td><td>895<small>900 + 等 4 − 用 9</small></td><td class=\"decide\">隊首。需要 16 核,最多空 2 核(delta)。<small>保留 delta,14:05:10 起(2 分 39 秒後)</small></td></tr><tr><td class=\"pos\">2</td><td><i class=\"ds-sw\"></i>5d0c88</td><td>alice</td><td>488<small>500 + 等 9 − 用 21</small></td><td class=\"decide\">放得下,但時限 30 分會延後 b71e02 的保留時段。<small>保留 delta,14:05:10 起(2 分 39 秒後)</small></td></tr></tbody></table>",
+      "css": ".ds-q { border-collapse: collapse; width: 100%; font-family: var(--font, 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif); font-variant-numeric: tabular-nums; font-size: 14px; color: #1d2433; background: #ffffff; } .ds-q th { font-size: 12px; font-weight: 500; color: #5b6577; text-align: left; padding: 8px 9px; border-bottom: 1px solid #e6e9ef; } .ds-q td { padding: 8px 9px; border-bottom: 1px solid #e6e9ef; vertical-align: middle; } .ds-q tbody tr { cursor: pointer; } .ds-q tbody tr:hover { background: #f3f6fb; } .ds-q .pos { width: 1%; text-align: right; padding-right: 3px; color: #6b7486; font-size: 12px; } .ds-q small { display: block; color: #5b6577; font-size: 12px; line-height: 1.35; } .ds-q .decide { font-size: 13px; line-height: 1.35; } .ds-sw { display: inline-block; width: 10.5px; height: 10.5px; border-radius: 2px; margin-right: 7.5px; vertical-align: -1px; }"
     }
   ],
   "narrative": {
     "northStar": "The Course Timetable",
-    "overview": "LabFlux reads like a university course timetable (課表) pinned under a navy campus-portal header. Each node is one column of the sheet; each resource unit (a CPU core, a slice of RAM) is one period row, numbered in the left gutter; every reservation is a course block that occupies whole periods. The visitor reads the cluster the way a student reads a timetable: which columns are full, whose block sits where, what is left empty. The job list beside it is the class roster for the same sheet, and hovering a roster row rings its block.\n\nThe world is cool, ruled and quiet. A cool off-white ground holds white sheets drawn with thin rules; colour lives almost entirely in two places, the navy chrome and the soft per-job pastel blocks. Everything that is *not* a reservation is drawn as texture instead of colour: diagonal hatching for capacity the system holds back, a fine dot grid for capacity the node simply does not have, and red-tinted hatching for a node that has stopped answering. State is carried by form as well as colour, so a stamp reads correctly in greyscale or on a washed-out projector.\n\nDensity is desktop-first and data-dense, with a projector mode that scales the whole rem ramp from 15px to 18px instead of re-laying anything out. One workhorse sans (Noto Sans TC) with tabular numerals sets every word and number; UI text is Traditional Chinese, while state names, job IDs and API terms stay in English.",
+    "overview": "LabFlux reads like a university course timetable (課表) pinned under a navy campus-portal header. Each node is one column of the sheet; each resource unit (a CPU core, a slice of RAM) is one period row, numbered in the left gutter; every reservation is a course block that occupies whole periods. The visitor reads the cluster the way a student reads a timetable: which columns are full, whose block sits where, what is left empty. The job list beside it is the class roster for the same sheet, opened on the queue in the order the Scheduler last considered it, and hovering a roster row rings its block. Under the timetable, two smaller ruled tables say who holds the sheet right now (誰在用) and what the shared model services are doing (模型服務).\n\nThe world is cool, ruled and quiet. A cool off-white ground holds white sheets drawn with thin rules; colour lives almost entirely in two places, the navy chrome and the soft per-job pastel blocks. Everything that is *not* a reservation is drawn as texture instead of colour: diagonal hatching for capacity the system holds back, a fine dot grid for capacity the node simply does not have, and red-tinted hatching for a node that has stopped answering. State is carried by form as well as colour, so a stamp reads correctly in greyscale or on a washed-out projector.\n\nDensity is desktop-first and data-dense, with a projector mode that scales the whole rem ramp from 15px to 18px and changes only two proportions: a wider timetable column and no nested scroll region. One workhorse sans (Noto Sans TC) with tabular numerals sets every word and number; UI text is Traditional Chinese, while state names, job IDs and API terms stay in English. Every time on the page reads on one 24-hour clock.",
     "keyCharacteristics": [
       "Nodes as timetable columns, resource units as numbered period rows, reservations as course blocks.",
       "Navy portal header over a cool off-white ground and white ruled sheets.",
-      "One pastel hue per job, derived from its ID and identical wherever the job appears.",
+      "One pastel hue per job, derived from its ID (a model service's from its name) and identical wherever the job appears.",
+      "Every hue comes with a name: under 所有人 each block names its owner; under 我的 other users stay anonymous grey.",
+      "The Scheduler's decisions sit beside what they are about: outlined tags on blocks, a dashed amber reservation chip on a node head, a decision sentence on each queue row.",
       "Absent or withheld capacity drawn as texture (hatching, dot grid), never as a flat colour.",
       "State stamps that change shape (solid, dashed, dotted, struck through) as well as colour.",
       "Every number labelled as reserved (已預約) or live (即時), never merged.",
@@ -826,17 +844,17 @@
     "rules": [
       {
         "name": "The Your-Hue-Only Rule",
-        "body": "Pastel course hues belong to the viewer's own jobs that currently hold resources. Other users' reservations are always Others Grey and unlabelled beyond 其他使用者; a job that holds nothing shows an empty swatch slot, not a hue.",
+        "body": "Pastel course hues belong to jobs the viewer may name, and only while they hold resources; a hue never appears without a name. Under 我的 that is the viewer's own jobs and the model services: every other reservation is Others Grey, merged per column into one block labelled only 其他使用者. Under 所有人 (the default) every block takes its hue, and its secondary line starts with the owner in ink at 700. A model service's block names no owner: its MODEL tag and service name already say whose it is. A job that holds nothing shows an empty swatch slot, not a hue.",
         "section": "colors"
       },
       {
         "name": "The Persistent Hue Rule",
-        "body": "A job's hue is a function of its ID and never of its position, state or view. The same pair appears on its block, its roster swatch and its detail title.",
+        "body": "A job's hue is a function of its ID and never of its position, state, scope or view. The same pair appears on its block, its roster swatch and its detail title. The one exception is a model service: every restart is a new job, so it hashes its service name, and its block, swatch, model-table row and detail title share that hue across restarts.",
         "section": "colors"
       },
       {
         "name": "The Navy Is Structure Rule",
-        "body": "Navy marks chrome and the current choice (header, pressed option, selected tab, primary action, running, focus). Do not use it as decoration or for a job's hue.",
+        "body": "Navy marks chrome and the current choice (header, pressed option, selected tab, primary action, running or serving, focus). Do not use it as decoration or for a job's hue.",
         "section": "colors"
       },
       {
@@ -846,7 +864,12 @@
       },
       {
         "name": "The Tabular Rule",
-        "body": "Numerals are tabular everywhere. Units are spelled in the UI's words (核, MiB, GiB) after a space.",
+        "body": "Numerals are tabular everywhere. Units are spelled in the UI's words (核, MiB, GiB) after a space. Times use one 24-hour zh-TW clock whatever the browser's locale: 14:05:09 for clocks, feed times and the reservation start, 14:05 for a block's deadline, 2026/11/16 14:05:09 for dates. Inside a course block an elapsed time or countdown is compact m:ss (h:mm:ss past an hour); everywhere else it is spelled out (13 分 9 秒).",
+        "section": "typography"
+      },
+      {
+        "name": "The Raw Note Rule",
+        "body": "A Chinese sentence that renders an English scheduling note keeps the note beside it: the detail's 排程說明 shows the sentence over the raw note in a Cool Ground strip (label size, Muted Slate, 3px corners), and queue decisions and feed entries carry the English text as their tooltip. A note the page cannot parse is shown raw, never guessed at.",
         "section": "typography"
       },
       {
@@ -862,7 +885,9 @@
     ],
     "dos": [
       "**Do** give every new resource (GPU cards included) its own axis option and draw its units as whole periods in the same node columns.",
-      "**Do** derive a job's hue from its ID and reuse the same pair on every surface that shows that job.",
+      "**Do** derive a job's hue from its ID (a model service's from its name) and reuse the same pair on every surface that shows that job.",
+      "**Do** name every hued block: under 所有人 its first secondary line starts with the owner.",
+      "**Do** put a scheduling decision beside what it is about: tags on the block, the reservation chip on the node head, the decision sentence on the queue row, the raw note under its Chinese rendering.",
       "**Do** draw unavailable capacity as texture: grey hatching for system-reserved, dot grid for not present, red hatching for offline.",
       "**Do** carry state in border style as well as colour: solid, dashed (waiting/stopping), dotted (unknown), struck (cancelled).",
       "**Do** label every resource number 已預約 or 即時, and keep the two on separate lines.",
@@ -871,7 +896,8 @@
     ],
     "donts": [
       "**Don't** summarise the cluster as big-number cards or per-node progress bars; capacity is read off the timetable.",
-      "**Don't** give other users' reservations a hue or an identity; they stay Others Grey.",
+      "**Don't** show a hue without a name: under 我的 other users' reservations stay anonymous Others Grey; under 所有人 every block names its owner.",
+      "**Don't** renumber queue positions when filtering; they are the Scheduler's order.",
       "**Don't** merge reserved and live usage into one figure, bar or chart.",
       "**Don't** add drop or ambient shadows; the linked-job ring is the only shadow.",
       "**Don't** open job detail in a modal; it replaces the roster panel in place.",
