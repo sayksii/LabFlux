@@ -353,7 +353,8 @@ kayle 執行 Scheduler 與 Worker，karma 執行 Worker，都以專屬帳號 `la
 
 使用者就是節點上的 Linux 帳號：在任一台 LabFlux 節點執行 `labflux login`，本機 Worker 透過 kernel 確認帳號後，
 向 Scheduler 申請個人 token，存到 `~/.config/labflux/login.toml`（權限 600），之後的指令自動帶上。
-細節見 [docs/lab-deploy.md](docs/lab-deploy.md) 的「使用者登入」。
+細節見 [docs/lab-deploy.md](docs/lab-deploy.md) 的「使用者登入」；每台節點所有帳號共用的 CLI
+（`/opt/labflux`，需要 sudo）見同一份文件的「所有帳號共用的 CLI」。
 
 ```bash
 uv run python scripts/lab_deploy.py check                  # 前置檢查，唯讀

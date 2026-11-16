@@ -147,7 +147,8 @@ ssh -L 8770:192.0.2.10:8770 kayle
 
 ## 使用者登入（Q14）
 
-LabFlux 的使用者就是節點上的 Linux 帳號，不用改設定或重新部署。在任一台 LabFlux 節點裝好 CLI 後執行：
+LabFlux 的使用者就是節點上的 Linux 帳號，不用改設定或重新部署。在任一台 LabFlux 節點裝好 CLI
+（每台一份所有帳號共用的安裝，見下一節）後執行：
 
 ```bash
 labflux login     # Logged in as alice (http://192.0.2.10:8770); saved to ~/.config/labflux/login.toml
@@ -179,6 +180,30 @@ labflux whoami    # alice
 排程策略：在 `configs/local-lab.toml` 的 `[scheduler]` 加上 `policy = "backfill"`（可用 `fcfs`、`priority`、`backfill`，
 其他值在解析清單時就被拒絕），重新 `deploy --node kayle`，就會寫進 `scheduler.toml` 的 `scheduling_policy`。
 沒有設定時不寫這一行，Scheduler 維持預設的 `fcfs`。各模式的行為見 README 的「排程與通訊」。
+
+## 所有帳號共用的 CLI
+
+部署只把 LabFlux 裝在 `labflux` 帳號的家目錄，其他帳號讀不到。每台節點另外裝一份共用的 CLI 到 `/opt/labflux`，
+由有 sudo 權限的帳號執行。安裝來源是部署時放到 `labflux` 帳號的 uv 與 wheel，所以三台的指令相同：
+
+```bash
+B=/home/labflux/labflux            # deploy 放 wheel 與 requirements.txt 的地方
+UV=/home/labflux/.local/bin/uv
+sudo mkdir -p /opt/labflux
+sudo env UV_PYTHON_INSTALL_DIR=/opt/labflux/python $UV venv --python 3.12 --python-preference only-managed /opt/labflux/venv
+sudo env UV_PYTHON_INSTALL_DIR=/opt/labflux/python $UV pip install --python /opt/labflux/venv/bin/python -r $B/requirements.txt
+sudo env UV_PYTHON_INSTALL_DIR=/opt/labflux/python $UV pip install --python /opt/labflux/venv/bin/python --no-deps --reinstall $B/labflux-0.1.0-py3-none-any.whl
+sudo chmod -R a+rX /opt/labflux
+sudo ln -sf /opt/labflux/venv/bin/labflux /usr/local/bin/labflux
+```
+
+- Python 3.12 也裝在 `/opt/labflux/python`：系統內建的 Python 可能太舊，而 uv 預設把 Python 裝在執行者自己的家目錄，
+  其他帳號讀不到。同理，不要用 `sudo uv tool install`，那會裝進 root 的家目錄。
+- 清單的 `account` 不是 `labflux` 時，把 `B`、`UV` 裡的 `/home/labflux` 換成那個帳號的家目錄。
+- **每次 `deploy` 之後都要重跑一次**（`venv` 那一行可以略過）：部署腳本沒有 sudo 權限，不會更新 `/opt/labflux`。
+  沒更新時，共用 CLI 停在舊版本，新指令或新欄位用不到。
+- 確認：用一般帳號執行 `labflux version`、`labflux login`、`labflux whoami`。
+- 移除：`sudo rm -rf /opt/labflux /usr/local/bin/labflux`。
 
 ## 模型服務（M10）
 
@@ -224,7 +249,7 @@ $SSH labflux@192.0.2.10 systemctl --user status labflux-worker
 
 ## 停止、更新與移除
 
-- **更新：** 合併新版程式後重新執行 `deploy`。有工作在執行時也可以照常部署：工作由新的 Worker 接手，
+- **更新：** 合併新版程式後重新執行 `deploy`，再請管理員更新每台的共用 CLI（見「所有帳號共用的 CLI」）。有工作在執行時也可以照常部署：工作由新的 Worker 接手，
   Scheduler 重啟後從資料庫還原；只有進行中的快速測試指令與推論請求需要重送。
 - **停止：** `$SSH labflux@<host> systemctl --user stop labflux-worker.service`；
   kayle 的 Scheduler 是 `labflux-scheduler.service`。`disable` 可避免開機時自動啟動。

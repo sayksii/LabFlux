@@ -1305,6 +1305,17 @@ M11（搶占）先合併，`attempts.preempted_by` 用了 migration 6，所以 `
 Docker（只用 CPU）：`test_end_to_end_docker.py`、`test_project_results_docker.py`、`test_preemption_docker.py`（非 GPU）、
 `test_fast_lane_e2e_docker.py` 共 6 passed。
 
+## 實驗室部署 main `8fcab7a` 與共用 CLI（2026-11-16）
+
+- 部署前 kayle、karma 沒有工作；kindred 只有常駐的 gemma。Scheduler 資料庫先以 SQLite backup API 備份（schema 6）。
+- 部署後三台 `ONLINE`；資料庫升級到 schema 8（`project_results`、`user_tokens`），34 個工作都保留；
+  gemma 由新的 Worker 接手（同一個 attempt，狀態 serving）；三台的 Worker 都開著 `@labflux-login`。
+- 共用 CLI 依 `docs/lab-deploy.md`「所有帳號共用的 CLI」由管理員裝在三台的 `/opt/labflux`；
+  `find /opt/labflux ! -perm -o+r` 沒有結果。
+- 實際登入（登入檔放在臨時目錄）：同一位使用者在 kayle 與 kindred 的 UID 不同，兩台 `labflux login` 都得到同一個身分，
+  `labflux whoami` 相同，`labflux models` 看得到 gemma；登入 token 看到的工作與設定檔裡同名使用者的相同。
+  karma 只確認了安裝與 socket（只有 `labflux` 帳號可用，沒有以它登入，避免多出一個使用者）。
+
 ## 最後驗證與交付
 
 - `uv sync --locked`：通過。
