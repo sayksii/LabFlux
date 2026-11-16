@@ -169,10 +169,11 @@ labflux models
 ### 部署後的驗收（`scripts/lab_smoke.py`）
 
 ```bash
-uv run python scripts/lab_smoke.py --config .labflux/lab/cli.toml --report docs/evidence/lab-smoke.json
+uv run python scripts/lab_smoke.py --config .labflux/lab/cli.toml
 ```
 
-約 3 分鐘，以 GPU 為主依序檢查：每個 GPU 工作只看得到自己的卡、同一張卡不會配給兩個工作、卡滿時工作排隊；
+報告預設寫到被 Git 忽略的 `.labflux/lab/lab-smoke.json`；要留作驗收紀錄時再複製到 `docs/evidence/`
+（例：[lab-smoke-2026-11-16.json](evidence/lab-smoke-2026-11-16.json)）。約 1～2 分鐘，以 GPU 為主依序檢查：每個 GPU 工作只看得到自己的卡、同一張卡不會配給兩個工作、卡滿時工作排隊；
 兩張卡的工作；經 CLI 提交、看日誌、取回結果的真實 CUDA 工作（`examples/uv-gpu`）；快速測試 session 搶占可搶占的
 GPU 工作、被搶占的工作之後重跑；FCFS 隊首阻擋與排隊中取消；CPU 配額、RAM 上限、OOM、時限與執行中取消；
 以及 Gateway 的一般與串流回應。

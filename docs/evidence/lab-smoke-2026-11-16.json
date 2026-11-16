@@ -1,0 +1,383 @@
+{
+  "status": "PASSED",
+  "policy": "fcfs",
+  "checks": [
+    {
+      "name": "nodes online with different CPU, RAM and GPU capacity",
+      "passed": true,
+      "nodes": 3
+    },
+    {
+      "name": "each GPU job sees only its card; no card is given twice; a job waits when all are taken",
+      "passed": true,
+      "cards": [
+        "karma:RTX 4090",
+        "kayle:RTX 3090",
+        "kayle:RTX A5000"
+      ],
+      "extra_job_waited_s": 8.6
+    },
+    {
+      "name": "a two-GPU job gets two cards of one node and sees exactly those two",
+      "passed": true,
+      "node": "kayle",
+      "cards": [
+        "kayle:RTX 3090",
+        "kayle:RTX A5000"
+      ]
+    },
+    {
+      "name": "CLI submit/logs/fetch of a real CUDA job (examples/uv-gpu)",
+      "passed": true,
+      "card": "karma:RTX 4090",
+      "torch": "2.6.0+cu124",
+      "submit_to_done_s": 6.6
+    },
+    {
+      "name": "a fast-lane session preempts a preemptible GPU job, which then reruns",
+      "passed": true,
+      "victims": 3,
+      "session_command_s": 1.0,
+      "victim_attempts": [
+        "PREEMPTED",
+        "SUCCEEDED"
+      ],
+      "others_untouched": true
+    },
+    {
+      "name": "fcfs: a job that fits waits behind a blocked GPU head; queued cancel",
+      "passed": true,
+      "card": "karma:RTX 4090",
+      "tail_note": "fcfs: submission #119; waiting behind job 79265246",
+      "head_got_the_same_card": true
+    },
+    {
+      "name": "CPU quota, RAM limit, no swap and no GPU devices in a CPU job",
+      "passed": true,
+      "cpu.max": "25000 100000",
+      "memory.max": "67108864",
+      "memory.swap.max": "0",
+      "cpu_seconds": 0.5,
+      "nvidia_devices": 0
+    },
+    {
+      "name": "memory exhaustion is contained; the time limit stops the whole container",
+      "passed": true,
+      "oom_exit_code": 137,
+      "oom_reported": true
+    },
+    {
+      "name": "a running job is cancelled only after its container stops",
+      "passed": true
+    },
+    {
+      "name": "a model service answers through the /v1 Gateway, normal and streamed",
+      "passed": true,
+      "model": "gemma4-31b",
+      "node": "kindred",
+      "normal_s": 0.09,
+      "stream_first_chunk_s": 0.06,
+      "stream_chunks": 3
+    },
+    {
+      "name": "every allocation is back to where it was before the run",
+      "passed": true
+    }
+  ],
+  "skipped": [],
+  "labflux_version": "0.1.0",
+  "commit": "3599d5ee31372b7595ba568f9d4916d665cbd947",
+  "started_at": "2026-11-16T09:38:37+0800",
+  "nodes": [
+    {
+      "id": "karma",
+      "cpu": 16.0,
+      "memory_mib": 24576,
+      "gpus": [
+        "RTX 4090"
+      ],
+      "gpu_driver": "580.178.04"
+    },
+    {
+      "id": "kayle",
+      "cpu": 16.0,
+      "memory_mib": 49152,
+      "gpus": [
+        "RTX 3090",
+        "RTX A5000"
+      ],
+      "gpu_driver": "535.309.01"
+    },
+    {
+      "id": "kindred",
+      "cpu": 32.0,
+      "memory_mib": 65536,
+      "gpus": [
+        "A40",
+        "A40"
+      ],
+      "gpu_driver": "550.144.03"
+    }
+  ],
+  "models": [
+    {
+      "name": "gemma4-31b",
+      "mode": "persistent",
+      "state": "serving",
+      "node": "kindred"
+    }
+  ],
+  "idle_cards_at_start": [
+    "karma:RTX 4090",
+    "kayle:RTX 3090",
+    "kayle:RTX A5000"
+  ],
+  "jobs": [
+    {
+      "id": "7779ff814ae44a2587717cf5efb25dba",
+      "check": "gpu-holder",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [
+            "karma:RTX 4090"
+          ],
+          "seconds": 8.2
+        }
+      ]
+    },
+    {
+      "id": "0d5c5405c93e446bba7a64588c415dd2",
+      "check": "gpu-holder",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "kayle",
+          "cards": [
+            "kayle:RTX A5000"
+          ],
+          "seconds": 8.2
+        }
+      ]
+    },
+    {
+      "id": "8a5f7df2f4e445b69225e3555f87ade5",
+      "check": "gpu-holder",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "kayle",
+          "cards": [
+            "kayle:RTX 3090"
+          ],
+          "seconds": 8.2
+        }
+      ]
+    },
+    {
+      "id": "cac3efccc644491eb3fcb66a3303fac5",
+      "check": "gpu-extra",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [
+            "karma:RTX 4090"
+          ],
+          "seconds": 1.2
+        }
+      ]
+    },
+    {
+      "id": "21f1ba6ee3d54769ac42b3298fee66ee",
+      "check": "gpu-2",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "kayle",
+          "cards": [
+            "kayle:RTX 3090",
+            "kayle:RTX A5000"
+          ],
+          "seconds": 1.2
+        }
+      ]
+    },
+    {
+      "id": "6ae0b4378af14ec5844e41d59507b4e4",
+      "check": "uv-gpu",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [
+            "karma:RTX 4090"
+          ],
+          "seconds": 5.6
+        }
+      ]
+    },
+    {
+      "id": "0c5369e7606f413e91c0429ef2e720be",
+      "check": "preemptible-gpu",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [
+            "karma:RTX 4090"
+          ],
+          "seconds": 30.2
+        }
+      ]
+    },
+    {
+      "id": "d36cd64ca7294d0b9a34557f95eca69f",
+      "check": "preemptible-gpu",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "PREEMPTED",
+          "node": "kayle",
+          "cards": [
+            "kayle:RTX A5000"
+          ],
+          "seconds": 0.5
+        },
+        {
+          "state": "SUCCEEDED",
+          "node": "kayle",
+          "cards": [
+            "kayle:RTX A5000"
+          ],
+          "seconds": 30.2
+        }
+      ]
+    },
+    {
+      "id": "4d53179f9d5a446baa2733a71f1e379d",
+      "check": "preemptible-gpu",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "kayle",
+          "cards": [
+            "kayle:RTX 3090"
+          ],
+          "seconds": 30.2
+        }
+      ]
+    },
+    {
+      "id": "05e03d548150464e891c2415744230ab",
+      "check": "fcfs-busy",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [
+            "karma:RTX 4090"
+          ],
+          "seconds": 10.2
+        }
+      ]
+    },
+    {
+      "id": "792652466e26412cb6bd33afe0363e7c",
+      "check": "fcfs-head",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [
+            "karma:RTX 4090"
+          ],
+          "seconds": 1.1
+        }
+      ]
+    },
+    {
+      "id": "fcd47901434e486eb07bbe75cee75eba",
+      "check": "fcfs-tail",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [],
+          "seconds": 1.1
+        }
+      ]
+    },
+    {
+      "id": "9e086debb07f40a2992bda5b50d8977c",
+      "check": "fcfs-cancelled",
+      "state": "CANCELLED",
+      "attempts": []
+    },
+    {
+      "id": "d63afe0d53204efa925630b2cb613431",
+      "check": "limits",
+      "state": "SUCCEEDED",
+      "attempts": [
+        {
+          "state": "SUCCEEDED",
+          "node": "karma",
+          "cards": [],
+          "seconds": 2.4
+        }
+      ]
+    },
+    {
+      "id": "67e61777d0384456b31430bd9349f014",
+      "check": "oom",
+      "state": "FAILED",
+      "attempts": [
+        {
+          "state": "FAILED",
+          "node": "karma",
+          "cards": [],
+          "seconds": 0.2
+        }
+      ]
+    },
+    {
+      "id": "1d7129d356e9499e8cac8420a748205e",
+      "check": "timeout",
+      "state": "FAILED",
+      "attempts": [
+        {
+          "state": "FAILED",
+          "node": "karma",
+          "cards": [],
+          "seconds": 1.1
+        }
+      ]
+    },
+    {
+      "id": "28bcfc5c2a2d4e099d894f9e210722c8",
+      "check": "cancel-running",
+      "state": "CANCELLED",
+      "attempts": [
+        {
+          "state": "CANCELLED",
+          "node": "karma",
+          "cards": [],
+          "seconds": 2.6
+        }
+      ]
+    }
+  ],
+  "finished_at": "2026-11-16T09:39:44+0800"
+}

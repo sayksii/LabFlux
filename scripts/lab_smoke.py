@@ -4,7 +4,9 @@
 Run from the repository root with a CLI configuration for the lab Scheduler (the deployer's
 .labflux/lab/cli.toml), or without --config to use the file `labflux login` saved:
 
-  uv run python scripts/lab_smoke.py --config .labflux/lab/cli.toml --report docs/evidence/lab-smoke.json
+  uv run python scripts/lab_smoke.py --config .labflux/lab/cli.toml
+
+The report goes to the git-ignored .labflux/lab/lab-smoke.json unless --report says otherwise.
 
 The lab machines are shared, so the script:
 - refuses to start while a node holds anything but a model service, or while you have unfinished jobs;

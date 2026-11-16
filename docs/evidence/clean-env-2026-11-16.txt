@@ -1,0 +1,69 @@
+# M14.4 clean-environment run on kayle, 2026-11-16 (log of the steps below; paths shortened to <tmp>)
+#
+#   git clone --no-local --branch feat/m14-docs <repo> <tmp>/clean    # fresh clone, no untracked files
+#   git diff --stat 8fcab7a HEAD -- src/                                # empty: same code as the lab deploys
+#   uv sync --locked && uv run labflux version
+#   uv run ruff check . && uv run ruff format --check .
+#   uv run pytest -q -m "not docker and not vm and not gpu"
+#   sg docker -c 'uv run pytest -q -m "docker and not gpu"'
+#   sg docker -c 'uv run pytest -q -m gpu'          # only after checking kayle had no LabFlux job and idle cards
+#   uv run python scripts/lab_smoke.py --config <repo>/.labflux/lab/cli.toml --report <tmp>/clean/lab-smoke.json
+#                                                   # copied to docs/evidence/lab-smoke-2026-11-16.json
+
+### clone (09:35:14)
+3599d5e feat(m14): GPU-first lab smoke, example jobs and updated install docs
+src/ differs from lab commit 8fcab7a: 
+untracked files: 0
+
+### versions (09:35:14)
+6.8.0-138-generic
+uv 0.11.8 (x86_64-unknown-linux-gnu)
+docker 29.1.3
+NVIDIA GeForce RTX 3090, 535.309.01
+NVIDIA RTX A5000, 535.309.01
+
+### uv sync --locked (09:35:14)
+ + uvicorn==0.54.0
+ + websockets==17.4
+exit=0
+0.1.0
+
+### ruff (09:35:15)
+All checks passed!
+90 files already formatted
+
+### unit tests (09:35:15)
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_fastlane.py:230: no zsh
+447 passed, 1 skipped, 33 deselected, 1 warning in 69.99s (0:01:09)
+exit=0
+
+### docker tests (no GPU) (09:36:28)
+
+29 passed, 452 deselected, 1 warning in 109.17s (0:01:49)
+exit=0
+
+### GPU tests: idle check (09:38:17)
+kayle idle: no LabFlux job, cards idle
+
+### GPU tests (09:38:18)
+
+4 passed, 477 deselected, 1 warning in 18.40s
+exit=0
+
+### lab smoke (09:38:36)
+PASS nodes online with different CPU, RAM and GPU capacity
+PASS each GPU job sees only its card; no card is given twice; a job waits when all are taken
+PASS a two-GPU job gets two cards of one node and sees exactly those two
+PASS CLI submit/logs/fetch of a real CUDA job (examples/uv-gpu)
+PASS a fast-lane session preempts a preemptible GPU job, which then reruns
+PASS fcfs: a job that fits waits behind a blocked GPU head; queued cancel
+PASS CPU quota, RAM limit, no swap and no GPU devices in a CPU job
+PASS memory exhaustion is contained; the time limit stops the whole container
+PASS a running job is cancelled only after its container stops
+PASS a model service answers through the /v1 Gateway, normal and streamed
+PASS every allocation is back to where it was before the run
+PASSED: 11 checks passed, 0 skipped. Report: <tmp>/clean/lab-smoke.json
+exit=0
+
+### done (09:39:44)
